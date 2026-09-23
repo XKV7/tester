@@ -23,6 +23,8 @@ export interface GameResult {
   allPerfect: boolean;
   flawless: boolean;
   autoplay: boolean;
+  /** 플레이 속도 배율. */
+  speed: number;
 }
 
 /** 게임 화면이 구현하는 HUD. */
@@ -64,6 +66,7 @@ export class Game {
   readonly stats = new PlayStats();
   state: GameState = 'loading';
   autoplay: boolean;
+  readonly speed: number;
 
   private readonly eng = audio();
   private readonly sfx = new Sfx(this.eng);
@@ -95,12 +98,13 @@ export class Game {
     this.chart = compileChart(opts.pkg.level);
     this.timeline = new VisualTimeline(this.chart);
     this.autoplay = !!opts.autoplay;
+    this.speed = settings.playbackSpeed > 0 ? settings.playbackSpeed : 1;
+    this.pitch = this.chart.level.settings.pitch * this.speed;
     this.startFloor = Math.max(0, Math.min(opts.startFloor ?? 0, this.chart.finish - 1));
   }
 
-  private get pitch(): number {
-    return this.chart.level.settings.pitch;
-  }
+  /** 곡 재생 배율 = 레벨 pitch × 플레이 속도 (게임 중에는 고정). */
+  private readonly pitch: number;
   private get mult(): number {
     return DIFFICULTY_MULT[settings.difficulty];
   }
@@ -352,9 +356,10 @@ export class Game {
       counts: this.stats.counts(),
       maxStreak: this.stats.maxStreak,
       checkpointUses: this.stats.checkpointUses,
-      allPerfect: this.stats.isAllPerfect(),
-      flawless: this.stats.isFlawless() && this.startFloor === 0,
+      allPerfect: this.stats.isAllPerfect() && this.speed >= 1,
+      flawless: this.stats.isFlawless() && this.startFloor === 0 && this.speed >= 1,
       autoplay: this.autoplay,
+      speed: this.speed,
     };
   }
 

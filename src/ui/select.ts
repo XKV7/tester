@@ -3,8 +3,9 @@ import { library } from '../levels/library';
 import { loadPackageAudio, packageFromFileList, PackageError, type LevelPackage } from '../levels/package';
 import { getBest, settings } from '../game/settings';
 import { ambient } from '../render/stage';
-import { alertBox, fileInput, h, show, stars, type Screen } from './dom';
+import { alertBox, fileInput, h, isTyping, show, stars, type Screen } from './dom';
 import { PlayScreen } from './play';
+import { speedSelect } from './speed';
 import { TitleScreen } from './title';
 
 let lastSelected: string | null = null;
@@ -16,7 +17,7 @@ export class SelectScreen implements Screen {
   private cards!: HTMLElement;
   private previewToken = 0;
   private keyHandler = (e: KeyboardEvent) => {
-    if (e.target instanceof HTMLInputElement) return;
+    if (isTyping(e.target)) return;
     if (e.key === 'Escape') void show(new TitleScreen());
     else if (e.key === 'Enter' && this.sel) this.play();
     else if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
@@ -54,6 +55,7 @@ export class SelectScreen implements Screen {
           'div',
           { class: 'select-bar' },
           h('label', { class: 'row' }, this.autoBox, '자동 플레이'),
+          h('label', { class: 'row' }, '속도', h('div', { style: 'width:120px' }, speedSelect())),
           h('span', { class: 'grow dim' }, 'Enter로 시작 · 방향키로 선택'),
           h('button', { class: 'btn primary', onclick: () => this.play() }, '플레이'),
         ),
@@ -73,7 +75,7 @@ export class SelectScreen implements Screen {
       const card = h(
         'div',
         { class: 'card' + (p === this.sel ? ' sel' : ''), onclick: () => this.select(p), ondblclick: () => this.play() },
-        h('h3', null, m.title, p.builtin ? h('span', { class: 'tag' }, '데모') : null),
+        h('h3', null, m.title, p.builtin ? h('span', { class: 'tag' }, p.id.startsWith('bundled-') ? '포함됨' : '데모') : null),
         h('div', { class: 'meta' }, `${m.artist}${m.author ? ' · 제작 ' + m.author : ''}`),
         h('div', { class: 'meta' }, `${p.level.settings.bpm} BPM · ${p.level.path.length + 1} 타일`),
         h('div', { class: 'stars' }, stars(m.difficulty)),

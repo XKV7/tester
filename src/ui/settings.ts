@@ -5,6 +5,7 @@ import { saveSettings, settings, type UserSettings } from '../game/settings';
 import { ambient } from '../render/stage';
 import { CalibrateScreen } from './calibrate';
 import { h, show, type Screen } from './dom';
+import { speedSelect } from './speed';
 
 /** 설정 화면. */
 export class SettingsScreen implements Screen {
@@ -96,6 +97,8 @@ export class SettingsScreen implements Screen {
             slider('sfxVolume'),
             h('label', null, '판정 난이도'),
             diff,
+            h('label', null, '플레이 속도'),
+            h('label', { class: 'row' }, h('div', { style: 'width:140px' }, speedSelect()), h('span', { class: 'dim' }, '1이 아니면 기록 저장 안 함')),
             h('label', null, '입력 오프셋'),
             offset('inputOffset'),
             h('label', null, '화면 오프셋'),
