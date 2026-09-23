@@ -59,7 +59,9 @@ export class PlayScreen implements Screen, GameHud {
         ),
         this.count,
         this.failEl,
-        this.opts.autoplay ? h('div', { class: 'auto-badge' }, '자동 플레이') : null,
+        this.opts.autoplay || settings.playbackSpeed !== 1
+          ? h('div', { class: 'auto-badge' }, [this.opts.autoplay ? '자동 플레이' : '', settings.playbackSpeed !== 1 ? `속도 ×${settings.playbackSpeed}` : ''].filter(Boolean).join(' · '))
+          : null,
         this.opts.editorTest ? h('div', { class: 'auto-badge', style: 'left:auto;right:16px' }, '플레이테스트 · Esc로 에디터 복귀') : null,
       ),
     );
@@ -140,7 +142,7 @@ export class PlayScreen implements Screen, GameHud {
       void show(this.opts.back());
       return;
     }
-    const newBest = !r.autoplay && submitBest(this.pkg.id, r.accuracy);
+    const newBest = !r.autoplay && r.speed === 1 && submitBest(this.pkg.id, r.accuracy);
     void show(new ResultScreen(this.pkg, r, newBest, this.opts));
   }
 }
@@ -184,6 +186,7 @@ export class ResultScreen implements Screen {
               r.allPerfect && !r.autoplay ? h('span', { class: 'badge perfect' }, '완벽 클리어') : null,
               r.flawless && !r.autoplay ? h('span', { class: 'badge flawless' }, '무결점 클리어') : null,
               this.newBest ? h('span', { class: 'badge newbest' }, '최고 기록!') : null,
+              r.speed !== 1 ? h('span', { class: 'badge newbest', style: 'color:var(--dim);border-color:var(--line)' }, `속도 ×${r.speed} (기록 안 됨)`) : null,
               r.autoplay ? h('span', { class: 'badge newbest', style: 'color:var(--dim);border-color:var(--line)' }, '자동 플레이 (기록 안 됨)') : null,
             ),
             h(

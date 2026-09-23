@@ -16,6 +16,7 @@ import {
 import { ACTION_TYPES, cloneLevel, emptyLevel, serializeLevel, validateLevel } from '../core/level';
 import { normDeg, TILE_LEN } from '../core/math';
 import { VisualTimeline } from '../core/timeline';
+import { estimateTempo, tapTempo, type TempoEstimate } from '../core/tempo';
 import type { Action, ActionType, LevelData } from '../core/types';
 import { settings } from '../game/settings';
 import { library } from '../levels/library';
@@ -96,6 +97,11 @@ export class EditorScreen implements Screen {
   private recBadge!: HTMLElement;
   private autoplay = false;
   private recording: Recording | null = null;
+  private previewing = false;
+  private taps: number[] = [];
+  private tapBpm: number | null = null;
+  private estimate: TempoEstimate | null = null;
+  private estimateMsg = '';
   private recMode: RecordMode = 'oneway';
   private fillCount = 8;
   private fillBpm = 0;
@@ -127,6 +133,7 @@ export class EditorScreen implements Screen {
 
   exit(): void {
     this.stopRecording(false);
+    this.stopPreview();
     stage.app.ticker.remove(this.tickFn);
     for (const f of this.offs.splice(0)) f();
     this.track?.destroy();
@@ -279,6 +286,13 @@ export class EditorScreen implements Screen {
       return;
     }
     if (t && t.tagName && t !== document.body && (e.key === ' ' || e.key === 'Enter')) t.blur();
+    if (this.previewing) {
+      if (e.key === 'Escape' || e.key === ' ') {
+        e.preventDefault();
+        this.stopPreview();
+      }
+      return;
+    }
     if (this.recording) {
       e.preventDefault();
       if (e.key === 'Escape') this.stopRecording(true);
@@ -412,6 +426,136 @@ export class EditorScreen implements Screen {
     this.ensureVisible();
   }
 
+  // ───────────────────────── 음악 맞추기 ─────────────────────────
+
+  /** 선택 타일 2박 전부터 음악 + 각 hitTime에 타격음. */
+  private async startPreview(): Promise<void> {
+    if (this.previewing || this.recording) return;
+    const buf = await loadPackageAudio(this.pkg);
+    await this.eng.resume();
+    const tile = this.chart.tiles[this.sel];
+    const songStart = tile.time - (2 * 60) / tile.bpm;
+    this.eng.cancelScheduled();
+    this.eng.play(buf, songStart, this.level.settings.pitch, this.level.settings.volume, 0.1);
+    const until = songStart + 120;
+    for (let i = this.sel; i <= this.chart.finish && this.chart.times[i] < until; i++) {
+      if (i > this.sel && this.chart.times[i] === this.chart.times[i - 1]) continue;
+      this.sfx.hit(this.eng.ctxTimeForSong(this.chart.times[i]), true);
+    }
+    this.previewing = true;
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    this.renderSide();
+  }
+
+  private stopPreview(): void {
+    if (!this.previewing) return;
+    this.previewing = false;
+    this.eng.stop();
+    this.eng.cancelScheduled();
+    this.wave.playhead = null;
+    this.wave.draw();
+    this.renderSide();
+  }
+
+  private runEstimate(): void {
+    const buf = this.pkg.synthesized ? null : this.pkg.buffer;
+    if (!buf) {
+      this.estimateMsg = '먼저 음원을 선택하세요.';
+      this.renderSide();
+      return;
+    }
+    // 여러 채널이면 섞어서 분석
+    const n = buf.length;
+    const mono = new Float32Array(n);
+    for (let c = 0; c < buf.numberOfChannels; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < n; i++) mono[i] += d[i] / buf.numberOfChannels;
+    }
+    const r = estimateTempo(mono, buf.sampleRate);
+    this.estimate = r;
+    this.estimateMsg = r
+      ? `추정: ${r.bpm} BPM · 첫 박 ${r.offset.toFixed(3)}s · 신뢰도 ${Math.round(r.confidence * 100)}%`
+      : '박을 찾지 못했습니다 (너무 짧거나 조용한 음원).';
+    this.renderSide();
+  }
+
+  private applyTempo(bpm: number, offset?: number): void {
+    const lv = cloneLevel(this.level);
+    lv.settings.bpm = bpm;
+    if (offset !== undefined) {
+      // 카운트다운이 들어갈 여유: 첫 박을 1초 이후로
+      const beat = 60 / bpm;
+      let off = offset;
+      while (off < 1) off += beat;
+      lv.settings.offset = Math.round(off * 1000) / 1000;
+    }
+    this.commit(lv);
+  }
+
+  private tap(): void {
+    const now = performance.now() / 1000;
+    if (this.taps.length && now - this.taps[this.taps.length - 1] > 2) this.taps = [];
+    this.taps.push(now);
+    if (this.taps.length > 16) this.taps.shift();
+    this.tapBpm = tapTempo(this.taps);
+    this.renderSide();
+  }
+
+  private nudgeOffset(sec: number): void {
+    const lv = cloneLevel(this.level);
+    lv.settings.offset = Math.round((lv.settings.offset + sec) * 1000) / 1000;
+    this.commit(lv);
+  }
+
+  private musicSection(): HTMLElement {
+    const hasSong = !this.pkg.synthesized && !!this.pkg.buffer;
+    const beat = 60 / this.level.settings.bpm;
+    const est = this.estimate;
+    return h(
+      'div',
+      { class: 'col' },
+      h('h3', null, '음악 맞추기'),
+      h(
+        'div',
+        { class: 'form' },
+        h('label', null, '음원'),
+        h('span', { class: hasSong ? '' : 'dim', style: 'word-break:break-all' }, hasSong ? this.level.settings.songFile : '없음 — 위의 "음원 선택"'),
+        h('label', null, '자동 추정'),
+        h('button', { class: 'btn small', disabled: !hasSong, onclick: () => this.runEstimate() }, 'BPM · 첫 박 찾기'),
+        this.estimateMsg ? h('label', null, '') : null,
+        this.estimateMsg
+          ? h(
+              'div',
+              { class: 'col', style: 'gap:6px' },
+              h('span', { class: 'dim' }, this.estimateMsg),
+              est ? h('button', { class: 'btn small cool', onclick: () => this.applyTempo(est.bpm, est.offset) }, '적용') : null,
+            )
+          : null,
+        h('label', null, '탭 템포'),
+        h(
+          'div',
+          { class: 'row', style: 'flex-wrap:nowrap' },
+          h('button', { class: 'btn small', onclick: () => this.tap(), title: '박에 맞춰 여러 번 클릭' }, `탭 (${this.taps.length})`),
+          h('span', { class: 'dim' }, this.tapBpm ? `${this.tapBpm} BPM` : '4번 이상'),
+          this.tapBpm ? h('button', { class: 'btn small', onclick: () => this.applyTempo(this.tapBpm!) }, '적용') : null,
+        ),
+        h('label', null, 'offset 미세'),
+        h(
+          'div',
+          { class: 'row' },
+          h('button', { class: 'btn small', onclick: () => this.nudgeOffset(-0.01) }, '−10ms'),
+          h('button', { class: 'btn small', onclick: () => this.nudgeOffset(0.01) }, '+10ms'),
+          h('button', { class: 'btn small', onclick: () => this.nudgeOffset(-beat) }, '−1박'),
+          h('button', { class: 'btn small', onclick: () => this.nudgeOffset(beat) }, '+1박'),
+        ),
+        h('label', null, '박 확인'),
+        this.previewing
+          ? h('button', { class: 'btn small danger', onclick: () => this.stopPreview() }, '■ 정지 (Esc)')
+          : h('button', { class: 'btn small', onclick: () => void this.startPreview() }, '▶ 타격음과 함께 듣기'),
+      ),
+    );
+  }
+
   private stopRecording(render = true): void {
     if (!this.recording) return;
     this.recording = null;
@@ -478,6 +622,8 @@ export class EditorScreen implements Screen {
       this.pkg.synthesized = false;
       this.wave.buffer = buf;
       this.wave.draw();
+      this.estimate = null;
+      this.runEstimate();
     } catch {
       await alertBox('음원을 읽을 수 없습니다', [`${f.name}: 브라우저가 지원하지 않는 형식입니다.`]);
     }
@@ -581,7 +727,7 @@ export class EditorScreen implements Screen {
     if (!side) return;
     const scroll = side.scrollTop;
     side.innerHTML = '';
-    side.append(this.tileSection(), this.toolsSection(), this.levelSection());
+    side.append(this.tileSection(), this.musicSection(), this.toolsSection(), this.levelSection());
     side.scrollTop = scroll;
   }
 
@@ -881,7 +1027,21 @@ export class EditorScreen implements Screen {
       showBeats: stage.camera.zoom > 0.35,
     });
     stage.frame(0, 0);
-    if (this.recording) {
+    if (this.previewing) {
+      this.wave.playhead = this.eng.songTime();
+      this.wave.focus(this.wave.playhead);
+      this.wave.draw();
+      // 재생 위치의 타일을 따라 선택 표시
+      const t = this.wave.playhead;
+      let i = this.sel;
+      while (i < this.chart.finish && this.chart.times[i + 1] <= t) i++;
+      if (i !== this.sel) {
+        this.sel = i;
+        this.wave.selected = i;
+        this.ensureVisible();
+      }
+      this.recBadge.textContent = '▶ 박 확인 중 — Esc 또는 Space로 정지';
+    } else if (this.recording) {
       this.wave.playhead = this.eng.songTime();
       this.wave.focus(this.wave.playhead);
       this.wave.draw();

@@ -12,6 +12,8 @@ export interface UserSettings {
   showJudgeText: boolean;
   autoHitSound: boolean;
   beatPulse: boolean;
+  /** 플레이 속도 배율 (곡과 판정 시각 모두). 1이 아니면 기록은 저장하지 않는다. */
+  playbackSpeed: number;
 }
 
 const KEY = 'orbit.settings.v1';
@@ -28,6 +30,7 @@ export function defaultUserSettings(): UserSettings {
     showJudgeText: true,
     autoHitSound: true,
     beatPulse: true,
+    playbackSpeed: 1,
   };
 }
 
@@ -43,6 +46,8 @@ function load(): UserSettings {
 }
 
 export const settings: UserSettings = load();
+
+export const SPEED_OPTIONS = [0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.25, 1.5];
 
 export function saveSettings(): void {
   try {

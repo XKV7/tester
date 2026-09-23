@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "meta": {
+    "title": "예시: 내 곡 넣기",
+    "artist": "여기에 아티스트",
+    "author": "여기에 제작자",
+    "difficulty": 2,
+    "previewStart": 0
+  },
+  "settings": {
+    "songFile": "",
+    "bpm": 100,
+    "offset": 1.0,
+    "pitch": 1,
+    "volume": 0.8,
+    "countdownTicks": 4,
+    "trackColor": "#3a4f55",
+    "bgColor": "#0e1316",
+    "startDirection": "CW"
+  },
+  "path": [0, 0, 0, 0, 90, 0, 90, 0, 0, 0, 315, 0, 45, 0, 0, 0, 270, 0, 270, 0, 0, 0, 0, 0],
+  "actions": [
+    { "floor": 0, "type": "Text", "text": "public/levels/example 폴더에 음원을 넣고 songFile을 지정하세요" },
+    { "floor": 8, "type": "Checkpoint" }
+  ]
+}
