@@ -46,7 +46,7 @@ export function packageFromFiles(files: Map<string, Uint8Array>, id = newPackage
     names.find((n) => lower(n) === 'level.orbit.json') ??
     names.find((n) => lower(n).endsWith('.orbit.json')) ??
     names.find((n) => lower(n).endsWith('.json'));
-  if (!jsonName) throw new PackageError(['패키지에서 레벨 파일(level.orbit.json)을 찾을 수 없습니다.']);
+  if (!jsonName) throw new PackageError(['패키지에서 레벨 파일(level.orbit.json)을 찾을 수 없습니다.', '음원이나 동영상만 있다면 "음원으로 레벨 만들기"를 쓰세요.']);
   const r = parseLevelJson(strFromU8(flat.get(jsonName)!));
   if (!r.ok) throw new PackageError([`${jsonName}:`, ...r.errors]);
   const warnings = [...r.warnings];
@@ -64,7 +64,7 @@ export async function packageFromSong(file: File, difficulty: 'easy' | 'normal' 
   try {
     buf = await audio().decode(data.buffer.slice(0) as ArrayBuffer);
   } catch {
-    throw new PackageError([`${file.name}: 이 브라우저에서 재생할 수 없는 형식입니다. mp3나 wav로 바꿔 주세요.`]);
+    throw new PackageError([decodeErrorMessage(file.name)]);
   }
   const title = file.name.replace(/\.[^.]+$/, '');
   const r = autoChart(toMono(buf), buf.sampleRate, { difficulty, title, songFile: file.name });
@@ -79,6 +79,24 @@ export async function packageFromSong(file: File, difficulty: 'easy' | 'normal' 
     synthesized: false,
   };
   return { pkg, summary: `${r.bpm} BPM · 타일 ${r.tiles}개 · 회전 반전 ${r.twirls}개` };
+}
+
+/**
+ * 곡으로 고를 수 있는 파일. 동영상은 오디오 트랙만 디코딩해서 쓴다 (화면에는 나오지 않음).
+ * 브라우저가 컨테이너·코덱을 지원해야 한다 — mp4(AAC)·webm(Opus/Vorbis)은 대부분 됨, mov는 브라우저에 따라 다름.
+ */
+export const SONG_ACCEPT =
+  'audio/*,video/mp4,video/webm,video/quicktime,video/x-matroska,.mp3,.wav,.ogg,.oga,.opus,.m4a,.aac,.flac,.mp4,.m4v,.webm,.mkv,.mov';
+
+export const PACKAGE_ACCEPT = `.zip,.json,image/*,${SONG_ACCEPT}`;
+
+const VIDEO_EXT = /\.(mp4|m4v|webm|mkv|mov)$/i;
+
+/** 디코딩 실패 안내 문구. */
+export function decodeErrorMessage(name: string): string {
+  return VIDEO_EXT.test(name)
+    ? `${name}: 동영상에서 소리를 꺼낼 수 없습니다. 소리가 없는 영상이거나 이 브라우저가 지원하지 않는 코덱입니다. mp3로 바꾸거나 크롬·엣지에서 시도해 보세요.`
+    : `${name}: 이 브라우저에서 재생할 수 없는 형식입니다. mp3나 wav로 바꿔 주세요.`;
 }
 
 export function findFile(files: Map<string, Uint8Array>, name: string): Uint8Array | undefined {

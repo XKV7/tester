@@ -27,8 +27,11 @@ import {
   exportZip,
   invalidateSynth,
   loadPackageAudio,
+  decodeErrorMessage,
   newPackageId,
+  PACKAGE_ACCEPT,
   packageFromFileList,
+  SONG_ACCEPT,
   PackageError,
   type LevelPackage,
 } from '../levels/package';
@@ -685,7 +688,7 @@ export class EditorScreen implements Screen {
         this.generate(false);
       } else this.runEstimate();
     } catch {
-      await alertBox('음원을 읽을 수 없습니다', [`${f.name}: 브라우저가 지원하지 않는 형식입니다.`]);
+      await alertBox('음원을 읽을 수 없습니다', [decodeErrorMessage(f.name)]);
     }
   }
 
@@ -728,8 +731,8 @@ export class EditorScreen implements Screen {
   // ───────────────────────── DOM ─────────────────────────
 
   private buildDom(root: HTMLElement): void {
-    const pickLevel = fileInput({ accept: '.zip,.json,audio/*,image/*', multiple: true }, (f) => this.loadFiles(f));
-    const pickSong = fileInput({ accept: 'audio/*,.mp3,.ogg,.wav,.m4a,.flac' }, (f) => this.loadSong(f));
+    const pickLevel = fileInput({ accept: PACKAGE_ACCEPT, multiple: true }, (f) => this.loadFiles(f));
+    const pickSong = fileInput({ accept: SONG_ACCEPT }, (f) => this.loadSong(f));
     const pickImg = fileInput({ accept: 'image/*' }, (f) => this.addImage(f));
     this.info = h('div', { class: 'info' });
     this.recBadge = h('span', { class: 'rec-badge' });
@@ -748,7 +751,7 @@ export class EditorScreen implements Screen {
           h('button', { class: 'btn small', onclick: () => pickLevel.click() }, '불러오기'),
           h('button', { class: 'btn small', onclick: () => void this.saveJson() }, '.orbit.json 저장'),
           h('button', { class: 'btn small', onclick: () => void this.exportZipFile() }, 'zip 내보내기'),
-          h('button', { class: 'btn small', onclick: () => pickSong.click() }, '음원 선택'),
+          h('button', { class: 'btn small', onclick: () => pickSong.click() }, '음원 선택 (음악·동영상)'),
           h('button', { class: 'btn small', onclick: () => pickImg.click() }, '배경 이미지'),
           h('button', { class: 'btn small', onclick: () => this.addToLibrary() }, '목록에 추가'),
           h('span', { class: 'grow' }),
