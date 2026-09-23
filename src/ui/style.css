@@ -177,3 +177,6 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--warm); }
   .ed-top > * { flex-shrink: 0; }
   .ed-top .grow { display: none; }
 }
+.progress-line { height: 6px; background: rgba(255,255,255,.12); border-radius: 3px; overflow: hidden; margin: 8px 0 12px; }
+.progress-line > div { height: 100%; background: linear-gradient(90deg, var(--warm), var(--cool)); transition: width .1s; }
+.progress-line[hidden] { display: none; }

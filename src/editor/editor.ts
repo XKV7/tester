@@ -28,10 +28,12 @@ import {
   invalidateSynth,
   loadPackageAudio,
   decodeErrorMessage,
+  songFromZip,
+  SONG_OR_ZIP_ACCEPT,
+  type SaveResult,
   newPackageId,
   PACKAGE_ACCEPT,
   packageFromFileList,
-  SONG_ACCEPT,
   PackageError,
   type LevelPackage,
 } from '../levels/package';
@@ -40,6 +42,7 @@ import { fmtBeats, TrackView } from '../render/track';
 import { alertBox, confirmBox, fileInput, h, isTyping, show, toast, type Screen } from '../ui/dom';
 import { PlayScreen } from '../ui/play';
 import { openSongGenerator } from '../ui/songgen';
+import { openMp3Converter } from '../ui/convert';
 import { TitleScreen } from '../ui/title';
 import { ACTION_LABEL, defaultAction, EASE_NAMES, SCHEMA, type Field } from './schema';
 import { WaveTimeline } from './waveform';
@@ -838,7 +841,7 @@ export class EditorScreen implements Screen {
     this.reportSave(await download(`${this.fileBase()}.zip`, exportZip(this.pkg), 'application/zip'));
   }
 
-  private reportSave(r: 'saved' | 'declined' | 'failed'): void {
+  private reportSave(r: SaveResult): void {
     if (r === 'failed') void alertBox('저장할 수 없습니다', ['이 화면에서는 파일 저장이 허용되지 않았습니다. 잠시 후 다시 시도하세요.']);
   }
 
@@ -856,7 +859,7 @@ export class EditorScreen implements Screen {
     this.centerOn(0, 0.6);
   }
 
-  private async loadFiles(files: FileList): Promise<void> {
+  private async loadFiles(files: FileList | File[]): Promise<void> {
     try {
       const pkg = await packageFromFileList(files);
       pkg.id = newPackageId('edit');
@@ -876,8 +879,20 @@ export class EditorScreen implements Screen {
     }
   }
 
-  private async loadSong(files: FileList): Promise<void> {
-    const f = files[0];
+  private async loadSong(files: FileList | File[]): Promise<void> {
+    let f = files[0];
+    if (!f) return;
+    try {
+      const inner = await songFromZip(f);
+      if (inner) f = inner;
+      else if (f.name.toLowerCase().endsWith('.zip')) {
+        await this.loadFiles([f]);
+        return;
+      }
+    } catch (e) {
+      await alertBox('파일을 열 수 없습니다', e instanceof PackageError ? e.details : [(e as Error).message]);
+      return;
+    }
     const data = new Uint8Array(await f.arrayBuffer());
     try {
       const buf = await this.eng.decode(data.buffer.slice(0) as ArrayBuffer);
@@ -940,7 +955,7 @@ export class EditorScreen implements Screen {
 
   private buildDom(root: HTMLElement): void {
     const pickLevel = fileInput({ accept: PACKAGE_ACCEPT, multiple: true }, (f) => this.loadFiles(f));
-    const pickSong = fileInput({ accept: SONG_ACCEPT }, (f) => this.loadSong(f));
+    const pickSong = fileInput({ accept: SONG_OR_ZIP_ACCEPT }, (f) => this.loadSong(f));
     const pickImg = fileInput({ accept: 'image/*' }, (f) => this.addImage(f));
     this.info = h('div', { class: 'info' });
     this.recBadge = h('span', { class: 'rec-badge' });
@@ -961,6 +976,17 @@ export class EditorScreen implements Screen {
           h('button', { class: 'btn small', onclick: () => void this.exportZipFile() }, 'zip 내보내기'),
           h('button', { class: 'btn small', onclick: () => pickSong.click() }, '음원 선택 (음악·동영상)'),
           h('button', { class: 'btn small cool', onclick: () => void this.generateSongLevel() }, '음악 자동 생성'),
+          h(
+            'button',
+            {
+              class: 'btn small',
+              onclick: async () => {
+                const f = await openMp3Converter();
+                if (f) void this.loadSong([f]);
+              },
+            },
+            '동영상 → mp3',
+          ),
           h('button', { class: 'btn small', onclick: () => pickImg.click() }, '배경 이미지'),
           h('button', { class: 'btn small', onclick: () => this.addToLibrary() }, '목록에 추가'),
           h('span', { class: 'grow' }),

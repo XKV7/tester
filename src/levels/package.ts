@@ -90,6 +90,9 @@ export const SONG_ACCEPT =
 
 export const PACKAGE_ACCEPT = `.zip,.json,image/*,${SONG_ACCEPT}`;
 
+/** 음원 선택용: 음원·동영상 + 음원을 담은 zip. */
+export const SONG_OR_ZIP_ACCEPT = `${SONG_ACCEPT},.zip,application/zip`;
+
 const VIDEO_EXT = /\.(mp4|m4v|webm|mkv|mov)$/i;
 
 /** 디코딩 실패 안내 문구. */
@@ -97,6 +100,24 @@ export function decodeErrorMessage(name: string): string {
   return VIDEO_EXT.test(name)
     ? `${name}: 동영상에서 소리를 꺼낼 수 없습니다. 소리가 없는 영상이거나 이 브라우저가 지원하지 않는 코덱입니다. mp3로 바꾸거나 크롬·엣지에서 시도해 보세요.`
     : `${name}: 이 브라우저에서 재생할 수 없는 형식입니다. mp3나 wav로 바꿔 주세요.`;
+}
+
+const SONG_EXT = /\.(mp3|wav|ogg|oga|opus|m4a|aac|flac|mp4|m4v|webm|mkv|mov)$/i;
+
+/** zip 안에 음원/동영상 하나만 들어 있으면 그 파일을 꺼낸다 (mp3를 zip으로 저장한 경우 등). 레벨 파일이 들어 있거나 zip이 아니면 null. */
+export async function songFromZip(file: File): Promise<File | null> {
+  if (!lower(file.name).endsWith('.zip')) return null;
+  let entries: Record<string, Uint8Array>;
+  try {
+    entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
+  } catch {
+    throw new PackageError([`${file.name}: zip 파일을 열 수 없습니다.`]);
+  }
+  const names = Object.keys(entries).filter((n) => !n.endsWith('/') && !n.includes('__MACOSX'));
+  if (names.some((n) => lower(n).endsWith('.json'))) return null;
+  const song = names.find((n) => SONG_EXT.test(n));
+  if (!song) throw new PackageError([`${file.name}: zip 안에 음원 파일이 없습니다.`]);
+  return new File([entries[song] as Uint8Array<ArrayBuffer>], baseName(song));
 }
 
 export function findFile(files: Map<string, Uint8Array>, name: string): Uint8Array | undefined {
@@ -188,7 +209,9 @@ async function viewerDownloads(): Promise<DownloadsApi | null> {
  * 파일 저장. 다운로드가 막힌 임베드 뷰어에서는 뷰어의 저장 확인 창을 쓰고,
  * 일반 브라우저에서는 링크 다운로드. 결과: 'saved' | 'declined' | 'failed'.
  */
-export async function download(name: string, data: Uint8Array | string, mime: string): Promise<'saved' | 'declined' | 'failed'> {
+export type SaveResult = 'saved' | 'saved-zip' | 'declined' | 'failed';
+
+export async function download(name: string, data: Uint8Array | string, mime: string): Promise<SaveResult> {
   const api = await viewerDownloads();
   if (api) {
     try {
@@ -196,7 +219,19 @@ export async function download(name: string, data: Uint8Array | string, mime: st
       return 'saved';
     } catch (e) {
       const code = (e as { code?: string }).code;
-      return code === 'declined' ? 'declined' : 'failed';
+      if (code === 'declined') return 'declined';
+      // 뷰어가 허용하지 않는 확장자(mp3 등) → zip으로 감싸 다시 시도
+      if (code === 'rejected_extension' && !lower(name).endsWith('.zip')) {
+        const bytes = typeof data === 'string' ? strToU8(data) : data;
+        const zipped = zipSync({ [baseName(name)]: bytes }, { level: 0 });
+        try {
+          await api.save({ filename: name.replace(/\.[^.]+$/, '') + '.zip', data: zipped });
+          return 'saved-zip';
+        } catch (e2) {
+          return (e2 as { code?: string }).code === 'declined' ? 'declined' : 'failed';
+        }
+      }
+      return 'failed';
     }
   }
   const blob = new Blob([typeof data === 'string' ? data : (data as Uint8Array<ArrayBuffer>)], { type: mime });
