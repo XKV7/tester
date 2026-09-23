@@ -299,7 +299,7 @@ export class EditorScreen implements Screen {
     }
     if (ctrl && (e.key === 's' || e.key === 'S')) {
       e.preventDefault();
-      this.saveJson();
+      void this.saveJson();
       return;
     }
     if (ctrl || e.altKey) return;
@@ -426,14 +426,20 @@ export class EditorScreen implements Screen {
 
   // ───────────────────────── 파일 ─────────────────────────
 
-  private saveJson(): void {
-    const name = (this.level.meta.title || 'level').replace(/[\\/:*?"<>|\s]+/g, '_');
-    download(`${name}.orbit.json`, serializeLevel(this.level), 'application/json');
+  private fileBase(): string {
+    return (this.level.meta.title || 'level').replace(/[\\/:*?"<>|\s]+/g, '_');
   }
 
-  private exportZipFile(): void {
-    const name = (this.level.meta.title || 'level').replace(/[\\/:*?"<>|\s]+/g, '_');
-    download(`${name}.zip`, exportZip(this.pkg), 'application/zip');
+  private async saveJson(): Promise<void> {
+    this.reportSave(await download(`${this.fileBase()}.orbit.json`, serializeLevel(this.level), 'application/json'));
+  }
+
+  private async exportZipFile(): Promise<void> {
+    this.reportSave(await download(`${this.fileBase()}.zip`, exportZip(this.pkg), 'application/zip'));
+  }
+
+  private reportSave(r: 'saved' | 'declined' | 'failed'): void {
+    if (r === 'failed') void alertBox('저장할 수 없습니다', ['이 화면에서는 파일 저장이 허용되지 않았습니다. 잠시 후 다시 시도하세요.']);
   }
 
   private async loadFiles(files: FileList): Promise<void> {
@@ -534,8 +540,8 @@ export class EditorScreen implements Screen {
           h('span', { class: 'title' }, '레벨 에디터'),
           h('button', { class: 'btn small', onclick: () => void this.newLevel() }, '새로 만들기'),
           h('button', { class: 'btn small', onclick: () => pickLevel.click() }, '불러오기'),
-          h('button', { class: 'btn small', onclick: () => this.saveJson() }, '.orbit.json 저장'),
-          h('button', { class: 'btn small', onclick: () => this.exportZipFile() }, 'zip 내보내기'),
+          h('button', { class: 'btn small', onclick: () => void this.saveJson() }, '.orbit.json 저장'),
+          h('button', { class: 'btn small', onclick: () => void this.exportZipFile() }, 'zip 내보내기'),
           h('button', { class: 'btn small', onclick: () => pickSong.click() }, '음원 선택'),
           h('button', { class: 'btn small', onclick: () => pickImg.click() }, '배경 이미지'),
           h('button', { class: 'btn small', onclick: () => this.addToLibrary() }, '목록에 추가'),

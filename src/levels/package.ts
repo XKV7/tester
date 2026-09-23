@@ -125,7 +125,36 @@ export function exportZip(pkg: LevelPackage): Uint8Array {
   return zipSync(entries, { level: 6 });
 }
 
-export function download(name: string, data: Uint8Array | string, mime: string): void {
+interface DownloadsApi {
+  save(req: { filename: string; data: string | Blob | ArrayBuffer | ArrayBufferView }): Promise<unknown>;
+}
+
+/** 임베드 뷰어가 제공하는 다운로드 기능 (없으면 null). */
+async function viewerDownloads(): Promise<DownloadsApi | null> {
+  const c = (window as unknown as { claude?: { use?: (n: string) => Promise<unknown> } }).claude;
+  if (!c || typeof c.use !== 'function') return null;
+  try {
+    return ((await c.use('downloads')) as DownloadsApi | null) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 파일 저장. 다운로드가 막힌 임베드 뷰어에서는 뷰어의 저장 확인 창을 쓰고,
+ * 일반 브라우저에서는 링크 다운로드. 결과: 'saved' | 'declined' | 'failed'.
+ */
+export async function download(name: string, data: Uint8Array | string, mime: string): Promise<'saved' | 'declined' | 'failed'> {
+  const api = await viewerDownloads();
+  if (api) {
+    try {
+      await api.save({ filename: name, data: typeof data === 'string' ? data : data.slice() });
+      return 'saved';
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      return code === 'declined' ? 'declined' : 'failed';
+    }
+  }
   const blob = new Blob([typeof data === 'string' ? data : (data as Uint8Array<ArrayBuffer>)], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -135,6 +164,7 @@ export function download(name: string, data: Uint8Array | string, mime: string):
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
+  return 'saved';
 }
 
 /** 패키지 내 이미지 → object URL (캐시). */
