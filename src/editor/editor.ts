@@ -1,0 +1,887 @@
+import { audio } from '../audio/engine';
+import { Sfx } from '../audio/sfx';
+import { compileChart, type Chart } from '../core/chart';
+import { toHex } from '../core/color';
+import {
+  addAction,
+  deleteTile,
+  fillStraight,
+  insertTileAfter,
+  recordToAngles,
+  removeAction,
+  replaceAction,
+  setOutAngle,
+  type RecordMode,
+} from '../core/editorOps';
+import { ACTION_TYPES, cloneLevel, emptyLevel, serializeLevel, validateLevel } from '../core/level';
+import { normDeg, TILE_LEN } from '../core/math';
+import { VisualTimeline } from '../core/timeline';
+import type { Action, ActionType, LevelData } from '../core/types';
+import { settings } from '../game/settings';
+import { library } from '../levels/library';
+import {
+  download,
+  exportZip,
+  invalidateSynth,
+  loadPackageAudio,
+  newPackageId,
+  packageFromFileList,
+  PackageError,
+  type LevelPackage,
+} from '../levels/package';
+import { stage } from '../render/stage';
+import { fmtBeats, TrackView } from '../render/track';
+import { alertBox, fileInput, h, isTyping, show, type Screen } from '../ui/dom';
+import { PlayScreen } from '../ui/play';
+import { TitleScreen } from '../ui/title';
+import { ACTION_LABEL, defaultAction, EASE_NAMES, SCHEMA, type Field } from './schema';
+import { WaveTimeline } from './waveform';
+
+const KEY_ANGLES: Record<string, number> = {
+  KeyD: 0,
+  KeyW: 90,
+  KeyA: 180,
+  KeyS: 270,
+  KeyE: 45,
+  KeyQ: 135,
+  KeyZ: 225,
+  KeyC: 315,
+};
+
+const AUTOSAVE = 'orbit.editor.autosave.v1';
+
+interface Snapshot {
+  level: string;
+  sel: number;
+}
+
+interface Recording {
+  base: LevelData;
+  baseSel: number;
+  presses: number[];
+  mode: RecordMode;
+}
+
+/** 편집 중인 패키지 (화면 전환 사이 유지). */
+let editing: LevelPackage | null = null;
+
+function initialPackage(): LevelPackage {
+  if (editing) return editing;
+  let level = emptyLevel();
+  try {
+    const raw = localStorage.getItem(AUTOSAVE);
+    if (raw) {
+      const r = validateLevel(JSON.parse(raw));
+      if (r.ok) level = r.level;
+    }
+  } catch {
+    /* 무시 */
+  }
+  editing = { id: newPackageId('edit'), level, files: new Map(), builtin: false, warnings: [] };
+  return editing;
+}
+
+export class EditorScreen implements Screen {
+  private pkg = initialPackage();
+  private level: LevelData = this.pkg.level;
+  private sel = 0;
+  private undoStack: Snapshot[] = [];
+  private redoStack: Snapshot[] = [];
+  private chart!: Chart;
+  private timeline!: VisualTimeline;
+  private track: TrackView | null = null;
+  private wave = new WaveTimeline();
+  private side!: HTMLElement;
+  private info!: HTMLElement;
+  private recBadge!: HTMLElement;
+  private autoplay = false;
+  private recording: Recording | null = null;
+  private recMode: RecordMode = 'oneway';
+  private fillCount = 8;
+  private fillBpm = 0;
+  private drag: { x: number; y: number; cx: number; cy: number; moved: boolean } | null = null;
+  private readonly eng = audio();
+  private readonly sfx = new Sfx(this.eng);
+  private tickFn = () => this.frame();
+  private dirtyTrack = true;
+  private camInit = false;
+  private offs: (() => void)[] = [];
+
+  enter(root: HTMLElement): void {
+    stage.clearWorld();
+    stage.setBackgroundImage(null);
+    this.rebuild(false);
+    this.buildDom(root);
+    this.bindInput();
+    stage.app.ticker.add(this.tickFn);
+    if (!this.camInit) {
+      const p = this.tilePos(this.sel);
+      stage.camera.snap(p.x, p.y, 0.8, 0);
+      this.camInit = true;
+    } else stage.camera.rotation = 0;
+    void loadPackageAudio(this.pkg).then((b) => {
+      this.wave.buffer = this.pkg.synthesized ? null : b;
+      this.wave.draw();
+    });
+  }
+
+  exit(): void {
+    this.stopRecording(false);
+    stage.app.ticker.remove(this.tickFn);
+    for (const f of this.offs.splice(0)) f();
+    this.track?.destroy();
+    this.track = null;
+    this.wave.destroy();
+    this.wave = new WaveTimeline();
+    stage.clearWorld();
+  }
+
+  // ───────────────────────── 상태 ─────────────────────────
+
+  private tilePos(i: number) {
+    const t = this.chart.tiles[Math.max(0, Math.min(i, this.chart.tiles.length - 1))];
+    return { x: t.x, y: -t.y };
+  }
+
+  private rebuild(sidePanel = true): void {
+    this.pkg.level = this.level;
+    invalidateSynth(this.pkg);
+    this.chart = compileChart(this.level);
+    this.timeline = new VisualTimeline(this.chart);
+    this.sel = Math.max(0, Math.min(this.sel, this.chart.finish));
+    this.dirtyTrack = true;
+    try {
+      localStorage.setItem(AUTOSAVE, serializeLevel(this.level));
+    } catch {
+      /* 무시 */
+    }
+    if (sidePanel && this.side) this.renderSide();
+    this.wave.chart = this.chart;
+    this.wave.selected = this.sel;
+    this.wave.focus(this.chart.times[this.sel]);
+    this.wave.draw();
+  }
+
+  private commit(level: LevelData, sel = this.sel): void {
+    this.undoStack.push({ level: JSON.stringify(this.level), sel: this.sel });
+    if (this.undoStack.length > 300) this.undoStack.shift();
+    this.redoStack = [];
+    this.level = level;
+    this.sel = sel;
+    this.rebuild();
+  }
+
+  private undo(): void {
+    const s = this.undoStack.pop();
+    if (!s) return;
+    this.redoStack.push({ level: JSON.stringify(this.level), sel: this.sel });
+    this.level = JSON.parse(s.level) as LevelData;
+    this.sel = s.sel;
+    this.rebuild();
+  }
+
+  private redo(): void {
+    const s = this.redoStack.pop();
+    if (!s) return;
+    this.undoStack.push({ level: JSON.stringify(this.level), sel: this.sel });
+    this.level = JSON.parse(s.level) as LevelData;
+    this.sel = s.sel;
+    this.rebuild();
+  }
+
+  private select(i: number, focus = true): void {
+    this.sel = Math.max(0, Math.min(i, this.chart.finish));
+    this.wave.selected = this.sel;
+    this.wave.focus(this.chart.times[this.sel]);
+    this.wave.draw();
+    this.renderSide();
+    if (focus) this.ensureVisible();
+  }
+
+  private ensureVisible(): void {
+    const p = this.tilePos(this.sel);
+    const v = stage.viewRect();
+    const r = Math.min(stage.width, stage.height) / 2 / (stage.baseScale * stage.camera.zoom);
+    if (Math.hypot(p.x - v.cx, p.y - v.cy) > r * 0.7) {
+      stage.camera.x = p.x;
+      stage.camera.y = p.y;
+    }
+  }
+
+  // ───────────────────────── 입력 ─────────────────────────
+
+  private bindInput(): void {
+    const canvas = stage.app.canvas;
+    const kd = (e: KeyboardEvent) => this.onKey(e);
+    const wheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const cam = stage.camera;
+      const f = Math.exp(-e.deltaY * 0.0015);
+      const before = stage.screenToWorld(e.clientX, e.clientY);
+      cam.zoom = Math.max(0.05, Math.min(5, cam.zoom * f));
+      const s = stage.baseScale * cam.zoom;
+      cam.x = before.x - (e.clientX - stage.width / 2) / s;
+      cam.y = before.y - (e.clientY - stage.height / 2) / s;
+    };
+    const pd = (e: PointerEvent) => {
+      this.drag = { x: e.clientX, y: e.clientY, cx: stage.camera.x, cy: stage.camera.y, moved: false };
+      canvas.setPointerCapture(e.pointerId);
+    };
+    const pm = (e: PointerEvent) => {
+      const d = this.drag;
+      if (!d) return;
+      const dx = e.clientX - d.x;
+      const dy = e.clientY - d.y;
+      if (Math.hypot(dx, dy) > 5) d.moved = true;
+      if (d.moved) {
+        const s = stage.baseScale * stage.camera.zoom;
+        stage.camera.x = d.cx - dx / s;
+        stage.camera.y = d.cy - dy / s;
+      }
+    };
+    const pu = (e: PointerEvent) => {
+      const d = this.drag;
+      this.drag = null;
+      if (!d || d.moved) return;
+      const w = stage.screenToWorld(e.clientX, e.clientY);
+      let best = -1;
+      let bd = TILE_LEN * 0.45;
+      // 겹친 타일은 뒤쪽(나중) 타일 우선
+      for (let i = this.chart.tiles.length - 1; i >= 0; i--) {
+        const p = this.tilePos(i);
+        const dd = Math.hypot(p.x - w.x, p.y - w.y);
+        if (dd < bd - 1e-6) {
+          bd = dd;
+          best = i;
+        }
+      }
+      if (best >= 0) this.select(best, false);
+    };
+    window.addEventListener('keydown', kd);
+    canvas.addEventListener('wheel', wheel, { passive: false });
+    canvas.addEventListener('pointerdown', pd);
+    canvas.addEventListener('pointermove', pm);
+    canvas.addEventListener('pointerup', pu);
+    this.offs.push(
+      () => window.removeEventListener('keydown', kd),
+      () => canvas.removeEventListener('wheel', wheel),
+      () => canvas.removeEventListener('pointerdown', pd),
+      () => canvas.removeEventListener('pointermove', pm),
+      () => canvas.removeEventListener('pointerup', pu),
+    );
+    this.wave.onSelect = (i) => this.select(i);
+  }
+
+  private onKey(e: KeyboardEvent): void {
+    const t = e.target as HTMLElement;
+    if (isTyping(t)) {
+      if (e.key === 'Escape') t.blur();
+      return;
+    }
+    if (t && t.tagName && t !== document.body && (e.key === ' ' || e.key === 'Enter')) t.blur();
+    if (this.recording) {
+      e.preventDefault();
+      if (e.key === 'Escape') this.stopRecording(true);
+      else if (!e.repeat) this.recordPress(e.timeStamp);
+      return;
+    }
+    const ctrl = e.ctrlKey || e.metaKey;
+    if (ctrl && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault();
+      if (e.shiftKey) this.redo();
+      else this.undo();
+      return;
+    }
+    if (ctrl && (e.key === 'y' || e.key === 'Y')) {
+      e.preventDefault();
+      this.redo();
+      return;
+    }
+    if (ctrl && (e.key === 's' || e.key === 'S')) {
+      e.preventDefault();
+      this.saveJson();
+      return;
+    }
+    if (ctrl || e.altKey) return;
+    if (e.shiftKey && e.key.startsWith('Arrow')) {
+      // 15° 단위 미세 각도: ←/↑ 반시계(+15°), →/↓ 시계(−15°)
+      e.preventDefault();
+      if (this.sel >= this.level.path.length) return;
+      const d = e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? 15 : -15;
+      this.commit(setOutAngle(this.level, this.sel, this.level.path[this.sel] + d));
+      return;
+    }
+    if (e.code in KEY_ANGLES) {
+      e.preventDefault();
+      const r = insertTileAfter(this.level, this.sel, KEY_ANGLES[e.code]);
+      this.commit(r.level, r.sel);
+      this.ensureVisible();
+      return;
+    }
+    switch (e.key) {
+      case 'Backspace':
+      case 'Delete': {
+        e.preventDefault();
+        const r = deleteTile(this.level, this.sel);
+        if (r.level !== this.level) this.commit(r.level, r.sel);
+        break;
+      }
+      case 'ArrowLeft':
+      case 'ArrowDown':
+        e.preventDefault();
+        this.select(this.sel - 1);
+        break;
+      case 'ArrowRight':
+      case 'ArrowUp':
+        e.preventDefault();
+        this.select(this.sel + 1);
+        break;
+      case 'Home':
+        this.select(0);
+        break;
+      case 'End':
+        this.select(this.chart.finish);
+        break;
+      case ' ':
+        e.preventDefault();
+        this.playtest();
+        break;
+      case 't':
+      case 'T':
+        this.toggleAction('Twirl');
+        break;
+      case 'f':
+      case 'F': {
+        const p = this.tilePos(this.sel);
+        stage.camera.x = p.x;
+        stage.camera.y = p.y;
+        break;
+      }
+      case 'Escape':
+        void show(new TitleScreen());
+        break;
+    }
+  }
+
+  private toggleAction(type: ActionType): void {
+    const idx = this.level.actions.findIndex((a) => a.floor === this.sel && a.type === type);
+    if (idx >= 0) this.commit(removeAction(this.level, idx));
+    else this.commit(addAction(this.level, defaultAction(type, this.sel, this.chart.finish)));
+  }
+
+  // ───────────────────────── 녹화 ─────────────────────────
+
+  private async startRecording(): Promise<void> {
+    if (this.recording) return;
+    const buf = await loadPackageAudio(this.pkg);
+    await this.eng.resume();
+    const tile = this.chart.tiles[this.sel];
+    const beat = 60 / tile.bpm;
+    const songStart = tile.time - 4 * beat;
+    this.eng.cancelScheduled();
+    this.eng.play(buf, songStart, this.level.settings.pitch, this.level.settings.volume, 0.1);
+    for (let k = 4; k >= 1; k--) this.sfx.tick(this.eng.ctxTimeForSong(tile.time - k * beat), k === 1);
+    this.recording = { base: cloneLevel(this.level), baseSel: this.sel, presses: [], mode: this.recMode };
+    this.undoStack.push({ level: JSON.stringify(this.level), sel: this.sel });
+    this.redoStack = [];
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    this.renderSide();
+  }
+
+  private recordPress(ts: number): void {
+    const r = this.recording!;
+    const t = this.eng.songTimeAtPerf(ts) - (settings.inputOffset / 1000) * this.level.settings.pitch;
+    const base = compileChart(r.base).tiles[r.baseSel];
+    const prev = r.presses.length ? r.presses[r.presses.length - 1] : base.time;
+    if (t - prev < 0.03) return;
+    r.presses.push(t);
+    this.sfx.hit();
+    const intervals = r.presses.map((p, i) => p - (i === 0 ? base.time : r.presses[i - 1]));
+    const res = recordToAngles(intervals, base.bpm, base.start, base.dir, r.mode);
+    let lv = r.base;
+    let s = r.baseSel;
+    for (const a of res.angles) {
+      const x = insertTileAfter(lv, s, a);
+      lv = x.level;
+      s = x.sel;
+    }
+    for (const k of res.twirls) lv = addAction(lv, { floor: r.baseSel + k, type: 'Twirl' });
+    this.level = lv;
+    this.sel = s;
+    this.rebuild();
+    this.ensureVisible();
+  }
+
+  private stopRecording(render = true): void {
+    if (!this.recording) return;
+    this.recording = null;
+    this.eng.stop();
+    this.eng.cancelScheduled();
+    this.wave.playhead = null;
+    if (render) {
+      this.rebuild();
+      this.wave.draw();
+    }
+  }
+
+  // ───────────────────────── 파일 ─────────────────────────
+
+  private saveJson(): void {
+    const name = (this.level.meta.title || 'level').replace(/[\\/:*?"<>|\s]+/g, '_');
+    download(`${name}.orbit.json`, serializeLevel(this.level), 'application/json');
+  }
+
+  private exportZipFile(): void {
+    const name = (this.level.meta.title || 'level').replace(/[\\/:*?"<>|\s]+/g, '_');
+    download(`${name}.zip`, exportZip(this.pkg), 'application/zip');
+  }
+
+  private async loadFiles(files: FileList): Promise<void> {
+    try {
+      const pkg = await packageFromFileList(files);
+      pkg.id = newPackageId('edit');
+      editing = pkg;
+      this.pkg = pkg;
+      this.undoStack.push({ level: JSON.stringify(this.level), sel: this.sel });
+      this.level = pkg.level;
+      this.sel = 0;
+      this.rebuild();
+      const b = await loadPackageAudio(pkg);
+      this.wave.buffer = pkg.synthesized ? null : b;
+      this.wave.draw();
+      const p = this.tilePos(0);
+      stage.camera.snap(p.x, p.y, 0.8, 0);
+      if (pkg.warnings.length) await alertBox('불러오기 경고', pkg.warnings);
+    } catch (e) {
+      await alertBox('불러올 수 없습니다', e instanceof PackageError ? e.details : [(e as Error).message]);
+    }
+  }
+
+  private async loadSong(files: FileList): Promise<void> {
+    const f = files[0];
+    const data = new Uint8Array(await f.arrayBuffer());
+    try {
+      const buf = await this.eng.decode(data.buffer.slice(0) as ArrayBuffer);
+      this.pkg.files.set(f.name, data);
+      const lv = cloneLevel(this.level);
+      lv.settings.songFile = f.name;
+      this.pkg.buffer = buf;
+      this.pkg.synthesized = false;
+      this.commit(lv);
+      this.pkg.buffer = buf;
+      this.pkg.synthesized = false;
+      this.wave.buffer = buf;
+      this.wave.draw();
+    } catch {
+      await alertBox('음원을 읽을 수 없습니다', [`${f.name}: 브라우저가 지원하지 않는 형식입니다.`]);
+    }
+  }
+
+  private async addImage(files: FileList): Promise<void> {
+    const f = files[0];
+    this.pkg.files.set(f.name, new Uint8Array(await f.arrayBuffer()));
+    this.commit(addAction(this.level, { floor: this.sel, type: 'Background', image: f.name }));
+  }
+
+  private newLevel(): void {
+    if (!confirm('새 레벨을 만들까요? 저장하지 않은 내용은 실행 취소로만 되돌릴 수 있습니다.')) return;
+    editing = { id: newPackageId('edit'), level: emptyLevel(), files: new Map(), builtin: false, warnings: [] };
+    this.pkg = editing;
+    this.wave.buffer = null;
+    this.commit(this.pkg.level, 0);
+    stage.camera.snap(0, 0, 0.8, 0);
+  }
+
+  private playtest(): void {
+    const r = validateLevel(this.level);
+    if (!r.ok) {
+      void alertBox('레벨 오류', r.errors);
+      return;
+    }
+    this.stopRecording(false);
+    const back = () => this;
+    void show(new PlayScreen(this.pkg, { startFloor: Math.min(this.sel, this.chart.finish - 1), autoplay: this.autoplay, editorTest: true, back }));
+  }
+
+  private addToLibrary(): void {
+    const r = validateLevel(this.level);
+    if (!r.ok) {
+      void alertBox('레벨 오류', r.errors);
+      return;
+    }
+    library.add({ ...this.pkg, id: this.pkg.id.replace(/^edit/, 'user'), level: cloneLevel(this.level), buffer: this.pkg.synthesized ? undefined : this.pkg.buffer });
+    void alertBox('추가됨', ['레벨 선택 화면에 추가했습니다 (이번 세션 동안 유지).']);
+  }
+
+  // ───────────────────────── DOM ─────────────────────────
+
+  private buildDom(root: HTMLElement): void {
+    const pickLevel = fileInput({ accept: '.zip,.json,audio/*,image/*', multiple: true }, (f) => this.loadFiles(f));
+    const pickSong = fileInput({ accept: 'audio/*,.mp3,.ogg,.wav,.m4a,.flac' }, (f) => this.loadSong(f));
+    const pickImg = fileInput({ accept: 'image/*' }, (f) => this.addImage(f));
+    this.info = h('div', { class: 'info' });
+    this.recBadge = h('span', { class: 'rec-badge' });
+    this.side = h('div', { class: 'ed-side' });
+    const bottom = h('div', { class: 'ed-bottom' }, this.wave.canvas);
+    root.append(
+      h(
+        'div',
+        { class: 'editor' },
+        h(
+          'div',
+          { class: 'ed-top' },
+          h('button', { class: 'btn small', onclick: () => show(new TitleScreen()) }, '← 타이틀'),
+          h('span', { class: 'title' }, '레벨 에디터'),
+          h('button', { class: 'btn small', onclick: () => this.newLevel() }, '새로 만들기'),
+          h('button', { class: 'btn small', onclick: () => pickLevel.click() }, '불러오기'),
+          h('button', { class: 'btn small', onclick: () => this.saveJson() }, '.orbit.json 저장'),
+          h('button', { class: 'btn small', onclick: () => this.exportZipFile() }, 'zip 내보내기'),
+          h('button', { class: 'btn small', onclick: () => pickSong.click() }, '음원 선택'),
+          h('button', { class: 'btn small', onclick: () => pickImg.click() }, '배경 이미지'),
+          h('button', { class: 'btn small', onclick: () => this.addToLibrary() }, '목록에 추가'),
+          h('span', { class: 'grow' }),
+          this.recBadge,
+          h('button', { class: 'btn small', onclick: () => this.undo(), title: 'Ctrl+Z' }, '↶'),
+          h('button', { class: 'btn small', onclick: () => this.redo(), title: 'Ctrl+Y' }, '↷'),
+          h('button', { class: 'btn small primary', onclick: () => this.playtest(), title: 'Space' }, '▶ 플레이테스트'),
+          pickLevel,
+          pickSong,
+          pickImg,
+        ),
+        h(
+          'div',
+          { class: 'ed-canvas' },
+          this.info,
+          h(
+            'div',
+            { class: 'hint' },
+            'D/W/A/S = 0°/90°/180°/270° · E/Q/Z/C = 45°/135°/225°/315° 타일 추가',
+            h('br'),
+            'Shift+방향키 = 15° 미세 조정 · ←/→ 선택 이동 · Backspace 삭제 · T 회전 반전',
+            h('br'),
+            'Ctrl+Z/Y 실행 취소/다시 실행 · Space 플레이테스트 · 휠 줌 · 드래그 이동 · F 선택 타일로',
+          ),
+        ),
+        this.side,
+        bottom,
+      ),
+    );
+    this.renderSide();
+    requestAnimationFrame(() => this.wave.draw());
+  }
+
+  private renderSide(): void {
+    const side = this.side;
+    if (!side) return;
+    const scroll = side.scrollTop;
+    side.innerHTML = '';
+    side.append(this.tileSection(), this.toolsSection(), this.levelSection());
+    side.scrollTop = scroll;
+  }
+
+  private tileSection(): HTMLElement {
+    const tile = this.chart.tiles[this.sel];
+    const isFinish = this.sel >= this.level.path.length;
+    const angle = h('input', {
+      type: 'number',
+      step: 15,
+      value: isFinish ? '' : String(this.level.path[this.sel]),
+      disabled: isFinish,
+      onchange: () => {
+        const v = Number(angle.value);
+        if (Number.isFinite(v)) this.commit(setOutAngle(this.level, this.sel, v));
+      },
+    });
+    const events = this.level.actions
+      .map((a, i) => ({ a, i }))
+      .filter(({ a }) => a.floor === this.sel)
+      .map(({ a, i }) => this.eventEditor(a, i));
+    const typeSel = h('select', null, ...ACTION_TYPES.map((t) => h('option', { value: t }, `${ACTION_LABEL[t]} (${t})`)));
+    return h(
+      'div',
+      { class: 'col' },
+      h('h3', null, `타일 ${this.sel}${this.sel === 0 ? ' (시작)' : isFinish ? ' (도착)' : ''}`),
+      h(
+        'div',
+        { class: 'form' },
+        h('label', null, '나가는 각도'),
+        angle,
+        h('label', null, '박 수'),
+        h('span', null, `${fmtBeats(tile.beats)}박 (θ ${Math.round(tile.theta)}°, ${tile.dir === 'CW' ? '시계' : '반시계'})`),
+        h('label', null, 'BPM / 시각'),
+        h('span', null, `${+tile.bpm.toFixed(3)} · ${tile.time.toFixed(3)}s`),
+      ),
+      ...events,
+      h(
+        'div',
+        { class: 'row' },
+        h('div', { class: 'grow' }, typeSel),
+        h(
+          'button',
+          {
+            class: 'btn small',
+            onclick: () => this.commit(addAction(this.level, defaultAction(typeSel.value as ActionType, this.sel, this.chart.finish))),
+          },
+          '이벤트 추가',
+        ),
+      ),
+    );
+  }
+
+  private eventEditor(a: Action, index: number): HTMLElement {
+    const fields = SCHEMA[a.type];
+    const update = (k: string, v: unknown) => {
+      const next = { ...a } as Record<string, unknown>;
+      if (v === undefined) delete next[k];
+      else next[k] = v;
+      this.commit(replaceAction(this.level, index, next as unknown as Action));
+    };
+    const rec = a as unknown as Record<string, unknown>;
+    const inputs = fields.map((f) => [h('label', null, f.label), this.fieldInput(f, rec[f.k], (v) => update(f.k, v))]).flat();
+    return h(
+      'div',
+      { class: 'ev' },
+      h(
+        'div',
+        { class: 'head' },
+        h('span', { class: 'grow' }, `${ACTION_LABEL[a.type]}`, h('span', { class: 'dim', style: 'font-weight:400' }, ` ${a.type}`)),
+        h('button', { class: 'btn small danger', onclick: () => this.commit(removeAction(this.level, index)) }, '삭제'),
+      ),
+      fields.length ? h('div', { class: 'form' }, ...inputs) : null,
+    );
+  }
+
+  private fieldInput(f: Field, value: unknown, set: (v: unknown) => void): HTMLElement {
+    const opt = (s: string) => (f.optional && s.trim() === '' ? undefined : s);
+    switch (f.kind) {
+      case 'num':
+      case 'int': {
+        const inp = h('input', {
+          type: 'number',
+          step: f.step ?? (f.kind === 'int' ? 1 : 0.1),
+          value: value === undefined ? '' : String(value),
+          placeholder: f.optional ? '(유지)' : '',
+          onchange: () => {
+            const s = opt(inp.value);
+            if (s === undefined) return set(undefined);
+            const n = Number(s);
+            if (Number.isFinite(n)) set(f.kind === 'int' ? Math.round(n) : n);
+          },
+        });
+        return inp;
+      }
+      case 'color': {
+        const on = h('input', {
+          type: 'checkbox',
+          checked: value !== undefined || !f.optional,
+          disabled: !f.optional,
+          onchange: () => set(on.checked ? col.value : undefined),
+        });
+        const col = h('input', {
+          type: 'color',
+          value: typeof value === 'string' ? toHex(parseInt(value.replace('#', '').padEnd(6, '0'), 16)) : '#ffffff',
+          onchange: () => set(col.value),
+        });
+        return h('div', { class: 'row' }, f.optional ? on : null, col);
+      }
+      case 'vec': {
+        const v = Array.isArray(value) ? (value as number[]) : null;
+        const mk = (i: number) =>
+          h('input', {
+            type: 'number',
+            step: 10,
+            value: v ? String(v[i]) : '',
+            placeholder: i === 0 ? 'x' : 'y',
+            onchange: () => {
+              if (x.value === '' && y.value === '' && f.optional) return set(undefined);
+              set([Number(x.value) || 0, Number(y.value) || 0]);
+            },
+          });
+        const x = mk(0);
+        const y = mk(1);
+        return h('div', { class: 'row', style: 'flex-wrap:nowrap' }, x, y);
+      }
+      case 'ease': {
+        const s = h(
+          'select',
+          { onchange: () => set(s.value || undefined) },
+          h('option', { value: '' }, '(linear)'),
+          ...EASE_NAMES.map((e) => h('option', { value: e }, e)),
+        );
+        s.value = typeof value === 'string' ? value : '';
+        return s;
+      }
+      case 'text': {
+        const inp = h('input', {
+          type: 'text',
+          value: typeof value === 'string' ? value : '',
+          onchange: () => set(opt(inp.value) ?? (f.optional ? undefined : '')),
+        });
+        return inp;
+      }
+    }
+  }
+
+  private toolsSection(): HTMLElement {
+    const modeSel = h(
+      'select',
+      { onchange: () => (this.recMode = modeSel.value as RecordMode) },
+      h('option', { value: 'oneway' }, '한 방향 회전'),
+      h('option', { value: 'zigzag' }, '지그재그'),
+      h('option', { value: 'straight' }, '직진 우선'),
+    );
+    modeSel.value = this.recMode;
+    const cnt = h('input', { type: 'number', min: 1, max: 1000, value: this.fillCount, onchange: () => (this.fillCount = Math.max(1, Math.round(Number(cnt.value) || 1))) });
+    const bpm = h('input', {
+      type: 'number',
+      min: 0,
+      value: this.fillBpm || '',
+      placeholder: '현재 BPM 유지',
+      onchange: () => (this.fillBpm = Math.max(0, Number(bpm.value) || 0)),
+    });
+    const auto = h('input', { type: 'checkbox', checked: this.autoplay, onchange: () => (this.autoplay = auto.checked) });
+    return h(
+      'div',
+      { class: 'col' },
+      h('h3', null, '도구'),
+      h(
+        'div',
+        { class: 'form' },
+        h('label', null, '녹화 방향'),
+        modeSel,
+        h('label', null, '녹화'),
+        this.recording
+          ? h('button', { class: 'btn small danger', onclick: () => this.stopRecording(true) }, '■ 녹화 중지 (Esc)')
+          : h('button', { class: 'btn small', onclick: () => void this.startRecording() }, '● 선택 타일부터 녹화'),
+        h('label', null, '직진 채우기'),
+        h('div', { class: 'row', style: 'flex-wrap:nowrap' }, cnt, bpm),
+        h('label', null, ''),
+        h(
+          'button',
+          {
+            class: 'btn small',
+            onclick: () => {
+              const r = fillStraight(this.level, this.sel, this.fillCount, this.fillBpm || undefined);
+              this.commit(r.level, r.sel);
+            },
+          },
+          '1박 직진 타일 채우기',
+        ),
+        h('label', null, '자동 플레이'),
+        h('label', { class: 'row' }, auto, h('span', { class: 'dim' }, '플레이테스트에 적용')),
+      ),
+    );
+  }
+
+  private levelSection(): HTMLElement {
+    const lv = this.level;
+    const setMeta = (k: keyof LevelData['meta'], v: string | number) => {
+      const n = cloneLevel(this.level);
+      (n.meta as unknown as Record<string, unknown>)[k] = v;
+      this.commit(n);
+    };
+    const setSet = (k: keyof LevelData['settings'], v: string | number) => {
+      const n = cloneLevel(this.level);
+      (n.settings as unknown as Record<string, unknown>)[k] = v;
+      this.commit(n);
+    };
+    const txt = (v: string, on: (s: string) => void) => {
+      const i = h('input', { type: 'text', value: v, onchange: () => on(i.value) });
+      return i;
+    };
+    const num = (v: number, step: number, on: (n: number) => void) => {
+      const i = h('input', {
+        type: 'number',
+        step,
+        value: String(v),
+        onchange: () => {
+          const n = Number(i.value);
+          if (Number.isFinite(n)) on(n);
+        },
+      });
+      return i;
+    };
+    const color = (v: string, on: (s: string) => void) => {
+      const i = h('input', { type: 'color', value: v.length === 7 ? v : '#000000', onchange: () => on(i.value) });
+      return i;
+    };
+    const dir = h(
+      'select',
+      { onchange: () => setSet('startDirection', dir.value) },
+      h('option', { value: 'CW' }, '시계 (CW)'),
+      h('option', { value: 'CCW' }, '반시계 (CCW)'),
+    );
+    dir.value = lv.settings.startDirection;
+    const s = lv.settings;
+    return h(
+      'div',
+      { class: 'col' },
+      h('h3', null, '레벨 설정'),
+      h(
+        'div',
+        { class: 'form' },
+        h('label', null, '제목'),
+        txt(lv.meta.title, (v) => setMeta('title', v)),
+        h('label', null, '아티스트'),
+        txt(lv.meta.artist, (v) => setMeta('artist', v)),
+        h('label', null, '제작자'),
+        txt(lv.meta.author, (v) => setMeta('author', v)),
+        h('label', null, '난이도'),
+        num(lv.meta.difficulty, 1, (v) => setMeta('difficulty', Math.max(1, Math.min(10, Math.round(v))))),
+        h('label', null, '미리듣기(초)'),
+        num(lv.meta.previewStart, 0.5, (v) => setMeta('previewStart', Math.max(0, v))),
+        h('label', null, '음원'),
+        h('span', { class: 'dim', style: 'word-break:break-all' }, s.songFile || '(없음 — 합성 비트)'),
+        h('label', null, 'BPM'),
+        num(s.bpm, 1, (v) => v > 0 && setSet('bpm', v)),
+        h('label', null, 'offset(초)'),
+        num(s.offset, 0.01, (v) => setSet('offset', v)),
+        h('label', null, 'pitch'),
+        num(s.pitch, 0.05, (v) => setSet('pitch', Math.max(0.25, Math.min(4, v)))),
+        h('label', null, '볼륨'),
+        num(s.volume, 0.05, (v) => setSet('volume', Math.max(0, Math.min(1, v)))),
+        h('label', null, '카운트다운'),
+        num(s.countdownTicks, 1, (v) => setSet('countdownTicks', Math.max(0, Math.min(16, Math.round(v))))),
+        h('label', null, '트랙 색'),
+        color(s.trackColor, (v) => setSet('trackColor', v)),
+        h('label', null, '배경 색'),
+        color(s.bgColor, (v) => setSet('bgColor', v)),
+        h('label', null, '시작 방향'),
+        dir,
+      ),
+    );
+  }
+
+  // ───────────────────────── 프레임 ─────────────────────────
+
+  private frame(): void {
+    if (this.dirtyTrack) {
+      this.track?.destroy();
+      this.track = new TrackView(this.chart, this.timeline, { editor: true });
+      stage.clearWorld();
+      stage.world.addChild(this.track.container);
+      this.dirtyTrack = false;
+    }
+    const tile = this.chart.tiles[this.sel];
+    this.timeline.update(tile.time);
+    stage.setBackground(this.timeline.bgColor);
+    stage.tick();
+    this.track!.update({
+      passed: 0,
+      pulse: 0,
+      now: performance.now(),
+      view: stage.viewRect(),
+      selected: this.sel,
+      showBeats: stage.camera.zoom > 0.35,
+    });
+    stage.frame(0, 0);
+    if (this.recording) {
+      this.wave.playhead = this.eng.songTime();
+      this.wave.focus(this.wave.playhead);
+      this.wave.draw();
+      this.recBadge.textContent = `● 녹화 중 — 박에 맞춰 아무 키 · Esc 중지 (${this.recording.presses.length})`;
+    } else if (this.recBadge.textContent) this.recBadge.textContent = '';
+    const out = this.sel < this.level.path.length ? `${+normDeg(this.level.path[this.sel]).toFixed(2)}°` : '—';
+    this.info.textContent = `타일 ${this.sel} / ${this.chart.finish} · 방향 ${out} · ${fmtBeats(tile.beats)}박 · ${+tile.bpm.toFixed(2)} BPM · ${tile.time.toFixed(3)}s`;
+  }
+}
