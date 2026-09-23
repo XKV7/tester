@@ -156,3 +156,24 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--warm); }
 .ed-canvas .zoom-ctl .btn { min-width: 44px; min-height: 36px; font-size: 16px; }
 .ed-canvas .zoom-ctl .zoom-val { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
 @media (max-width: 760px) { .ed-canvas .hint { display: none; } }
+/* 에디터 방향 패드 */
+.ed-canvas .dir-pad { position: absolute; left: 10px; bottom: 10px; display: flex; flex-direction: column; gap: 6px; pointer-events: auto; background: rgba(14,15,22,.78); padding: 8px; border-radius: 14px; border: 1px solid var(--line); z-index: 2; }
+.ed-canvas .dir-pad .pad-grid { display: grid; grid-template-columns: repeat(3, 48px); gap: 6px; }
+.ed-canvas .dir-pad .pad-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.ed-canvas .dir-pad .pad-btn { min-height: 44px; padding: 0; font-size: 20px; line-height: 1; touch-action: manipulation; }
+.ed-canvas .dir-pad .pad-row .pad-btn { min-height: 36px; font-size: 15px; }
+.ed-canvas .dir-pad .pad-btn:active { background: #34406a; }
+.ed-canvas .dir-pad[hidden] { display: none; }
+.ed-canvas .dir-pad:not([hidden]) ~ .hint { display: none; }
+@media (max-width: 760px) {
+  .ed-canvas .dir-pad { left: 6px; bottom: 6px; padding: 6px; gap: 6px; flex-direction: row; align-items: stretch; }
+  .ed-canvas .dir-pad .pad-grid { grid-template-columns: repeat(3, 42px); gap: 4px; }
+  .ed-canvas .dir-pad .pad-btn { min-height: 40px; }
+  .ed-canvas .dir-pad .pad-row { grid-template-columns: repeat(2, 40px); grid-auto-rows: 1fr; }
+  .ed-canvas .dir-pad .pad-row .pad-btn { min-height: 0; }
+  /* 위쪽 버튼 막대: 한 줄, 옆으로 밀어서 보기 */
+  .ed-top { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; touch-action: pan-x; }
+  .ed-top::-webkit-scrollbar { display: none; }
+  .ed-top > * { flex-shrink: 0; }
+  .ed-top .grow { display: none; }
+}
