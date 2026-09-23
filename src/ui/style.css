@@ -194,3 +194,4 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--warm); }
   .page-head h1 { flex: 1 1 auto; font-size: 19px; }
   .select-bar { padding: 10px 14px; }
 }
+select:disabled { opacity: .45; }

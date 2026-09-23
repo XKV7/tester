@@ -60,7 +60,7 @@ export class TitleScreen implements Screen {
           h('button', { class: 'btn', onclick: () => show(new SettingsScreen(() => new TitleScreen())) }, '설정'),
         ),
       ),
-      h('div', { class: 'footer-note' }, '아무 키 또는 터치로 플레이 · Esc 일시정지'),
+      h('div', { class: 'footer-note' }, `아무 키 또는 터치로 플레이 · Esc 일시정지 · 버전 ${__BUILD__}`),
     );
   }
 

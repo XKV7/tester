@@ -796,13 +796,15 @@ export class EditorScreen implements Screen {
             (() => {
               const ss = h(
                 'select',
-                { id: 'auto-sens', title: '원곡 그대로 민감도', onchange: () => (this.autoSens = Number(ss.value)) },
+                { id: 'auto-sens', onchange: () => (this.autoSens = Number(ss.value)) },
                 h('option', { value: '0.3' }, '민감도 낮음'),
                 h('option', { value: '0.55' }, '민감도 보통'),
                 h('option', { value: '0.85' }, '민감도 높음'),
               );
               ss.value = String(this.autoSens);
-              ss.hidden = this.autoDiff !== 'full';
+              // 항상 보이게 (원곡 그대로일 때만 사용)
+              ss.disabled = this.autoDiff !== 'full';
+              ss.title = ss.disabled ? '민감도는 "원곡 그대로"에서만 씁니다' : '원곡 그대로 민감도';
               return ss;
             })(),
             h('button', { class: 'btn small cool', disabled: !hasSong, onclick: () => void this.generate() }, '생성'),
