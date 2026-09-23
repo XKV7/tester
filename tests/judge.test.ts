@@ -38,6 +38,15 @@ describe('판정 경계값', () => {
     expect(judgeError(50.01, fast, 100)).toBe('miss');
     expect(judgeError(-50.01, fast, 100)).toBe('tooEarly');
   });
+  it('앞뒤 음표 간격 기반 하한 (속도 올린 구간)', () => {
+    // 보이는 박 83ms(720BPM)라도 실제 음표 간격 83ms면 창 상한 ≈ 41.7ms
+    const w2 = judgeWindows(83.3, 1, 83.3 / 2);
+    expect(w2.perfect).toBe(35);
+    expect(w2.far).toBeCloseTo(41.65, 1);
+    // 일반 타일은 그대로
+    expect(judgeWindows(500, 1, 250)).toEqual(judgeWindows(500));
+  });
+
   it('난이도 배율', () => {
     const lenient = judgeWindows(1000, DIFFICULTY_MULT.lenient);
     expect(lenient.perfect).toBeCloseTo(49);

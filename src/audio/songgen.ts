@@ -272,9 +272,10 @@ export function songHits(song: Song, difficulty: AutoDifficulty): number[] {
     hard: ['kick', 'snare', 'lead', 'bass'],
     expert: ['kick', 'snare', 'lead', 'bass', 'hat'],
     master: ['kick', 'snare', 'lead', 'bass', 'hat'],
+    full: ['kick', 'snare', 'lead', 'bass', 'hat'],
   };
   // 격자: 쉬움~어려움 반박, 매우 어려움 16분, 극한 16분+셋잇단
-  const q = difficulty === 'master' ? 12 : difficulty === 'expert' ? 4 : 2;
+  const q = difficulty === 'full' ? 24 : difficulty === 'master' ? 12 : difficulty === 'expert' ? 4 : 2;
   const set = new Set(use[difficulty]);
   const end = song.bars * 4 - 4; // 아웃트로 마지막 마디 제외
   const beats = new Set<number>();

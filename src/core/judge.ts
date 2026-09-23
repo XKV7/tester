@@ -16,9 +16,12 @@ export interface Windows {
   far: number;
 }
 
-/** 판정 창 (ms). window(x) = min(x × 배율, beatMs × 0.25) */
-export function judgeWindows(beatMs: number, mult = 1): Windows {
-  const cap = beatMs * 0.25;
+/**
+ * 판정 창 (ms). window(x) = min(x × 배율, cap), cap = max(beatMs × 0.25, minCapMs).
+ * minCapMs: 앞뒤 음표 간격의 절반 — 속도를 올린 구간(보이는 박이 짧음)에서도 창이 지나치게 좁아지지 않게.
+ */
+export function judgeWindows(beatMs: number, mult = 1, minCapMs = 0): Windows {
+  const cap = Math.max(beatMs * 0.25, minCapMs);
   return {
     perfect: Math.min(BASE_WINDOWS.perfect * mult, cap),
     near: Math.min(BASE_WINDOWS.near * mult, cap),

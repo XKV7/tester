@@ -3,7 +3,7 @@ import { library } from '../levels/library';
 import { loadPackageAudio, PACKAGE_ACCEPT, packageFromFileList, packageFromSong, PackageError, songFromZip, SONG_OR_ZIP_ACCEPT, type LevelPackage } from '../levels/package';
 import { getBest, settings } from '../game/settings';
 import { ambient } from '../render/stage';
-import { alertBox, choiceBox, DIFFICULTY_CHOICES, fileButton, h, isTyping, show, stars, toast, warnIfHuge, type Screen } from './dom';
+import { alertBox, choiceBox, DIFFICULTY_CHOICES, fileButton, h, isTyping, SENSITIVITY_CHOICES, show, stars, toast, warnIfHuge, type Screen } from './dom';
 import { PlayScreen } from './play';
 import { speedSelect } from './speed';
 import { openSongGenerator } from './songgen';
@@ -165,10 +165,16 @@ export class SelectScreen implements Screen {
     }
     const d = await choiceBox('음원으로 레벨 만들기', `${file.name}의 리듬을 분석해 타일을 자동으로 만듭니다. (동영상이면 소리만 씁니다) 난이도를 고르세요.`, DIFFICULTY_CHOICES);
     if (!d) return;
-    toast('곡을 분석하는 중…', 1500);
+    let sens: number | undefined;
+    if (d === 'full') {
+      const s = await choiceBox('원곡 그대로 — 민감도', '곡에서 들리는 소리를 하나하나 타일로 만듭니다. 얼마나 작은 소리까지 잡을까요?', SENSITIVITY_CHOICES);
+      if (!s) return;
+      sens = Number(s);
+    }
+    toast(d === 'full' ? '소리를 하나하나 분석하는 중… (긴 곡은 몇 초 걸려요)' : '곡을 분석하는 중…', 2500);
     await new Promise((r) => setTimeout(r, 30));
     try {
-      const { pkg, summary } = await packageFromSong(file, d);
+      const { pkg, summary } = await packageFromSong(file, d, sens);
       library.add(pkg);
       this.sel = null;
       this.select(pkg);
