@@ -155,3 +155,66 @@ describe('원곡 그대로 (모든 소리)', () => {
     expect(r!.tiles).toBeGreaterThan(truthBeats.length * 0.8);
   });
 });
+
+describe('원곡 그대로: 박자가 아닌 소리는 거른다', () => {
+  // 실제 곡처럼: 10초 조용한 인트로(잡음 패드·비브라토 보컬·잔향) → 드럼 본편(128BPM)
+  const bpm = 128;
+  const beat = 60 / bpm;
+  const intro = 10;
+  const first = intro;
+  const bodyBeats = 64;
+  const len = intro + bodyBeats * beat + 1.5;
+  const n = Math.ceil(len * SR);
+  const pcm = new Float32Array(n);
+  let seed = 3;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 4294967296) * 2 - 1;
+  // 인트로·전체에 깔리는 요소
+  let lp = 0;
+  let ph = 0;
+  for (let i = 0; i < n; i++) {
+    const t = i / SR;
+    // 천천히 출렁이는 바람 소리 같은 잡음 패드
+    lp += (rnd() - lp) * 0.05;
+    const swell = 0.5 + 0.5 * Math.sin(2 * Math.PI * 0.3 * t) * Math.sin(2 * Math.PI * 0.07 * t);
+    pcm[i] += lp * 0.25 * swell;
+    // 비브라토 보컬 같은 지속음 (음정·세기가 계속 흔들림)
+    const f = 330 * (1 + 0.02 * Math.sin(2 * Math.PI * 5.5 * t)) * (t < intro ? 1 : 1.5);
+    ph += (2 * Math.PI * f) / SR;
+    const amp = 0.12 * (0.6 + 0.4 * Math.sin(2 * Math.PI * 1.7 * t)) * (0.7 + 0.3 * Math.sin(2 * Math.PI * 0.45 * t));
+    pcm[i] += Math.sin(ph) * amp + 0.4 * Math.sin(2 * ph) * amp;
+    // 잔잔한 숨소리 같은 짧은 잡음 덩어리 (박자 아님)
+  }
+  for (let k = 0; k < 25; k++) {
+    const t0 = 0.3 + k * 0.37 + (k % 3) * 0.05;
+    if (t0 > intro - 0.3) break;
+    const s0 = Math.round(t0 * SR);
+    for (let i = 0; i < 0.12 * SR; i++) pcm[s0 + i] += rnd() * 0.05 * Math.sin((Math.PI * i) / (0.12 * SR));
+  }
+  // 본편 드럼: 킥 정박, 스네어 2·4, 하이햇 8분
+  const truth: number[] = [];
+  const ev: { t: number; k: 'kick' | 'snare' | 'hat' | 'tone' }[] = [];
+  for (let b = 0; b < bodyBeats; b += 0.5) {
+    const t = first + b * beat;
+    if (b % 1 === 0) ev.push({ t, k: b % 2 === 1 ? 'snare' : 'kick' });
+    ev.push({ t, k: 'hat' });
+    truth.push(b);
+  }
+  const drums = synth(ev, len);
+  for (let i = 0; i < n; i++) pcm[i] += drums[i];
+
+  it('인트로에서는 타일이 거의 생기지 않고, 본편 박자는 잡는다', () => {
+    for (const sens of [0.3, 0.55, 0.85]) {
+      const r = autoChartFull(pcm, SR, { bpm, offset: first % beat, sensitivity: sens });
+      expect(r, `sens ${sens}`).not.toBeNull();
+      const c = compileChart(r!.level);
+      const times = c.times.slice(1, -1);
+      const inIntro = times.filter((t) => t < intro - 0.1).length;
+      expect(inIntro, `sens ${sens}: 인트로 타일`).toBeLessThanOrEqual(3);
+      const body = times.filter((t) => t >= intro - 0.05);
+      const truthT = truth.map((b) => first + b * beat);
+      const near = (t: number, xs: number[]) => xs.some((x) => Math.abs(x - t) < 0.025);
+      expect(body.filter((t) => near(t, truthT)).length / body.length, `sens ${sens}: 정밀도`).toBeGreaterThan(0.95);
+      expect(truthT.filter((t) => near(t, body)).length / truthT.length, `sens ${sens}: 재현율`).toBeGreaterThan(sens < 0.4 ? 0.45 : 0.85);
+    }
+  });
+});

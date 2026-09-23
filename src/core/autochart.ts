@@ -627,24 +627,91 @@ export function autoChartFull(samples: Float32Array, sampleRate: number, opts: F
   while (first < 1) first += beat;
   const songEnd = samples.length / sampleRate - 0.3;
 
-  // 박 위치로 변환 + 템포 흔들림 보정: 정박·반박 근처의 뚜렷한 소리로 위상(drift)을 천천히 따라간다
-  const tol = Math.min(0.03, beat * 0.08) / beat; // 30ms 또는 0.08박
+  // 1) 박 위치로 변환 + 템포 흔들림 보정 (정박·반박 근처의 뚜렷한 소리로 위상을 천천히 따라감)
+  //    허용 박 단위: 정박·반박·16분·셋잇단·6연음, 곡이 느리면 32분·12연음까지 (최소 간격보다 촘촘한 단위는 제외)
+  const allowed = [1, 2, 4, 3, 6, 8, 12].filter((d) => d <= 4 || beat / d >= minGap * 0.95).filter((d) => d <= maxDiv);
+  const tolStrict = Math.min(0.015, beat * 0.05) / beat; // 15ms 또는 0.05박
+  const tolCoh = Math.min(0.012, beat * 0.04) / beat;
   let drift = 0;
-  const hits: number[] = [];
-  const strong = onsets.length ? [...onsets].map((o) => o.s).sort((a, b) => a - b)[Math.floor(onsets.length * 0.5)] : 0;
+  const strengths = onsets.map((o) => o.s).sort((a, b) => a - b);
+  const median = strengths.length ? strengths[Math.floor(strengths.length * 0.5)] : 0;
+  const strongRef = strengths.length ? strengths[Math.floor(strengths.length * 0.9)] : 0;
+  type Cand = { raw: number; q: number; err: number; s: number };
+  const cands: Cand[] = [];
   for (const o of onsets) {
     if (o.t <= first + 0.02 || o.t >= songEnd) continue;
     const raw = (o.t - first) / beat - drift;
-    const q = quantizeBeat(raw, tol, maxDiv);
-    const half = Math.round(raw * 2) / 2;
-    if (o.s >= strong && Math.abs(raw - half) < 0.12) drift += (raw - half) * 0.15;
-    if (q <= 0) continue;
-    const last = hits[hits.length - 1];
-    if (last !== undefined) {
-      if (q <= last + 1e-9) continue;
-      if ((q - last) * beat < minGap - 1e-9) continue;
+    let q = raw;
+    let err = Infinity;
+    for (const d of allowed) {
+      const qq = Math.round(raw * d) / d;
+      const e = Math.abs(qq - raw);
+      if (e <= tolStrict) {
+        q = qq;
+        err = e;
+        break;
+      }
+      if (e < err) {
+        err = e;
+        q = qq;
+      }
     }
-    hits.push(q);
+    const half = Math.round(raw * 2) / 2;
+    if (o.s >= median && Math.abs(raw - half) < 0.12) drift += (raw - half) * 0.15;
+    cands.push({ raw, q, err, s: o.s });
+  }
+  // 2) 리듬 일관성: 앞뒤 2박 안의 소리 중 16분 격자(정박·반박·16분)에 딱 맞는 비율.
+  //    낮으면 박자가 아닌 구간(잡음·잔향·흔들리는 보컬). 격자가 촘촘할수록 우연히 맞기 쉬워 16분 격자만 본다.
+  const coherent = cands.map((c) => Math.abs(Math.round(c.raw * 4) / 4 - c.raw) <= tolCoh);
+  // 아주 약한 소리 하한 (가장 큰 소리 대비, 민감도 높을수록 낮게)
+  const sens = Math.max(0, Math.min(1, opts.sensitivity ?? 0.55));
+  const weakFloor = strongRef * (0.06 - 0.05 * sens);
+  const keep: Cand[] = [];
+  let lo = 0;
+  let hi = 0;
+  let inWin = 0;
+  let cohWin = 0;
+  for (let i = 0; i < cands.length; i++) {
+    while (hi < cands.length && cands[hi].raw <= cands[i].raw + 2) {
+      inWin++;
+      if (coherent[hi]) cohWin++;
+      hi++;
+    }
+    while (cands[lo].raw < cands[i].raw - 2) {
+      inWin--;
+      if (coherent[lo]) cohWin--;
+      lo++;
+    }
+    const c = cands[i];
+    if (c.err > tolStrict) continue; // 박 위치에서 벗어난 소리
+    if (c.s < weakFloor) continue;
+    // 잘게 쪼갠 위치(16분·셋잇단 등)는 주변 박 소리의 대표 세기에 비해 충분히 뚜렷해야 한다
+    const onHalf = Math.abs(c.q * 2 - Math.round(c.q * 2)) < 1e-6;
+    const local: number[] = [];
+    for (let j = lo; j < hi; j++) if (coherent[j]) local.push(cands[j].s);
+    local.sort((a, b) => a - b);
+    const med = local.length ? local[local.length >> 1] : 0;
+    if (c.s < med * (onHalf ? 0.25 - 0.15 * sens : 0.4 - 0.3 * sens)) continue;
+    // 소리가 적은 구간은 우연히 맞을 수 있어 더 엄격하게 (분모에 여유 1.5)
+    const rhythmic = cohWin / (inWin + 1.5) >= 0.5;
+    if (!rhythmic && c.s < strongRef * 0.6) continue; // 박자 없는 구간에서는 아주 큰 소리만
+    keep.push(c);
+  }
+  // 3) 최소 간격: 가까운 두 소리 중 더 큰 쪽
+  const hits: number[] = [];
+  const hitS: number[] = [];
+  for (const c of keep) {
+    if (c.q <= 0) continue;
+    const k = hits.length - 1;
+    if (k >= 0 && (c.q <= hits[k] + 1e-9 || (c.q - hits[k]) * beat < minGap - 1e-9)) {
+      if (c.s > hitS[k] && (k === 0 || (c.q - hits[k - 1]) * beat >= minGap - 1e-9) && c.q > (hits[k - 1] ?? 0)) {
+        hits[k] = c.q;
+        hitS[k] = c.s;
+      }
+      continue;
+    }
+    hits.push(c.q);
+    hitS.push(c.s);
   }
   if (hits.length < 8) return null;
 
