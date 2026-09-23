@@ -55,6 +55,8 @@ describe('자동 레벨 생성', () => {
     const recall = inRange.filter((t) => near(t, hitTimes)).length / inRange.length;
     expect(precision).toBeGreaterThan(0.9);
     expect(recall).toBeGreaterThan(0.85);
+    // 이벤트는 겹침 방지용 Twirl만
+    expect(r!.level.actions.every((a) => a.type === 'Twirl')).toBe(true);
     // 반박 리듬이 실제로 들어갔는지
     expect(chart.tiles.some((t) => Math.abs(t.beats - 0.5) < 1e-6)).toBe(true);
   });

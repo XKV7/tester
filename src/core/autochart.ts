@@ -10,7 +10,7 @@ import type { Action, Dir, LevelData } from './types';
  * 2. 반박 격자 위의 onset 세기를 재고, 백분위 기준으로 타격 지점을 고른다.
  * 3. 간격은 반박~1.5박으로 정리(2박 이상 빈 곳은 1박 타일로 채움), 입력 간격 최소 200ms.
  * 4. 간격(박) → 각도. 트랙이 겹치지 않도록 필요할 때만 회전 반전(Twirl)을 넣는다.
- * 5. 16박마다 체크포인트, 32박마다 트랙 색 변경.
+ * 5. 체크포인트·색 변경 같은 이벤트는 넣지 않는다 (Twirl만). 필요하면 에디터에서 직접 추가.
  */
 export type AutoDifficulty = 'easy' | 'normal' | 'hard';
 
@@ -40,7 +40,6 @@ const THRESH: Record<AutoDifficulty, { step: number; on: number; off: number; di
   hard: { step: 0.5, on: 0.05, off: 0.45, diff: 6 },
 };
 
-const PALETTE = ['#3a3f55', '#4a3b5e', '#3b5e52', '#5e553b', '#553a3f'];
 
 function percentile(xs: number[], p: number): number {
   if (xs.length === 0) return Infinity;
@@ -195,22 +194,6 @@ export function autoChart(samples: Float32Array, sampleRate: number, opts: AutoO
   const lay = layoutBeats(intervals, 'CW');
   const actions: Action[] = lay.twirls.map((k) => ({ floor: k, type: 'Twirl' as const }));
   const n = lay.path.length + 1;
-  let nextCp = 16;
-  let nextColor = 32;
-  let colorIdx = 0;
-  for (let i = 1; i < n - 1; i++) {
-    const at = hits[i - 1];
-    if (at >= nextCp) {
-      actions.push({ floor: i, type: 'Checkpoint' });
-      nextCp = at + 16;
-    }
-    if (at >= nextColor) {
-      colorIdx = (colorIdx + 1) % PALETTE.length;
-      actions.push({ floor: i, type: 'RecolorTrack', from: i, to: n - 1, color: PALETTE[colorIdx], duration: 1 });
-      nextColor = at + 32;
-    }
-  }
-  actions.sort((a, b) => a.floor - b.floor);
 
   const settings = { ...defaultSettings(), bpm, offset: Math.round(first * 1000) / 1000, songFile: opts.songFile ?? '' };
   const meta = {
