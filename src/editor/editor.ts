@@ -7,6 +7,7 @@ import {
   deleteTile,
   fillStraight,
   insertTileAfter,
+  truncateAfter,
   recordToAngles,
   removeAction,
   replaceAction,
@@ -39,7 +40,7 @@ import {
 } from '../levels/package';
 import { stage } from '../render/stage';
 import { fmtBeats, TrackView } from '../render/track';
-import { alertBox, confirmBox, fileInput, h, isTyping, show, toast, type Screen } from '../ui/dom';
+import { alertBox, confirmBox, fileButton, h, isTyping, show, toast, warnIfHuge, type Screen } from '../ui/dom';
 import { PlayScreen } from '../ui/play';
 import { openSongGenerator } from '../ui/songgen';
 import { openMp3Converter } from '../ui/convert';
@@ -116,6 +117,10 @@ export class EditorScreen implements Screen {
   private autoDiff: AutoDifficulty = 'normal';
   private autoUseCurrent = false;
   private recMode: RecordMode = 'oneway';
+  /** 녹화 재생 속도 (느리게 재생해도 결과는 원래 속도 기준). */
+  private recSpeed = 1;
+  /** 선택 타일 뒤를 지우고 녹화. */
+  private recOverwrite = false;
   private fillCount = 8;
   private fillBpm = 0;
   private drag: { x: number; y: number; cx: number; cy: number; moved: boolean } | null = null;
@@ -599,10 +604,16 @@ export class EditorScreen implements Screen {
     const beat = 60 / tile.bpm;
     const songStart = tile.time - 4 * beat;
     this.eng.cancelScheduled();
-    this.eng.play(buf, songStart, this.level.settings.pitch, this.level.settings.volume, 0.1);
+    // 곡 시각은 재생 속도와 무관하게 계산되므로 느리게 들어도 박 간격은 원래 곡 기준
+    this.eng.play(buf, songStart, this.level.settings.pitch * this.recSpeed, this.level.settings.volume, 0.1);
     for (let k = 4; k >= 1; k--) this.sfx.tick(this.eng.ctxTimeForSong(tile.time - k * beat), k === 1);
-    this.recording = { base: cloneLevel(this.level), baseSel: this.sel, presses: [], mode: this.recMode };
     this.undoStack.push({ level: JSON.stringify(this.level), sel: this.sel });
+    const base = this.recOverwrite && this.sel < this.level.path.length ? truncateAfter(this.level, this.sel) : cloneLevel(this.level);
+    if (base !== this.level && this.recOverwrite) {
+      this.level = base;
+      this.rebuild();
+    }
+    this.recording = { base, baseSel: this.sel, presses: [], mode: this.recMode };
     this.redoStack = [];
     (document.activeElement as HTMLElement | null)?.blur?.();
     this.renderSide();
@@ -610,7 +621,7 @@ export class EditorScreen implements Screen {
 
   private recordPress(ts: number): void {
     const r = this.recording!;
-    const t = this.eng.songTimeAtPerf(ts) - (settings.inputOffset / 1000) * this.level.settings.pitch;
+    const t = this.eng.songTimeAtPerf(ts) - (settings.inputOffset / 1000) * this.eng.currentPitch;
     const base = compileChart(r.base).tiles[r.baseSel];
     const prev = r.presses.length ? r.presses[r.presses.length - 1] : base.time;
     if (t - prev < 0.03) return;
@@ -766,6 +777,8 @@ export class EditorScreen implements Screen {
                 h('option', { value: 'easy' }, '쉬움'),
                 h('option', { value: 'normal' }, '보통'),
                 h('option', { value: 'hard' }, '어려움'),
+                h('option', { value: 'expert' }, '매우 어려움 (16분)'),
+                h('option', { value: 'master' }, '극한 (16분+셋잇단)'),
               );
               sel.value = this.autoDiff;
               return sel;
@@ -882,6 +895,7 @@ export class EditorScreen implements Screen {
   private async loadSong(files: FileList | File[]): Promise<void> {
     let f = files[0];
     if (!f) return;
+    warnIfHuge(f);
     try {
       const inner = await songFromZip(f);
       if (inner) f = inner;
@@ -954,9 +968,9 @@ export class EditorScreen implements Screen {
   // ───────────────────────── DOM ─────────────────────────
 
   private buildDom(root: HTMLElement): void {
-    const pickLevel = fileInput({ accept: PACKAGE_ACCEPT, multiple: true }, (f) => this.loadFiles(f));
-    const pickSong = fileInput({ accept: SONG_OR_ZIP_ACCEPT }, (f) => this.loadSong(f));
-    const pickImg = fileInput({ accept: 'image/*' }, (f) => this.addImage(f));
+    const pickLevel = fileButton('불러오기', { accept: PACKAGE_ACCEPT, multiple: true, cls: 'small' }, (f) => this.loadFiles(f));
+    const pickSong = fileButton('음원 선택 (음악·동영상)', { accept: SONG_OR_ZIP_ACCEPT, cls: 'small' }, (f) => this.loadSong(f));
+    const pickImg = fileButton('배경 이미지', { accept: 'image/*', cls: 'small' }, (f) => this.addImage(f));
     this.info = h('div', { class: 'info' });
     this.recBadge = h('span', { class: 'rec-badge' });
     this.side = h('div', { class: 'ed-side' });
@@ -971,10 +985,10 @@ export class EditorScreen implements Screen {
           h('button', { class: 'btn small', onclick: () => show(new TitleScreen()) }, '← 타이틀'),
           h('span', { class: 'title' }, '레벨 에디터'),
           h('button', { class: 'btn small', onclick: () => void this.newLevel() }, '새로 만들기'),
-          h('button', { class: 'btn small', onclick: () => pickLevel.click() }, '불러오기'),
+          pickLevel,
           h('button', { class: 'btn small', onclick: () => void this.saveJson() }, '.orbit.json 저장'),
           h('button', { class: 'btn small', onclick: () => void this.exportZipFile() }, 'zip 내보내기'),
-          h('button', { class: 'btn small', onclick: () => pickSong.click() }, '음원 선택 (음악·동영상)'),
+          pickSong,
           h('button', { class: 'btn small cool', onclick: () => void this.generateSongLevel() }, '음악 자동 생성'),
           h(
             'button',
@@ -987,16 +1001,13 @@ export class EditorScreen implements Screen {
             },
             '동영상 → mp3',
           ),
-          h('button', { class: 'btn small', onclick: () => pickImg.click() }, '배경 이미지'),
+          pickImg,
           h('button', { class: 'btn small', onclick: () => this.addToLibrary() }, '목록에 추가'),
           h('span', { class: 'grow' }),
           this.recBadge,
           h('button', { class: 'btn small', onclick: () => this.undo(), title: 'Ctrl+Z' }, '↶'),
           h('button', { class: 'btn small', onclick: () => this.redo(), title: 'Ctrl+Y' }, '↷'),
           h('button', { class: 'btn small primary', onclick: () => this.playtest(), title: 'Space' }, '▶ 플레이테스트'),
-          pickLevel,
-          pickSong,
-          pickImg,
         ),
         (this.canvasEl = h(
           'div',
@@ -1211,6 +1222,25 @@ export class EditorScreen implements Screen {
         { class: 'form' },
         h('label', null, '녹화 방향'),
         modeSel,
+        h('label', { for: 'rec-speed' }, '녹화 속도'),
+        (() => {
+          const sp = h(
+            'select',
+            { id: 'rec-speed', onchange: () => (this.recSpeed = Number(sp.value) || 1) },
+            h('option', { value: '1' }, '×1 (원래 속도)'),
+            h('option', { value: '0.75' }, '×0.75'),
+            h('option', { value: '0.5' }, '×0.5 (절반 — 빠른 구간 연습)'),
+          );
+          sp.value = String(this.recSpeed);
+          return sp;
+        })(),
+        h('label', null, ''),
+        h(
+          'label',
+          { class: 'row dim', style: 'font-size:12px' },
+          h('input', { type: 'checkbox', id: 'rec-over', checked: this.recOverwrite, onchange: (e: Event) => (this.recOverwrite = (e.target as HTMLInputElement).checked) }),
+          '선택 타일 뒤를 지우고 녹화 (덮어쓰기)',
+        ),
         h('label', null, '녹화'),
         this.recording
           ? h('button', { class: 'btn small danger', onclick: () => this.stopRecording(true) }, '■ 녹화 중지 (Esc)')

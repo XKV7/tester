@@ -129,7 +129,9 @@ export function toast(text: string, ms = 2600): void {
 export const DIFFICULTY_CHOICES = [
   { value: 'easy' as const, label: '쉬움', hint: '주로 1박, 가끔 반박' },
   { value: 'normal' as const, label: '보통', hint: '반박 리듬 섞임' },
-  { value: 'hard' as const, label: '어려움', hint: '곡의 잔 리듬까지' },
+  { value: 'hard' as const, label: '어려움', hint: '8분음표 리듬까지' },
+  { value: 'expert' as const, label: '매우 어려움', hint: '16분음표까지' },
+  { value: 'master' as const, label: '극한', hint: '16분음표 + 셋잇단' },
 ];
 
 export function stars(n: number): string {
@@ -151,3 +153,58 @@ export function fileInput(opts: { accept?: string; multiple?: boolean; directory
 }
 
 export { isTyping } from '../game/input';
+
+const PICKER_HINT =
+  '파일 선택 창이 안 열렸나요? Claude 앱 안에서는 파일을 고를 수 없을 수 있어요. 이 링크를 크롬·사파리 같은 브라우저에서 열어 주세요.';
+
+/**
+ * 파일 선택 버튼. 투명한 <input type=file>을 버튼 위에 겹쳐 사용자가 입력 요소를 직접 누르게 한다.
+ * (숨긴 입력을 코드로 click()하면 일부 모바일 브라우저·앱 화면에서 선택 창이 뜨지 않는다.)
+ * 눌렀는데 선택 창이 열린 흔적(페이지 blur/숨김)이 없으면 안내를 띄운다.
+ */
+export function fileButton(
+  label: Child,
+  opts: { accept?: string; multiple?: boolean; directory?: boolean; cls?: string; title?: string },
+  onPick: (files: FileList) => void,
+): HTMLLabelElement & { input: HTMLInputElement } {
+  const inp = h('input', { type: 'file', class: 'file-btn-input', accept: opts.accept, multiple: opts.multiple, title: opts.title ?? '' });
+  if (opts.directory) {
+    inp.setAttribute('webkitdirectory', '');
+    inp.setAttribute('directory', '');
+  }
+  let picked = false;
+  inp.addEventListener('change', () => {
+    picked = true;
+    if (inp.files && inp.files.length) onPick(inp.files);
+    inp.value = '';
+  });
+  inp.addEventListener('click', () => {
+    picked = false;
+    let opened = false;
+    const mark = () => (opened = true);
+    window.addEventListener('blur', mark, { once: true });
+    document.addEventListener('visibilitychange', mark, { once: true });
+    setTimeout(() => {
+      window.removeEventListener('blur', mark);
+      document.removeEventListener('visibilitychange', mark);
+      if (!opened && !picked && document.hasFocus()) toast(PICKER_HINT, 7000);
+    }, 1500);
+  });
+  const lab = h('label', { class: `btn file-btn ${opts.cls ?? ''}`, title: opts.title }, label, inp) as HTMLLabelElement & {
+    input: HTMLInputElement;
+  };
+  lab.input = inp;
+  return lab;
+}
+
+/** 파일 버튼 사용/금지 전환. */
+export function setFileButtonDisabled(b: HTMLLabelElement & { input: HTMLInputElement }, disabled: boolean): void {
+  b.input.disabled = disabled;
+  b.classList.toggle('disabled', disabled);
+}
+
+/** 큰 파일 경고 (폰은 메모리가 부족해 멈출 수 있음). */
+export function warnIfHuge(file: File): void {
+  if (file.size > 300 * 1024 * 1024)
+    toast(`파일이 큽니다 (${Math.round(file.size / 1024 / 1024)}MB). 폰에서는 처리 중 멈출 수 있어요. 가능하면 짧게 자르거나 컴퓨터에서 변환하세요.`, 7000);
+}

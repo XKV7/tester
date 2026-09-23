@@ -56,7 +56,7 @@ export function packageFromFiles(files: Map<string, Uint8Array>, id = newPackage
 }
 
 /** 음원 파일 하나 → 자동 생성 레벨 패키지. 박을 찾지 못하면 PackageError. */
-export async function packageFromSong(file: File, difficulty: 'easy' | 'normal' | 'hard'): Promise<{ pkg: LevelPackage; summary: string }> {
+export async function packageFromSong(file: File, difficulty: import('../core/autochart').AutoDifficulty): Promise<{ pkg: LevelPackage; summary: string }> {
   const { autoChart } = await import('../core/autochart');
   const { toMono } = await import('../audio/mono');
   const data = new Uint8Array(await file.arrayBuffer());

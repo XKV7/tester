@@ -3,7 +3,8 @@ import { compileChart } from '../src/core/chart';
 import { SmoothClock } from '../src/core/clock';
 import { emptyLevel } from '../src/core/level';
 import { VisualTimeline } from '../src/core/timeline';
-import { insertTileAfter, deleteTile, recordToAngles, fillStraight } from '../src/core/editorOps';
+import { insertTileAfter, deleteTile, recordToAngles, fillStraight, truncateAfter } from '../src/core/editorOps';
+import { validateLevel } from '../src/core/level';
 import { compileChart as cc } from '../src/core/chart';
 
 function chart() {
@@ -97,6 +98,22 @@ describe('에디터 조작', () => {
     expect(r.twirls).toEqual([1, 2]);
     expect(r.angles[0]).toBe(90);
   });
+  it('덮어쓰기용 잘라내기', () => {
+    const lv = emptyLevel();
+    lv.path = [0, 0, 90, 0, 0, 0];
+    lv.actions = [
+      { floor: 1, type: 'Twirl' },
+      { floor: 4, type: 'Checkpoint' },
+      { floor: 3, type: 'Pause', beats: 2 },
+      { floor: 1, type: 'RecolorTrack', from: 1, to: 6, color: '#ff0000' },
+    ];
+    const t = truncateAfter(lv, 3);
+    expect(t.path).toEqual([0, 0, 90]);
+    expect(t.actions.map((a) => a.type)).toEqual(['Twirl', 'RecolorTrack']);
+    expect((t.actions[1] as { to: number }).to).toBe(3);
+    expect(validateLevel(t).ok).toBe(true);
+  });
+
   it('직진 채우기', () => {
     const lv = emptyLevel();
     lv.path = [90];

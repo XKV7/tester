@@ -3,7 +3,7 @@ import { library } from '../levels/library';
 import { loadPackageAudio, PACKAGE_ACCEPT, packageFromFileList, packageFromSong, PackageError, songFromZip, SONG_OR_ZIP_ACCEPT, type LevelPackage } from '../levels/package';
 import { getBest, settings } from '../game/settings';
 import { ambient } from '../render/stage';
-import { alertBox, choiceBox, DIFFICULTY_CHOICES, fileInput, h, isTyping, show, stars, toast, type Screen } from './dom';
+import { alertBox, choiceBox, DIFFICULTY_CHOICES, fileButton, h, isTyping, show, stars, toast, warnIfHuge, type Screen } from './dom';
 import { PlayScreen } from './play';
 import { speedSelect } from './speed';
 import { openSongGenerator } from './songgen';
@@ -34,9 +34,9 @@ export class SelectScreen implements Screen {
 
   enter(root: HTMLElement): void {
     ambient(true);
-    const pickFiles = fileInput({ accept: PACKAGE_ACCEPT, multiple: true }, (f) => this.load(f));
-    const pickDir = fileInput({ directory: true }, (f) => this.load(f));
-    const pickSong = fileInput({ accept: SONG_OR_ZIP_ACCEPT }, (f) => void this.fromSong(f[0]));
+    const pickFiles = fileButton('레벨 불러오기 (zip / json)', { accept: PACKAGE_ACCEPT, multiple: true, cls: 'small' }, (f) => this.load(f));
+    const pickDir = fileButton('폴더 불러오기', { directory: true, cls: 'small' }, (f) => this.load(f));
+    const pickSong = fileButton('음원으로 레벨 만들기', { accept: SONG_OR_ZIP_ACCEPT, cls: 'small primary' }, (f) => void this.fromSong(f[0]));
     this.cards = h('div', { class: 'cards' });
     this.autoBox = h('input', { type: 'checkbox', checked: lastAuto, onchange: () => (lastAuto = this.autoBox.checked) });
     root.append(
@@ -48,10 +48,7 @@ export class SelectScreen implements Screen {
           { class: 'page-head' },
           h('button', { class: 'btn small', onclick: () => show(new TitleScreen()) }, '← 뒤로'),
           h('h1', null, '레벨 선택'),
-          pickFiles,
-          pickDir,
           pickSong,
-          h('button', { class: 'btn small primary', onclick: () => pickSong.click() }, '음원으로 레벨 만들기'),
           h('button', { class: 'btn small cool', onclick: () => void this.generateSong() }, '음악 자동 생성'),
           h(
             'button',
@@ -64,8 +61,8 @@ export class SelectScreen implements Screen {
             },
             '동영상 → mp3',
           ),
-          h('button', { class: 'btn small', onclick: () => pickFiles.click() }, '레벨 불러오기 (zip / json)'),
-          h('button', { class: 'btn small', onclick: () => pickDir.click() }, '폴더 불러오기'),
+          pickFiles,
+          pickDir,
         ),
         h('div', { class: 'page-body' }, this.cards),
         h(
@@ -151,6 +148,7 @@ export class SelectScreen implements Screen {
   /** 음원 → 자동 생성 레벨을 목록에 추가하고 선택. */
   private async fromSong(file: File | undefined): Promise<void> {
     if (!file) return;
+    warnIfHuge(file);
     // mp3를 감싼 zip이면 꺼내고, 레벨이 든 zip이면 레벨로 불러온다
     try {
       if (file.name.toLowerCase().endsWith('.zip')) {
