@@ -1,6 +1,6 @@
 import { audio } from '../audio/engine';
 import { library } from '../levels/library';
-import { loadPackageAudio, packageFromFileList, packageFromSong, PackageError, type LevelPackage } from '../levels/package';
+import { loadPackageAudio, PACKAGE_ACCEPT, packageFromFileList, packageFromSong, PackageError, SONG_ACCEPT, type LevelPackage } from '../levels/package';
 import { getBest, settings } from '../game/settings';
 import { ambient } from '../render/stage';
 import { alertBox, choiceBox, DIFFICULTY_CHOICES, fileInput, h, isTyping, show, stars, toast, type Screen } from './dom';
@@ -32,9 +32,9 @@ export class SelectScreen implements Screen {
 
   enter(root: HTMLElement): void {
     ambient(true);
-    const pickFiles = fileInput({ accept: '.zip,.json,audio/*,image/*', multiple: true }, (f) => this.load(f));
+    const pickFiles = fileInput({ accept: PACKAGE_ACCEPT, multiple: true }, (f) => this.load(f));
     const pickDir = fileInput({ directory: true }, (f) => this.load(f));
-    const pickSong = fileInput({ accept: 'audio/*,.mp3,.wav,.ogg,.m4a,.flac' }, (f) => void this.fromSong(f[0]));
+    const pickSong = fileInput({ accept: SONG_ACCEPT }, (f) => void this.fromSong(f[0]));
     this.cards = h('div', { class: 'cards' });
     this.autoBox = h('input', { type: 'checkbox', checked: lastAuto, onchange: () => (lastAuto = this.autoBox.checked) });
     root.append(
@@ -128,7 +128,7 @@ export class SelectScreen implements Screen {
   /** 음원 → 자동 생성 레벨을 목록에 추가하고 선택. */
   private async fromSong(file: File | undefined): Promise<void> {
     if (!file) return;
-    const d = await choiceBox('음원으로 레벨 만들기', `${file.name}의 리듬을 분석해 타일을 자동으로 만듭니다. 난이도를 고르세요.`, DIFFICULTY_CHOICES);
+    const d = await choiceBox('음원으로 레벨 만들기', `${file.name}의 리듬을 분석해 타일을 자동으로 만듭니다. (동영상이면 소리만 씁니다) 난이도를 고르세요.`, DIFFICULTY_CHOICES);
     if (!d) return;
     toast('곡을 분석하는 중…', 1500);
     await new Promise((r) => setTimeout(r, 30));
