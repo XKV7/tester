@@ -47,13 +47,19 @@ describe('판정 경계값', () => {
     expect(judgeWindows(500, 1, 250)).toEqual(judgeWindows(500));
   });
 
-  it('난이도 배율', () => {
+  it('난이도 배율 (보통 ±40 / ±80 / ±126ms)', () => {
+    const normal = judgeWindows(1000, DIFFICULTY_MULT.normal);
+    expect(normal.perfect).toBeCloseTo(40.25);
+    expect(normal.near).toBeCloseTo(80.5);
+    expect(normal.far).toBeCloseTo(126.5);
     const lenient = judgeWindows(1000, DIFFICULTY_MULT.lenient);
-    expect(lenient.perfect).toBeCloseTo(49);
-    expect(lenient.far).toBeCloseTo(154);
+    expect(lenient.perfect).toBeCloseTo(56);
+    expect(lenient.far).toBeCloseTo(176);
     const strict = judgeWindows(1000, DIFFICULTY_MULT.strict);
-    expect(strict.perfect).toBeCloseTo(24.5);
-    expect(strict.near).toBeCloseTo(49);
+    expect(strict.perfect).toBeCloseTo(28);
+    expect(strict.near).toBeCloseTo(56);
+    // 모든 배율이 이전보다 넓다
+    expect(DIFFICULTY_MULT.normal).toBeGreaterThan(1);
     // 배율 적용 후에도 상한 유지
     expect(judgeWindows(400, 1.4).far).toBe(100);
   });

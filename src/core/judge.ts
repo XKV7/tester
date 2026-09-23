@@ -2,10 +2,11 @@ export type Judgment = 'perfect' | 'earlyPerfect' | 'latePerfect' | 'early' | 'l
 export type HitJudgment = Exclude<Judgment, 'tooEarly' | 'miss'>;
 export type JudgeDifficulty = 'lenient' | 'normal' | 'strict';
 
+/** 판정 창 배율. 설계서 값(1.4 / 1.0 / 0.7)보다 약 15% 후하게 조정. */
 export const DIFFICULTY_MULT: Record<JudgeDifficulty, number> = {
-  lenient: 1.4,
-  normal: 1.0,
-  strict: 0.7,
+  lenient: 1.6,
+  normal: 1.15,
+  strict: 0.8,
 };
 
 export const BASE_WINDOWS = { perfect: 35, near: 70, far: 110 } as const;
