@@ -55,6 +55,32 @@ export function packageFromFiles(files: Map<string, Uint8Array>, id = newPackage
   return { id, level: r.level, files: flat, builtin: false, warnings };
 }
 
+/** 음원 파일 하나 → 자동 생성 레벨 패키지. 박을 찾지 못하면 PackageError. */
+export async function packageFromSong(file: File, difficulty: 'easy' | 'normal' | 'hard'): Promise<{ pkg: LevelPackage; summary: string }> {
+  const { autoChart } = await import('../core/autochart');
+  const { toMono } = await import('../audio/mono');
+  const data = new Uint8Array(await file.arrayBuffer());
+  let buf: AudioBuffer;
+  try {
+    buf = await audio().decode(data.buffer.slice(0) as ArrayBuffer);
+  } catch {
+    throw new PackageError([`${file.name}: 이 브라우저에서 재생할 수 없는 형식입니다. mp3나 wav로 바꿔 주세요.`]);
+  }
+  const title = file.name.replace(/\.[^.]+$/, '');
+  const r = autoChart(toMono(buf), buf.sampleRate, { difficulty, title, songFile: file.name });
+  if (!r) throw new PackageError([`${file.name}: 박을 찾지 못했습니다. 너무 짧거나(8박 미만) 박이 뚜렷하지 않은 곡입니다.`, '에디터에서 BPM을 직접 맞춘 뒤 녹화 모드로 만들 수 있습니다.']);
+  const pkg: LevelPackage = {
+    id: newPackageId('auto'),
+    level: r.level,
+    files: new Map([[file.name, data]]),
+    builtin: false,
+    warnings: [],
+    buffer: buf,
+    synthesized: false,
+  };
+  return { pkg, summary: `${r.bpm} BPM · 타일 ${r.tiles}개 · 회전 반전 ${r.twirls}개` };
+}
+
 export function findFile(files: Map<string, Uint8Array>, name: string): Uint8Array | undefined {
   if (!name) return undefined;
   const b = baseName(name);

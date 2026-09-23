@@ -13,7 +13,7 @@ export interface TempoEstimate {
   confidence: number;
 }
 
-const HOP = 0.01;
+export const HOP = 0.01;
 
 export function onsetEnvelope(samples: Float32Array, sampleRate: number, maxSeconds = 90): Float32Array {
   const hop = Math.max(1, Math.round(sampleRate * HOP));
@@ -57,7 +57,7 @@ function sampleAt(o: Float32Array, t: number, wide = true): number {
 }
 
 /** 프레임 f의 에너지 증가는 창의 새로 들어온 구간 [f+1, f+2)×HOP에서 생긴다. */
-const FRAME_LAG = 1.5 * HOP;
+export const FRAME_LAG = 1.5 * HOP;
 
 function gridScore(o: Float32Array, bpm: number): { score: number; phase: number } {
   const period = 60 / bpm;

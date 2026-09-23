@@ -17,6 +17,8 @@ import { ACTION_TYPES, cloneLevel, emptyLevel, serializeLevel, validateLevel } f
 import { normDeg, TILE_LEN } from '../core/math';
 import { VisualTimeline } from '../core/timeline';
 import { estimateTempo, tapTempo, type TempoEstimate } from '../core/tempo';
+import { autoChart, type AutoDifficulty } from '../core/autochart';
+import { toMono } from '../audio/mono';
 import type { Action, ActionType, LevelData } from '../core/types';
 import { settings } from '../game/settings';
 import { library } from '../levels/library';
@@ -32,7 +34,7 @@ import {
 } from '../levels/package';
 import { stage } from '../render/stage';
 import { fmtBeats, TrackView } from '../render/track';
-import { alertBox, confirmBox, fileInput, h, isTyping, show, type Screen } from '../ui/dom';
+import { alertBox, confirmBox, fileInput, h, isTyping, show, toast, type Screen } from '../ui/dom';
 import { PlayScreen } from '../ui/play';
 import { TitleScreen } from '../ui/title';
 import { ACTION_LABEL, defaultAction, EASE_NAMES, SCHEMA, type Field } from './schema';
@@ -102,6 +104,8 @@ export class EditorScreen implements Screen {
   private tapBpm: number | null = null;
   private estimate: TempoEstimate | null = null;
   private estimateMsg = '';
+  private autoDiff: AutoDifficulty = 'normal';
+  private autoUseCurrent = false;
   private recMode: RecordMode = 'oneway';
   private fillCount = 8;
   private fillBpm = 0;
@@ -464,14 +468,7 @@ export class EditorScreen implements Screen {
       this.renderSide();
       return;
     }
-    // 여러 채널이면 섞어서 분석
-    const n = buf.length;
-    const mono = new Float32Array(n);
-    for (let c = 0; c < buf.numberOfChannels; c++) {
-      const d = buf.getChannelData(c);
-      for (let i = 0; i < n; i++) mono[i] += d[i] / buf.numberOfChannels;
-    }
-    const r = estimateTempo(mono, buf.sampleRate);
+    const r = estimateTempo(toMono(buf), buf.sampleRate);
     this.estimate = r;
     this.estimateMsg = r
       ? `추정: ${r.bpm} BPM · 첫 박 ${r.offset.toFixed(3)}s · 신뢰도 ${Math.round(r.confidence * 100)}%`
@@ -507,6 +504,40 @@ export class EditorScreen implements Screen {
     this.commit(lv);
   }
 
+  /** 음원 리듬으로 타일 자동 생성 (레벨 설정의 색·제목은 유지, 길·이벤트는 교체). */
+  private async generate(ask = true): Promise<void> {
+    const buf = this.pkg.synthesized ? null : this.pkg.buffer;
+    if (!buf) {
+      void alertBox('음원이 없습니다', ['위의 "음원 선택"으로 곡을 먼저 고르세요.']);
+      return;
+    }
+    if (ask && this.level.path.length > 4 && !(await confirmBox('타일 자동 생성', '지금 있는 타일과 이벤트를 모두 바꿉니다. (실행 취소로 되돌릴 수 있습니다)', '생성'))) return;
+    const s = this.level.settings;
+    const title = this.level.meta.title === '제목 없음' ? s.songFile.replace(/\.[^.]+$/, '') : this.level.meta.title;
+    const r = autoChart(toMono(buf), buf.sampleRate, {
+      difficulty: this.autoDiff,
+      title,
+      songFile: s.songFile,
+      ...(this.autoUseCurrent ? { bpm: s.bpm, offset: s.offset } : {}),
+    });
+    if (!r) {
+      void alertBox('자동 생성 실패', ['박을 찾지 못했습니다. BPM·offset을 직접 맞춘 뒤 "현재 BPM·첫 박 사용"을 켜고 다시 시도하거나, 녹화 모드를 쓰세요.']);
+      return;
+    }
+    const lv = cloneLevel(this.level);
+    lv.path = r.level.path;
+    lv.actions = r.level.actions;
+    lv.settings.bpm = r.bpm;
+    lv.settings.offset = r.offset;
+    lv.meta = { ...lv.meta, title, difficulty: r.level.meta.difficulty, previewStart: lv.meta.previewStart || r.level.meta.previewStart };
+    this.estimate = { bpm: r.bpm, offset: r.offset, confidence: 1 };
+    this.estimateMsg = `자동 생성: ${r.bpm} BPM · 타일 ${r.tiles}개`;
+    this.commit(lv, 0);
+    const p = this.tilePos(0);
+    stage.camera.snap(p.x, p.y, 0.6, 0);
+    toast(`타일 ${r.tiles}개를 만들었습니다 — Space로 플레이테스트`, 3500);
+  }
+
   private musicSection(): HTMLElement {
     const hasSong = !this.pkg.synthesized && !!this.pkg.buffer;
     const beat = 60 / this.level.settings.bpm;
@@ -520,6 +551,33 @@ export class EditorScreen implements Screen {
         { class: 'form' },
         h('label', null, '음원'),
         h('span', { class: hasSong ? '' : 'dim', style: 'word-break:break-all' }, hasSong ? this.level.settings.songFile : '없음 — 위의 "음원 선택"'),
+        h('label', null, '타일 자동 생성'),
+        h(
+          'div',
+          { class: 'col', style: 'gap:6px' },
+          h(
+            'div',
+            { class: 'row', style: 'flex-wrap:nowrap' },
+            (() => {
+              const sel = h(
+                'select',
+                { id: 'auto-diff', onchange: () => (this.autoDiff = sel.value as AutoDifficulty) },
+                h('option', { value: 'easy' }, '쉬움'),
+                h('option', { value: 'normal' }, '보통'),
+                h('option', { value: 'hard' }, '어려움'),
+              );
+              sel.value = this.autoDiff;
+              return sel;
+            })(),
+            h('button', { class: 'btn small cool', disabled: !hasSong, onclick: () => void this.generate() }, '생성'),
+          ),
+          h(
+            'label',
+            { class: 'row dim', style: 'font-size:12px' },
+            h('input', { type: 'checkbox', id: 'auto-cur', checked: this.autoUseCurrent, onchange: (e: Event) => (this.autoUseCurrent = (e.target as HTMLInputElement).checked) }),
+            '현재 BPM·첫 박 사용',
+          ),
+        ),
         h('label', null, '자동 추정'),
         h('button', { class: 'btn small', disabled: !hasSong, onclick: () => this.runEstimate() }, 'BPM · 첫 박 찾기'),
         this.estimateMsg ? h('label', null, '') : null,
@@ -623,7 +681,9 @@ export class EditorScreen implements Screen {
       this.wave.buffer = buf;
       this.wave.draw();
       this.estimate = null;
-      this.runEstimate();
+      if (this.level.path.length <= 4 && this.level.actions.length === 0) {
+        this.generate(false);
+      } else this.runEstimate();
     } catch {
       await alertBox('음원을 읽을 수 없습니다', [`${f.name}: 브라우저가 지원하지 않는 형식입니다.`]);
     }

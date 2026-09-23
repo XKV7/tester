@@ -1,9 +1,9 @@
 import { audio } from '../audio/engine';
 import { library } from '../levels/library';
-import { loadPackageAudio, packageFromFileList, PackageError, type LevelPackage } from '../levels/package';
+import { loadPackageAudio, packageFromFileList, packageFromSong, PackageError, type LevelPackage } from '../levels/package';
 import { getBest, settings } from '../game/settings';
 import { ambient } from '../render/stage';
-import { alertBox, fileInput, h, isTyping, show, stars, type Screen } from './dom';
+import { alertBox, choiceBox, DIFFICULTY_CHOICES, fileInput, h, isTyping, show, stars, toast, type Screen } from './dom';
 import { PlayScreen } from './play';
 import { speedSelect } from './speed';
 import { TitleScreen } from './title';
@@ -34,6 +34,7 @@ export class SelectScreen implements Screen {
     ambient(true);
     const pickFiles = fileInput({ accept: '.zip,.json,audio/*,image/*', multiple: true }, (f) => this.load(f));
     const pickDir = fileInput({ directory: true }, (f) => this.load(f));
+    const pickSong = fileInput({ accept: 'audio/*,.mp3,.wav,.ogg,.m4a,.flac' }, (f) => void this.fromSong(f[0]));
     this.cards = h('div', { class: 'cards' });
     this.autoBox = h('input', { type: 'checkbox', checked: lastAuto, onchange: () => (lastAuto = this.autoBox.checked) });
     root.append(
@@ -47,6 +48,8 @@ export class SelectScreen implements Screen {
           h('h1', null, '레벨 선택'),
           pickFiles,
           pickDir,
+          pickSong,
+          h('button', { class: 'btn small primary', onclick: () => pickSong.click() }, '음원으로 레벨 만들기'),
           h('button', { class: 'btn small', onclick: () => pickFiles.click() }, '레벨 불러오기 (zip / json)'),
           h('button', { class: 'btn small', onclick: () => pickDir.click() }, '폴더 불러오기'),
         ),
@@ -119,6 +122,24 @@ export class SelectScreen implements Screen {
     } catch (e) {
       const lines = e instanceof PackageError ? e.details : [(e as Error).message];
       await alertBox('레벨을 불러올 수 없습니다', lines);
+    }
+  }
+
+  /** 음원 → 자동 생성 레벨을 목록에 추가하고 선택. */
+  private async fromSong(file: File | undefined): Promise<void> {
+    if (!file) return;
+    const d = await choiceBox('음원으로 레벨 만들기', `${file.name}의 리듬을 분석해 타일을 자동으로 만듭니다. 난이도를 고르세요.`, DIFFICULTY_CHOICES);
+    if (!d) return;
+    toast('곡을 분석하는 중…', 1500);
+    await new Promise((r) => setTimeout(r, 30));
+    try {
+      const { pkg, summary } = await packageFromSong(file, d);
+      library.add(pkg);
+      this.sel = null;
+      this.select(pkg);
+      toast(`만들었습니다: ${summary} — Enter로 플레이`, 4000);
+    } catch (e) {
+      await alertBox('레벨을 만들 수 없습니다', e instanceof PackageError ? e.details : [(e as Error).message]);
     }
   }
 

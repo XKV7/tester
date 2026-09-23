@@ -89,6 +89,49 @@ export function confirmBox(title: string, message: string, okLabel = '확인'): 
   });
 }
 
+/** 선택지 모달. 취소하면 null. */
+export function choiceBox<T extends string>(title: string, message: string, options: { value: T; label: string; hint?: string }[]): Promise<T | null> {
+  return new Promise((resolve) => {
+    const done = (v: T | null) => {
+      wrap.remove();
+      resolve(v);
+    };
+    const wrap = h(
+      'div',
+      { class: 'modal-wrap ui-interactive' },
+      h(
+        'div',
+        { class: 'modal' },
+        h('h2', null, title),
+        h('div', { class: 'modal-body' }, h('p', null, message)),
+        h(
+          'div',
+          { class: 'col', style: 'margin:12px 0' },
+          ...options.map((o) =>
+            h('button', { class: 'btn', style: 'text-align:left', onclick: () => done(o.value) }, h('b', null, o.label), o.hint ? h('span', { class: 'dim' }, `  ${o.hint}`) : null),
+          ),
+        ),
+        h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => done(null) }, '취소')),
+      ),
+    );
+    document.body.appendChild(wrap);
+    (wrap.querySelector('.col .btn') as HTMLButtonElement)?.focus();
+  });
+}
+
+/** 잠깐 떠 있다 사라지는 알림. */
+export function toast(text: string, ms = 2600): void {
+  const el = h('div', { class: 'toast' }, text);
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), ms);
+}
+
+export const DIFFICULTY_CHOICES = [
+  { value: 'easy' as const, label: '쉬움', hint: '주로 1박, 가끔 반박' },
+  { value: 'normal' as const, label: '보통', hint: '반박 리듬 섞임' },
+  { value: 'hard' as const, label: '어려움', hint: '곡의 잔 리듬까지' },
+];
+
 export function stars(n: number): string {
   const k = Math.max(0, Math.min(10, Math.round(n)));
   return '★'.repeat(Math.ceil(k / 2)) + '☆'.repeat(5 - Math.ceil(k / 2)) + ` ${k}`;
