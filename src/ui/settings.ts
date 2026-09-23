@@ -69,9 +69,9 @@ export class SettingsScreen implements Screen {
           saveSettings();
         },
       },
-      h('option', { value: 'lenient' }, '느슨함 (×1.4)'),
-      h('option', { value: 'normal' }, '보통 (×1.0)'),
-      h('option', { value: 'strict' }, '엄격 (×0.7)'),
+      h('option', { value: 'lenient' }, '느슨함 — 완벽 ±56ms'),
+      h('option', { value: 'normal' }, '보통 — 완벽 ±40ms'),
+      h('option', { value: 'strict' }, '엄격 — 완벽 ±28ms'),
     );
     diff.value = settings.difficulty;
 
