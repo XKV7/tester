@@ -39,6 +39,7 @@ import { stage } from '../render/stage';
 import { fmtBeats, TrackView } from '../render/track';
 import { alertBox, confirmBox, fileInput, h, isTyping, show, toast, type Screen } from '../ui/dom';
 import { PlayScreen } from '../ui/play';
+import { openSongGenerator } from '../ui/songgen';
 import { TitleScreen } from '../ui/title';
 import { ACTION_LABEL, defaultAction, EASE_NAMES, SCHEMA, type Field } from './schema';
 import { WaveTimeline } from './waveform';
@@ -55,6 +56,8 @@ const KEY_ANGLES: Record<string, number> = {
 };
 
 const AUTOSAVE = 'orbit.editor.autosave.v1';
+
+const clampZoom = (z: number) => Math.max(0.03, Math.min(6, z));
 
 interface Snapshot {
   level: string;
@@ -119,6 +122,8 @@ export class EditorScreen implements Screen {
   private dirtyTrack = true;
   private camInit = false;
   private offs: (() => void)[] = [];
+  private canvasEl: HTMLElement | null = null;
+  private zoomLabel: HTMLElement | null = null;
 
   enter(root: HTMLElement): void {
     stage.clearWorld();
@@ -128,10 +133,12 @@ export class EditorScreen implements Screen {
     this.bindInput();
     stage.app.ticker.add(this.tickFn);
     if (!this.camInit) {
-      const p = this.tilePos(this.sel);
-      stage.camera.snap(p.x, p.y, 0.8, 0);
+      stage.camera.zoom = 0.8;
+      // 레이아웃이 잡힌 뒤 편집 영역 가운데로
+      requestAnimationFrame(() => this.centerOn(this.sel));
       this.camInit = true;
-    } else stage.camera.rotation = 0;
+    }
+    stage.camera.rotation = 0;
     void loadPackageAudio(this.pkg).then((b) => {
       this.wave.buffer = this.pkg.synthesized ? null : b;
       this.wave.draw();
@@ -212,14 +219,80 @@ export class EditorScreen implements Screen {
     if (focus) this.ensureVisible();
   }
 
+  /** 화면 좌표(sx, sy) 아래의 지점을 고정한 채 확대/축소. */
+  private zoomAt(zoom: number, sx: number, sy: number): void {
+    const cam = stage.camera;
+    const before = stage.screenToWorld(sx, sy);
+    cam.zoom = clampZoom(zoom);
+    const s = stage.baseScale * cam.zoom;
+    cam.x = before.x - (sx - stage.width / 2) / s;
+    cam.y = before.y - (sy - stage.height / 2) / s;
+  }
+
+  /** 편집 캔버스 영역 (오른쪽 패널·아래 타임라인 제외). */
+  private canvasRect(): { x: number; y: number; w: number; h: number } {
+    const el = this.canvasEl;
+    if (el) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) return { x: r.left, y: r.top, w: r.width, h: r.height };
+    }
+    return { x: 0, y: 0, w: stage.width, h: stage.height };
+  }
+
+  private zoomStep(factor: number): void {
+    const r = this.canvasRect();
+    this.zoomAt(stage.camera.zoom * factor, r.x + r.w / 2, r.y + r.h / 2);
+  }
+
+  /** 트랙 전체가 편집 영역에 들어오게. */
+  private zoomFit(): void {
+    const tiles = this.chart.tiles;
+    let x0 = Infinity,
+      x1 = -Infinity,
+      y0 = Infinity,
+      y1 = -Infinity;
+    for (let i = 0; i < tiles.length; i++) {
+      const p = this.tilePos(i);
+      x0 = Math.min(x0, p.x);
+      x1 = Math.max(x1, p.x);
+      y0 = Math.min(y0, p.y);
+      y1 = Math.max(y1, p.y);
+    }
+    const r = this.canvasRect();
+    const pad = TILE_LEN * 1.2;
+    const s = Math.min(r.w / (x1 - x0 + pad * 2), r.h / (y1 - y0 + pad * 2));
+    const cam = stage.camera;
+    cam.rotation = 0;
+    cam.zoom = clampZoom(s / stage.baseScale);
+    const sc = stage.baseScale * cam.zoom;
+    // 트랙 중심이 편집 영역 중심에 오도록
+    cam.x = (x0 + x1) / 2 - (r.x + r.w / 2 - stage.width / 2) / sc;
+    cam.y = (y0 + y1) / 2 - (r.y + r.h / 2 - stage.height / 2) / sc;
+  }
+
+  /** 타일 i를 편집 영역(패널 제외) 가운데에 오게. zoom을 주면 배율도 바꾼다. */
+  private centerOn(i: number, zoom?: number): void {
+    const cam = stage.camera;
+    if (zoom !== undefined) cam.zoom = clampZoom(zoom);
+    cam.rotation = 0;
+    const p = this.tilePos(i);
+    const r = this.canvasRect();
+    const s = stage.baseScale * cam.zoom;
+    cam.x = p.x - (r.x + r.w / 2 - stage.width / 2) / s;
+    cam.y = p.y - (r.y + r.h / 2 - stage.height / 2) / s;
+  }
+
+  /** 선택 타일이 편집 영역 가장자리 근처나 밖이면 가운데로. */
   private ensureVisible(): void {
     const p = this.tilePos(this.sel);
-    const v = stage.viewRect();
-    const r = Math.min(stage.width, stage.height) / 2 / (stage.baseScale * stage.camera.zoom);
-    if (Math.hypot(p.x - v.cx, p.y - v.cy) > r * 0.7) {
-      stage.camera.x = p.x;
-      stage.camera.y = p.y;
-    }
+    const r = this.canvasRect();
+    const s = stage.baseScale * stage.camera.zoom;
+    // 월드 → 화면 (에디터는 회전 없음)
+    const sx = (p.x - stage.camera.x) * s + stage.width / 2;
+    const sy = (p.y - stage.camera.y) * s + stage.height / 2;
+    const mx = Math.min(80, r.w * 0.2);
+    const my = Math.min(80, r.h * 0.2);
+    if (sx < r.x + mx || sx > r.x + r.w - mx || sy < r.y + my || sy > r.y + r.h - my) this.centerOn(this.sel);
   }
 
   // ───────────────────────── 입력 ─────────────────────────
@@ -229,19 +302,42 @@ export class EditorScreen implements Screen {
     const kd = (e: KeyboardEvent) => this.onKey(e);
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
-      const cam = stage.camera;
-      const f = Math.exp(-e.deltaY * 0.0015);
-      const before = stage.screenToWorld(e.clientX, e.clientY);
-      cam.zoom = Math.max(0.05, Math.min(5, cam.zoom * f));
-      const s = stage.baseScale * cam.zoom;
-      cam.x = before.x - (e.clientX - stage.width / 2) / s;
-      cam.y = before.y - (e.clientY - stage.height / 2) / s;
+      // 트랙패드 핀치는 ctrlKey + wheel로 들어온다 → 더 민감하게
+      const k = e.ctrlKey ? 0.01 : 0.0015;
+      this.zoomAt(stage.camera.zoom * Math.exp(-e.deltaY * k), e.clientX, e.clientY);
+    };
+    // 포인터 여러 개(두 손가락 핀치) 추적
+    const pts = new Map<number, { x: number; y: number }>();
+    let pinch: { dist: number; zoom: number; wx: number; wy: number } | null = null;
+    const mid = () => {
+      const a = [...pts.values()];
+      return { x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2, d: Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) };
     };
     const pd = (e: PointerEvent) => {
-      this.drag = { x: e.clientX, y: e.clientY, cx: stage.camera.x, cy: stage.camera.y, moved: false };
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       canvas.setPointerCapture(e.pointerId);
+      if (pts.size === 2) {
+        const m = mid();
+        const w = stage.screenToWorld(m.x, m.y);
+        pinch = { dist: Math.max(10, m.d), zoom: stage.camera.zoom, wx: w.x, wy: w.y };
+        this.drag = null;
+        return;
+      }
+      if (pts.size === 1) this.drag = { x: e.clientX, y: e.clientY, cx: stage.camera.x, cy: stage.camera.y, moved: false };
     };
     const pm = (e: PointerEvent) => {
+      if (!pts.has(e.pointerId)) return;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinch && pts.size >= 2) {
+        const m = mid();
+        const cam = stage.camera;
+        cam.zoom = clampZoom(pinch.zoom * (m.d / pinch.dist));
+        // 손가락 가운데 아래의 월드 지점이 계속 손가락 가운데에 오도록 (확대 + 이동 동시에)
+        const s = stage.baseScale * cam.zoom;
+        cam.x = pinch.wx - (m.x - stage.width / 2) / s;
+        cam.y = pinch.wy - (m.y - stage.height / 2) / s;
+        return;
+      }
       const d = this.drag;
       if (!d) return;
       const dx = e.clientX - d.x;
@@ -254,9 +350,17 @@ export class EditorScreen implements Screen {
       }
     };
     const pu = (e: PointerEvent) => {
+      if (!pts.delete(e.pointerId)) return;
+      if (pinch) {
+        if (pts.size < 2) pinch = null;
+        // 한 손가락이 남으면 튀지 않게 그 위치에서 드래그를 다시 시작 (선택은 하지 않음)
+        const rest = [...pts.values()][0];
+        this.drag = rest ? { x: rest.x, y: rest.y, cx: stage.camera.x, cy: stage.camera.y, moved: true } : null;
+        return;
+      }
       const d = this.drag;
       this.drag = null;
-      if (!d || d.moved) return;
+      if (!d || d.moved || e.type === 'pointercancel') return;
       const w = stage.screenToWorld(e.clientX, e.clientY);
       let best = -1;
       let bd = TILE_LEN * 0.45;
@@ -271,6 +375,14 @@ export class EditorScreen implements Screen {
       }
       if (best >= 0) this.select(best, false);
     };
+    // iOS 사파리의 페이지 확대 제스처 막기 (캔버스 핀치는 위에서 직접 처리)
+    const gesture = (e: Event) => e.preventDefault();
+    document.addEventListener('gesturestart', gesture);
+    canvas.addEventListener('pointercancel', pu);
+    this.offs.push(
+      () => document.removeEventListener('gesturestart', gesture),
+      () => canvas.removeEventListener('pointercancel', pu),
+    );
     window.addEventListener('keydown', kd);
     canvas.addEventListener('wheel', wheel, { passive: false });
     canvas.addEventListener('pointerdown', pd);
@@ -371,13 +483,21 @@ export class EditorScreen implements Screen {
       case 'T':
         this.toggleAction('Twirl');
         break;
-      case 'f':
-      case 'F': {
-        const p = this.tilePos(this.sel);
-        stage.camera.x = p.x;
-        stage.camera.y = p.y;
+      case '+':
+      case '=':
+        this.zoomStep(1.25);
         break;
-      }
+      case '-':
+      case '_':
+        this.zoomStep(0.8);
+        break;
+      case '0':
+        this.zoomFit();
+        break;
+      case 'f':
+      case 'F':
+        this.centerOn(this.sel);
+        break;
       case 'Escape':
         void show(new TitleScreen());
         break;
@@ -536,8 +656,7 @@ export class EditorScreen implements Screen {
     this.estimate = { bpm: r.bpm, offset: r.offset, confidence: 1 };
     this.estimateMsg = `자동 생성: ${r.bpm} BPM · 타일 ${r.tiles}개`;
     this.commit(lv, 0);
-    const p = this.tilePos(0);
-    stage.camera.snap(p.x, p.y, 0.6, 0);
+    this.centerOn(0, 0.6);
     toast(`타일 ${r.tiles}개를 만들었습니다 — Space로 플레이테스트`, 3500);
   }
 
@@ -647,6 +766,20 @@ export class EditorScreen implements Screen {
     if (r === 'failed') void alertBox('저장할 수 없습니다', ['이 화면에서는 파일 저장이 허용되지 않았습니다. 잠시 후 다시 시도하세요.']);
   }
 
+  /** 곡 작곡 + 레벨 생성으로 편집 중인 레벨을 교체. */
+  private async generateSongLevel(): Promise<void> {
+    if (this.level.path.length > 4 && !(await confirmBox('음악 자동 생성', '지금 레벨을 새 곡과 자동 생성 타일로 바꿉니다. (실행 취소로 레벨은 되돌릴 수 있지만 곡은 새 곡으로 바뀝니다)', '계속'))) return;
+    const pkg = await openSongGenerator();
+    if (!pkg) return;
+    pkg.id = newPackageId('edit');
+    editing = pkg;
+    this.pkg = pkg;
+    this.commit(pkg.level, 0);
+    this.wave.buffer = pkg.buffer ?? null;
+    this.wave.draw();
+    this.centerOn(0, 0.6);
+  }
+
   private async loadFiles(files: FileList): Promise<void> {
     try {
       const pkg = await packageFromFileList(files);
@@ -660,8 +793,7 @@ export class EditorScreen implements Screen {
       const b = await loadPackageAudio(pkg);
       this.wave.buffer = pkg.synthesized ? null : b;
       this.wave.draw();
-      const p = this.tilePos(0);
-      stage.camera.snap(p.x, p.y, 0.8, 0);
+      this.centerOn(0, 0.8);
       if (pkg.warnings.length) await alertBox('불러오기 경고', pkg.warnings);
     } catch (e) {
       await alertBox('불러올 수 없습니다', e instanceof PackageError ? e.details : [(e as Error).message]);
@@ -704,7 +836,7 @@ export class EditorScreen implements Screen {
     this.pkg = editing;
     this.wave.buffer = null;
     this.commit(this.pkg.level, 0);
-    stage.camera.snap(0, 0, 0.8, 0);
+    this.centerOn(0, 0.8);
   }
 
   private playtest(): void {
@@ -752,6 +884,7 @@ export class EditorScreen implements Screen {
           h('button', { class: 'btn small', onclick: () => void this.saveJson() }, '.orbit.json 저장'),
           h('button', { class: 'btn small', onclick: () => void this.exportZipFile() }, 'zip 내보내기'),
           h('button', { class: 'btn small', onclick: () => pickSong.click() }, '음원 선택 (음악·동영상)'),
+          h('button', { class: 'btn small cool', onclick: () => void this.generateSongLevel() }, '음악 자동 생성'),
           h('button', { class: 'btn small', onclick: () => pickImg.click() }, '배경 이미지'),
           h('button', { class: 'btn small', onclick: () => this.addToLibrary() }, '목록에 추가'),
           h('span', { class: 'grow' }),
@@ -763,10 +896,18 @@ export class EditorScreen implements Screen {
           pickSong,
           pickImg,
         ),
-        h(
+        (this.canvasEl = h(
           'div',
           { class: 'ed-canvas' },
           this.info,
+          h(
+            'div',
+            { class: 'zoom-ctl ui-interactive' },
+            h('button', { class: 'btn small', title: '확대 (+)', 'aria-label': '확대', onclick: () => this.zoomStep(1.25) }, '+'),
+            (this.zoomLabel = h('span', { class: 'zoom-val' }, '')),
+            h('button', { class: 'btn small', title: '축소 (−)', 'aria-label': '축소', onclick: () => this.zoomStep(0.8) }, '−'),
+            h('button', { class: 'btn small', title: '트랙 전체 보기 (0)', onclick: () => this.zoomFit() }, '전체'),
+          ),
           h(
             'div',
             { class: 'hint' },
@@ -774,9 +915,11 @@ export class EditorScreen implements Screen {
             h('br'),
             'Shift+방향키 = 15° 미세 조정 · ←/→ 선택 이동 · Backspace 삭제 · T 회전 반전',
             h('br'),
-            'Ctrl+Z/Y 실행 취소/다시 실행 · Space 플레이테스트 · 휠 줌 · 드래그 이동 · F 선택 타일로',
+            'Ctrl+Z/Y 실행 취소/다시 실행 · Space 플레이테스트 · F 선택 타일로',
+            h('br'),
+            '줌: 마우스 휠 · 두 손가락 핀치 · +/− 키 · 0 전체 보기 · 드래그로 이동',
           ),
-        ),
+        )),
         this.side,
         bottom,
       ),
@@ -1110,6 +1253,10 @@ export class EditorScreen implements Screen {
       this.wave.draw();
       this.recBadge.textContent = `● 녹화 중 — 박에 맞춰 아무 키 · Esc 중지 (${this.recording.presses.length})`;
     } else if (this.recBadge.textContent) this.recBadge.textContent = '';
+    if (this.zoomLabel) {
+      const z = `${Math.round(stage.camera.zoom * 100)}%`;
+      if (this.zoomLabel.textContent !== z) this.zoomLabel.textContent = z;
+    }
     const out = this.sel < this.level.path.length ? `${+normDeg(this.level.path[this.sel]).toFixed(2)}°` : '—';
     this.info.textContent = `타일 ${this.sel} / ${this.chart.finish} · 방향 ${out} · ${fmtBeats(tile.beats)}박 · ${+tile.bpm.toFixed(2)} BPM · ${tile.time.toFixed(3)}s`;
   }
