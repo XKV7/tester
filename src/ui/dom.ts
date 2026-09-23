@@ -129,7 +129,9 @@ export function toast(text: string, ms = 2600): void {
 export const DIFFICULTY_CHOICES = [
   { value: 'easy' as const, label: '쉬움', hint: '주로 1박, 가끔 반박' },
   { value: 'normal' as const, label: '보통', hint: '반박 리듬 섞임' },
-  { value: 'hard' as const, label: '어려움', hint: '곡의 잔 리듬까지' },
+  { value: 'hard' as const, label: '어려움', hint: '8분음표 리듬까지' },
+  { value: 'expert' as const, label: '매우 어려움', hint: '16분음표까지' },
+  { value: 'master' as const, label: '극한', hint: '16분음표 + 셋잇단' },
 ];
 
 export function stars(n: number): string {

@@ -270,7 +270,11 @@ export function songHits(song: Song, difficulty: AutoDifficulty): number[] {
     easy: ['kick', 'snare'],
     normal: ['kick', 'snare', 'lead'],
     hard: ['kick', 'snare', 'lead', 'bass'],
+    expert: ['kick', 'snare', 'lead', 'bass', 'hat'],
+    master: ['kick', 'snare', 'lead', 'bass', 'hat'],
   };
+  // 격자: 쉬움~어려움 반박, 매우 어려움 16분, 극한 16분+셋잇단
+  const q = difficulty === 'master' ? 12 : difficulty === 'expert' ? 4 : 2;
   const set = new Set(use[difficulty]);
   const end = song.bars * 4 - 4; // 아웃트로 마지막 마디 제외
   const beats = new Set<number>();
@@ -278,10 +282,9 @@ export function songHits(song: Song, difficulty: AutoDifficulty): number[] {
     if (!set.has(e.inst)) continue;
     const b = e.beat - song.levelStartBeat;
     if (b <= 0 || e.beat >= end) continue;
-    // 쉬움은 박·반박까지만
-    const q = Math.round(b * 2) / 2;
-    if (Math.abs(q - b) > 1e-6) continue;
-    beats.add(q);
+    const r = Math.round(b * q) / q;
+    if (Math.abs(r - b) > 1e-6) continue;
+    beats.add(r);
   }
   return [...beats].sort((a, b) => a - b);
 }

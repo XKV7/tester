@@ -99,3 +99,65 @@ describe('자동 레벨 생성', () => {
     expect(overlaps(lay.path)).toBe(0);
   });
 });
+
+describe('세밀한 난이도 (16분음표·셋잇단)', () => {
+  // 100BPM: 16분 = 150ms, 셋잇단 = 200ms
+  const bpm = 100;
+  const first = 1.1;
+  const bar16 = [0, 0.75, 1, 1.5, 1.75, 2, 2.25, 3, 3.5];
+  const barTrip = [0, 1, 1 + 1 / 3, 1 + 2 / 3, 2, 3, 3.5];
+  const make = (bar: number[]) => {
+    const beats: number[] = [];
+    for (let k = 0; k < 20; k++) for (const b of bar) beats.push(k * 4 + b);
+    return { beats, song: kickSong(bpm, first, beats, first + (20 * 4 * 60) / bpm + 2) };
+  };
+  const check = (d: 'expert' | 'master', song: Float32Array, truth: number[]) => {
+    const r = autoChart(song, SR, { difficulty: d, bpm, offset: first });
+    expect(r).not.toBeNull();
+    expect(validateLevel(r!.level).ok).toBe(true);
+    const c = compileChart(r!.level);
+    const hits = c.times.slice(1, -1);
+    const tt = truth.map((b) => first + (b * 60) / bpm).filter((t) => t > c.times[0] + 0.05 && t < c.lastTime - 0.05);
+    const near = (t: number, xs: number[]) => xs.some((x) => Math.abs(x - t) < 0.025);
+    return {
+      c,
+      recall: tt.filter((t) => near(t, hits)).length / tt.length,
+      precision: hits.filter((t) => near(t, tt)).length / hits.length,
+    };
+  };
+
+  it('매우 어려움: 16분음표를 잡는다', () => {
+    const { beats, song } = make(bar16);
+    const { c, recall, precision } = check('expert', song, beats);
+    expect(recall).toBeGreaterThan(0.9);
+    expect(precision).toBeGreaterThan(0.9);
+    expect(c.tiles.some((t) => Math.abs(t.beats - 0.25) < 1e-6)).toBe(true);
+    expect(Math.min(...c.tiles.slice(0, -1).map((t) => t.duration))).toBeGreaterThanOrEqual(0.12 - 1e-6);
+    // 보통은 16분을 버린다
+    const n = compileChart(autoChart(song, SR, { difficulty: 'normal', bpm, offset: first })!.level);
+    expect(n.tiles.some((t) => Math.abs(t.beats - 0.25) < 1e-6)).toBe(false);
+  });
+
+  it('극한: 셋잇단을 잡는다', () => {
+    const { beats, song } = make(barTrip);
+    const { c, recall, precision } = check('master', song, beats);
+    expect(recall).toBeGreaterThan(0.9);
+    expect(precision).toBeGreaterThan(0.9);
+    expect(c.tiles.some((t) => Math.abs(t.beats - 1 / 3) < 1e-6)).toBe(true);
+    expect(Math.min(...c.tiles.slice(0, -1).map((t) => t.duration))).toBeGreaterThanOrEqual(0.1 - 1e-6);
+    let bad = 0;
+    for (let i = 0; i < c.tiles.length; i++)
+      for (let j = i + 3; j < c.tiles.length; j++)
+        if (Math.hypot(c.tiles[i].x - c.tiles[j].x, c.tiles[i].y - c.tiles[j].y) < TILE_LEN * 0.6) bad++;
+    expect(bad).toBeLessThanOrEqual(Math.ceil(c.tiles.length * 0.03));
+  });
+
+  it('빠른 곡에서는 너무 촘촘한 격자를 자동으로 뺀다', () => {
+    // 200BPM: 16분 = 75ms < 120ms → 16분 격자 제외
+    const beats: number[] = [];
+    for (let k = 0; k < 40; k++) for (const b of [0, 0.25, 0.5, 1, 1.5, 2, 2.75, 3]) beats.push(k * 4 + b);
+    const song = kickSong(200, 1, beats, 1 + (40 * 4 * 60) / 200 + 2);
+    const c = compileChart(autoChart(song, SR, { difficulty: 'expert', bpm: 200, offset: 1 })!.level);
+    expect(Math.min(...c.tiles.slice(0, -1).map((t) => t.duration))).toBeGreaterThanOrEqual(0.12 - 1e-6);
+  });
+});

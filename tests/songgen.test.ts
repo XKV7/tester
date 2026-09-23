@@ -88,3 +88,23 @@ describe('음악 자동 생성', () => {
     expect(String.fromCharCode(...w.slice(8, 12))).toBe('WAVE');
   });
 });
+
+describe('생성 곡 + 세밀한 난이도', () => {
+  it('매우 어려움·극한도 유효한 레벨, 최소 간격 유지', async () => {
+    const { DIFF_CFG } = await import('../src/core/autochart');
+    for (const m of MOODS) {
+      const song = composeSong({ mood: m.value, seconds: 40, seed: 11 });
+      const first = beatTime(song, song.levelStartBeat);
+      for (const d of ['expert', 'master'] as const) {
+        const cfg = DIFF_CFG[d];
+        const r = levelFromHits(songHits(song, d), song.bpm, first, { fill: songFill(song), minBeats: cfg.minBeats, minGapSec: cfg.minGapSec });
+        expect(r, `${m.value}/${d}`).not.toBeNull();
+        expect(validateLevel(r!.level).ok).toBe(true);
+        const c = compileChart(r!.level);
+        expect(Math.min(...c.tiles.slice(0, -1).map((t) => t.duration))).toBeGreaterThanOrEqual(cfg.minGapSec - 1e-6);
+        const hard = levelFromHits(songHits(song, 'hard'), song.bpm, first, { fill: songFill(song) })!;
+        expect(r!.tiles).toBeGreaterThanOrEqual(hard.tiles);
+      }
+    }
+  });
+});

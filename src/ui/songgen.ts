@@ -1,5 +1,5 @@
 import type { AutoDifficulty } from '../core/autochart';
-import { levelFromHits } from '../core/autochart';
+import { DIFF_CFG, levelFromHits } from '../core/autochart';
 import { audio } from '../audio/engine';
 import { beatTime, composeSong, encodeWav, MOODS, renderSong, songFill, songHits, type Mood } from '../audio/songgen';
 import { newPackageId, type LevelPackage } from '../levels/package';
@@ -28,7 +28,9 @@ export function generatePackage(c: GenChoice, seed = Math.floor(Math.random() * 
     title: `${label} 곡 #${seed}`,
     artist: 'ORBIT 작곡',
     songFile: file,
-    difficulty: { easy: 2, normal: 4, hard: 6 }[c.difficulty],
+    difficulty: DIFF_CFG[c.difficulty].diff,
+    minBeats: DIFF_CFG[c.difficulty].minBeats,
+    minGapSec: DIFF_CFG[c.difficulty].minGapSec,
     previewStart: firstA ? beatTime(song, firstA.bar * 4) : 0,
     fill: songFill(song),
   });
@@ -88,6 +90,8 @@ export function openSongGenerator(): Promise<LevelPackage | null> {
       h('option', { value: 'easy' }, '쉬움 — 킥·스네어'),
       h('option', { value: 'normal' }, '보통 — + 멜로디'),
       h('option', { value: 'hard' }, '어려움 — + 베이스'),
+      h('option', { value: 'expert' }, '매우 어려움 — + 하이햇 (16분음표)'),
+      h('option', { value: 'master' }, '극한 — 모든 소리'),
     );
     diff.value = c.difficulty;
     const status = h('p', { class: 'dim' }, '매번 새 곡이 만들어집니다. 마음에 안 들면 다시 만드세요.');

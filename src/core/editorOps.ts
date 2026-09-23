@@ -32,6 +32,18 @@ function shiftAction(a: Action, pivot: number, d: 1 | -1): void {
   }
 }
 
+/** 타일 sel 뒤를 모두 지운다 (sel이 도착 타일이 됨). 녹화 덮어쓰기용. */
+export function truncateAfter(level: LevelData, sel: number): LevelData {
+  const lv = cloneLevel(level);
+  lv.path = lv.path.slice(0, Math.max(1, sel));
+  const last = lv.path.length;
+  lv.actions = lv.actions
+    .filter((a) => a.floor <= last && !(a.floor === last && (a.type === 'Hold' || a.type === 'Pause' || a.type === 'Midspin')))
+    .filter((a) => !((a.type === 'RecolorTrack' || a.type === 'MoveTrack') && a.from > last));
+  for (const a of lv.actions) if ((a.type === 'RecolorTrack' || a.type === 'MoveTrack') && a.to > last) a.to = last;
+  return lv;
+}
+
 /** 선택 타일의 나가는 방향 설정. */
 export function setOutAngle(level: LevelData, sel: number, angle: number): LevelData {
   if (sel >= level.path.length) return level;

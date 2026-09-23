@@ -12,7 +12,7 @@ import type { Action, Dir, LevelData } from './types';
  * 4. 간격(박) → 각도. 트랙이 겹치지 않도록 필요할 때만 회전 반전(Twirl)을 넣는다.
  * 5. 체크포인트·색 변경 같은 이벤트는 넣지 않는다 (Twirl만). 필요하면 에디터에서 직접 추가.
  */
-export type AutoDifficulty = 'easy' | 'normal' | 'hard';
+export type AutoDifficulty = 'easy' | 'normal' | 'hard' | 'expert' | 'master';
 
 export interface AutoOptions {
   difficulty?: AutoDifficulty;
@@ -34,17 +34,52 @@ export interface AutoResult {
 
 const MIN_GAP_SEC = 0.2;
 
-const THRESH: Record<AutoDifficulty, { step: number; on: number; off: number; diff: number }> = {
-  easy: { step: 0.5, on: 0.3, off: 0.9, diff: 2 },
-  normal: { step: 0.5, on: 0.2, off: 0.72, diff: 4 },
-  hard: { step: 0.5, on: 0.05, off: 0.45, diff: 6 },
+interface DiffCfg {
+  /** 한 박 안의 격자 위치 (0 = 정박). */
+  grid: number[];
+  /** 백분위 기준: 정박 / 반박 / 그보다 잘게 (16분·셋잇단). 1이면 쓰지 않음. */
+  beat: number;
+  half: number;
+  fine: number;
+  /** 타일 사이 최소 박 / 최소 시간(초). */
+  minBeats: number;
+  minGapSec: number;
+  diff: number;
+}
+
+export const DIFF_CFG: Record<AutoDifficulty, DiffCfg> = {
+  easy: { grid: [0, 0.5], beat: 0.3, half: 0.9, fine: 1, minBeats: 0.5, minGapSec: 0.2, diff: 2 },
+  normal: { grid: [0, 0.5], beat: 0.2, half: 0.72, fine: 1, minBeats: 0.5, minGapSec: 0.2, diff: 4 },
+  hard: { grid: [0, 0.5], beat: 0.05, half: 0.45, fine: 1, minBeats: 0.5, minGapSec: 0.2, diff: 6 },
+  /** 16분음표까지 */
+  expert: { grid: [0, 0.25, 0.5, 0.75], beat: 0.05, half: 0.35, fine: 0.62, minBeats: 0.25, minGapSec: 0.12, diff: 8 },
+  /** 16분음표 + 셋잇단 */
+  master: { grid: [0, 0.25, 1 / 3, 0.5, 2 / 3, 0.75], beat: 0.02, half: 0.3, fine: 0.5, minBeats: 1 / 6, minGapSec: 0.1, diff: 10 },
 };
+
+export const DIFF_LABEL: Record<AutoDifficulty, string> = {
+  easy: '쉬움',
+  normal: '보통',
+  hard: '어려움',
+  expert: '매우 어려움',
+  master: '극한',
+};
+
+const EPS = 1e-6;
 
 
 function percentile(xs: number[], p: number): number {
   if (xs.length === 0) return Infinity;
   const s = [...xs].sort((a, b) => a - b);
   return s[Math.min(s.length - 1, Math.max(0, Math.floor(p * (s.length - 1))))];
+}
+
+/** 박 위치가 minBeats보다 가까운 후보끼리는 세기가 큰 쪽만 남긴다. */
+function suppressClose<T extends { b: number; s: number }>(xs: T[], minBeats: number): T[] {
+  const byStrength = [...xs].sort((a, b) => b.s - a.s);
+  const kept: T[] = [];
+  for (const x of byStrength) if (!kept.some((k) => Math.abs(k.b - x.b) < minBeats - EPS)) kept.push(x);
+  return kept.sort((a, b) => a.b - b.b);
 }
 
 /** 곡 시각 t 근처(±30ms)의 onset 최댓값. */
@@ -148,7 +183,7 @@ export function layoutBeats(intervals: number[], startDir: Dir = 'CW', lookahead
 
 export function autoChart(samples: Float32Array, sampleRate: number, opts: AutoOptions = {}): AutoResult | null {
   const diff = opts.difficulty ?? 'normal';
-  const cfg = THRESH[diff];
+  const cfg = DIFF_CFG[diff];
   const est =
     opts.bpm && opts.bpm > 0
       ? { bpm: opts.bpm, offset: opts.offset ?? 0 }
@@ -162,24 +197,39 @@ export function autoChart(samples: Float32Array, sampleRate: number, opts: AutoO
   if (songEnd - first < beat * 8) return null;
 
   const o = onsetEnvelope(samples, sampleRate, songEnd + 2);
-  let step = cfg.step;
-  if (step * beat < MIN_GAP_SEC) step = 1;
   if (beat < MIN_GAP_SEC) return null;
+  // 이 BPM에서 너무 촘촘한 격자는 뺀다: 각 위치가 속한 박자 단위(반박·16분·셋잇단)의 간격이 최소 간격보다 짧으면 제외.
+  // (16분과 셋잇단끼리 가까운 것은 아래 suppressClose가 처리)
+  const unitOf = (f: number) =>
+    f === 0 ? 1 : Math.abs(f * 2 - Math.round(f * 2)) < EPS ? 0.5 : Math.abs(f * 3 - Math.round(f * 3)) < EPS ? 1 / 3 : 0.25;
+  const grid = cfg.grid.filter((f) => unitOf(f) * beat >= Math.min(cfg.minGapSec, 0.5 * beat) - EPS);
 
   // 격자 지점 세기
-  const pos: { b: number; s: number; on: boolean }[] = [];
-  for (let b = step; first + b * beat < songEnd; b += step) {
-    const on = Math.abs(b - Math.round(b)) < 1e-6;
-    pos.push({ b, s: onsetStrength(o, first + b * beat), on });
-  }
-  const onTh = percentile(pos.filter((p) => p.on).map((p) => p.s), cfg.on);
-  const offTh = cfg.off >= 1 ? Infinity : percentile(pos.filter((p) => !p.on).map((p) => p.s), cfg.off);
-  const picked = pos.filter((p) => p.s > 0 && p.s >= (p.on ? onTh : offTh)).map((p) => p.b);
-
+  type Pos = { b: number; s: number; kind: 'beat' | 'half' | 'fine' };
+  const pos: Pos[] = [];
+  for (let k = 0; first + k * beat < songEnd; k++)
+    for (const f of grid) {
+      const b = k + f;
+      if (b <= 0 || first + b * beat >= songEnd) continue;
+      const kind = f === 0 ? 'beat' : Math.abs(f - 0.5) < EPS ? 'half' : 'fine';
+      pos.push({ b, s: onsetStrength(o, first + b * beat), kind });
+    }
+  const th = (kind: Pos['kind']) => {
+    const p = kind === 'beat' ? cfg.beat : kind === 'half' ? cfg.half : cfg.fine;
+    return p >= 1 ? Infinity : percentile(pos.filter((x) => x.kind === kind).map((x) => x.s), p);
+  };
+  const T = { beat: th('beat'), half: th('half'), fine: th('fine') };
+  let cand = pos.filter((p) => p.s > 0 && p.s >= T[p.kind]);
+  // 너무 가까운 후보(16분 vs 셋잇단 등)는 더 강한 쪽만
+  cand = suppressClose(cand, cfg.minBeats);
+  const picked = cand.map((p) => p.b);
   // 채움 후보: 격자 중 소리가 조금이라도 있는 곳 (세기 순 상위 절반)
   const fillTh = percentile(pos.map((p) => p.s), 0.5);
   const fill = pos.filter((p) => p.s > 0 && p.s >= fillTh).map((p) => p.b);
+
   return levelFromHits(picked, bpm, first, {
+    minBeats: cfg.minBeats,
+    minGapSec: cfg.minGapSec,
     fill,
     title: opts.title,
     songFile: opts.songFile,
@@ -205,9 +255,14 @@ export function levelFromHits(
     artist?: string;
     /** 빈 곳을 채울 때 우선 고를 위치 (약한 소리가 나는 박). 없으면 1박 간격. */
     fill?: number[];
+    /** 타일 사이 최소 박 (기본 0.5) / 최소 시간 (기본 0.2초). */
+    minBeats?: number;
+    minGapSec?: number;
   } = {},
 ): AutoResult | null {
   const beat = 60 / bpm;
+  const minBeats = opts.minBeats ?? 0.5;
+  const minGap = opts.minGapSec ?? MIN_GAP_SEC;
   const fill = [...(opts.fill ?? [])].sort((x, y) => x - y);
   const hits: number[] = [];
   let prev = 0;
@@ -215,8 +270,8 @@ export function levelFromHits(
     if (b <= 0) continue;
     while (b - prev > 1.5 + 1e-9) {
       // 다음 채움 위치: prev+1에 가장 가까운 소리 (prev+0.5 ~ prev+1.5, 다음 타격 0.5박 전까지)
-      const lo = prev + Math.max(0.5, MIN_GAP_SEC / beat);
-      const hi = Math.min(prev + 1.5, b - 0.5);
+      const lo = prev + Math.max(0.5, minGap / beat);
+      const hi = Math.min(prev + 1.5, b - Math.max(minBeats, minGap / beat));
       let pickB = prev + 1;
       let best = Infinity;
       for (const f of fill) {
@@ -231,7 +286,7 @@ export function levelFromHits(
       prev = pickB;
       hits.push(prev);
     }
-    if ((b - prev) * beat < MIN_GAP_SEC - 1e-9 || b - prev < 0.5 - 1e-9) continue;
+    if ((b - prev) * beat < minGap - 1e-9 || b - prev < minBeats - 1e-9) continue;
     hits.push(b);
     prev = b;
   }

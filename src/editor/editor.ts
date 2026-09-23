@@ -7,6 +7,7 @@ import {
   deleteTile,
   fillStraight,
   insertTileAfter,
+  truncateAfter,
   recordToAngles,
   removeAction,
   replaceAction,
@@ -116,6 +117,10 @@ export class EditorScreen implements Screen {
   private autoDiff: AutoDifficulty = 'normal';
   private autoUseCurrent = false;
   private recMode: RecordMode = 'oneway';
+  /** 녹화 재생 속도 (느리게 재생해도 결과는 원래 속도 기준). */
+  private recSpeed = 1;
+  /** 선택 타일 뒤를 지우고 녹화. */
+  private recOverwrite = false;
   private fillCount = 8;
   private fillBpm = 0;
   private drag: { x: number; y: number; cx: number; cy: number; moved: boolean } | null = null;
@@ -599,10 +604,16 @@ export class EditorScreen implements Screen {
     const beat = 60 / tile.bpm;
     const songStart = tile.time - 4 * beat;
     this.eng.cancelScheduled();
-    this.eng.play(buf, songStart, this.level.settings.pitch, this.level.settings.volume, 0.1);
+    // 곡 시각은 재생 속도와 무관하게 계산되므로 느리게 들어도 박 간격은 원래 곡 기준
+    this.eng.play(buf, songStart, this.level.settings.pitch * this.recSpeed, this.level.settings.volume, 0.1);
     for (let k = 4; k >= 1; k--) this.sfx.tick(this.eng.ctxTimeForSong(tile.time - k * beat), k === 1);
-    this.recording = { base: cloneLevel(this.level), baseSel: this.sel, presses: [], mode: this.recMode };
     this.undoStack.push({ level: JSON.stringify(this.level), sel: this.sel });
+    const base = this.recOverwrite && this.sel < this.level.path.length ? truncateAfter(this.level, this.sel) : cloneLevel(this.level);
+    if (base !== this.level && this.recOverwrite) {
+      this.level = base;
+      this.rebuild();
+    }
+    this.recording = { base, baseSel: this.sel, presses: [], mode: this.recMode };
     this.redoStack = [];
     (document.activeElement as HTMLElement | null)?.blur?.();
     this.renderSide();
@@ -610,7 +621,7 @@ export class EditorScreen implements Screen {
 
   private recordPress(ts: number): void {
     const r = this.recording!;
-    const t = this.eng.songTimeAtPerf(ts) - (settings.inputOffset / 1000) * this.level.settings.pitch;
+    const t = this.eng.songTimeAtPerf(ts) - (settings.inputOffset / 1000) * this.eng.currentPitch;
     const base = compileChart(r.base).tiles[r.baseSel];
     const prev = r.presses.length ? r.presses[r.presses.length - 1] : base.time;
     if (t - prev < 0.03) return;
@@ -766,6 +777,8 @@ export class EditorScreen implements Screen {
                 h('option', { value: 'easy' }, '쉬움'),
                 h('option', { value: 'normal' }, '보통'),
                 h('option', { value: 'hard' }, '어려움'),
+                h('option', { value: 'expert' }, '매우 어려움 (16분)'),
+                h('option', { value: 'master' }, '극한 (16분+셋잇단)'),
               );
               sel.value = this.autoDiff;
               return sel;
@@ -1209,6 +1222,25 @@ export class EditorScreen implements Screen {
         { class: 'form' },
         h('label', null, '녹화 방향'),
         modeSel,
+        h('label', { for: 'rec-speed' }, '녹화 속도'),
+        (() => {
+          const sp = h(
+            'select',
+            { id: 'rec-speed', onchange: () => (this.recSpeed = Number(sp.value) || 1) },
+            h('option', { value: '1' }, '×1 (원래 속도)'),
+            h('option', { value: '0.75' }, '×0.75'),
+            h('option', { value: '0.5' }, '×0.5 (절반 — 빠른 구간 연습)'),
+          );
+          sp.value = String(this.recSpeed);
+          return sp;
+        })(),
+        h('label', null, ''),
+        h(
+          'label',
+          { class: 'row dim', style: 'font-size:12px' },
+          h('input', { type: 'checkbox', id: 'rec-over', checked: this.recOverwrite, onchange: (e: Event) => (this.recOverwrite = (e.target as HTMLInputElement).checked) }),
+          '선택 타일 뒤를 지우고 녹화 (덮어쓰기)',
+        ),
         h('label', null, '녹화'),
         this.recording
           ? h('button', { class: 'btn small danger', onclick: () => this.stopRecording(true) }, '■ 녹화 중지 (Esc)')
