@@ -61,6 +61,34 @@ export function alertBox(title: string, lines: string[]): Promise<void> {
   });
 }
 
+/** 확인/취소 모달 (window.confirm 대신 — 임베드 환경에서도 동작). */
+export function confirmBox(title: string, message: string, okLabel = '확인'): Promise<boolean> {
+  return new Promise((resolve) => {
+    const done = (v: boolean) => {
+      wrap.remove();
+      resolve(v);
+    };
+    const wrap = h(
+      'div',
+      { class: 'modal-wrap ui-interactive' },
+      h(
+        'div',
+        { class: 'modal' },
+        h('h2', null, title),
+        h('div', { class: 'modal-body' }, h('p', null, message)),
+        h(
+          'div',
+          { class: 'row end' },
+          h('button', { class: 'btn', onclick: () => done(false) }, '취소'),
+          h('button', { class: 'btn primary', onclick: () => done(true) }, okLabel),
+        ),
+      ),
+    );
+    document.body.appendChild(wrap);
+    (wrap.querySelector('.btn.primary') as HTMLButtonElement).focus();
+  });
+}
+
 export function stars(n: number): string {
   const k = Math.max(0, Math.min(10, Math.round(n)));
   return '★'.repeat(Math.ceil(k / 2)) + '☆'.repeat(5 - Math.ceil(k / 2)) + ` ${k}`;

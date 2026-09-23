@@ -31,7 +31,7 @@ import {
 } from '../levels/package';
 import { stage } from '../render/stage';
 import { fmtBeats, TrackView } from '../render/track';
-import { alertBox, fileInput, h, isTyping, show, type Screen } from '../ui/dom';
+import { alertBox, confirmBox, fileInput, h, isTyping, show, type Screen } from '../ui/dom';
 import { PlayScreen } from '../ui/play';
 import { TitleScreen } from '../ui/title';
 import { ACTION_LABEL, defaultAction, EASE_NAMES, SCHEMA, type Field } from './schema';
@@ -483,8 +483,8 @@ export class EditorScreen implements Screen {
     this.commit(addAction(this.level, { floor: this.sel, type: 'Background', image: f.name }));
   }
 
-  private newLevel(): void {
-    if (!confirm('새 레벨을 만들까요? 저장하지 않은 내용은 실행 취소로만 되돌릴 수 있습니다.')) return;
+  private async newLevel(): Promise<void> {
+    if (!(await confirmBox('새 레벨', '새 레벨을 만들까요? 지금 내용은 실행 취소로 되돌릴 수 있습니다.', '새로 만들기'))) return;
     editing = { id: newPackageId('edit'), level: emptyLevel(), files: new Map(), builtin: false, warnings: [] };
     this.pkg = editing;
     this.wave.buffer = null;
@@ -532,7 +532,7 @@ export class EditorScreen implements Screen {
           { class: 'ed-top' },
           h('button', { class: 'btn small', onclick: () => show(new TitleScreen()) }, '← 타이틀'),
           h('span', { class: 'title' }, '레벨 에디터'),
-          h('button', { class: 'btn small', onclick: () => this.newLevel() }, '새로 만들기'),
+          h('button', { class: 'btn small', onclick: () => void this.newLevel() }, '새로 만들기'),
           h('button', { class: 'btn small', onclick: () => pickLevel.click() }, '불러오기'),
           h('button', { class: 'btn small', onclick: () => this.saveJson() }, '.orbit.json 저장'),
           h('button', { class: 'btn small', onclick: () => this.exportZipFile() }, 'zip 내보내기'),
