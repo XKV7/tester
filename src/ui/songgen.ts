@@ -91,7 +91,8 @@ export function openSongGenerator(): Promise<LevelPackage | null> {
       h('option', { value: 'normal' }, '보통 — + 멜로디'),
       h('option', { value: 'hard' }, '어려움 — + 베이스'),
       h('option', { value: 'expert' }, '매우 어려움 — + 하이햇 (16분음표)'),
-      h('option', { value: 'master' }, '극한 — 모든 소리'),
+      h('option', { value: 'master' }, '극한 — + 셋잇단'),
+      h('option', { value: 'full' }, '원곡 그대로 — 모든 음표 그대로'),
     );
     diff.value = c.difficulty;
     const status = h('p', { class: 'dim' }, '매번 새 곡이 만들어집니다. 마음에 안 들면 다시 만드세요.');

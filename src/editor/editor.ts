@@ -116,6 +116,7 @@ export class EditorScreen implements Screen {
   private estimateMsg = '';
   private autoDiff: AutoDifficulty = 'normal';
   private autoUseCurrent = false;
+  private autoSens = 0.55;
   private recMode: RecordMode = 'oneway';
   /** 녹화 재생 속도 (느리게 재생해도 결과는 원래 속도 기준). */
   private recSpeed = 1;
@@ -729,6 +730,7 @@ export class EditorScreen implements Screen {
     const title = this.level.meta.title === '제목 없음' ? s.songFile.replace(/\.[^.]+$/, '') : this.level.meta.title;
     const r = autoChart(toMono(buf), buf.sampleRate, {
       difficulty: this.autoDiff,
+      sensitivity: this.autoSens,
       title,
       songFile: s.songFile,
       ...(this.autoUseCurrent ? { bpm: s.bpm, offset: s.offset } : {}),
@@ -740,8 +742,9 @@ export class EditorScreen implements Screen {
     const lv = cloneLevel(this.level);
     lv.path = r.level.path;
     lv.actions = r.level.actions;
-    lv.settings.bpm = r.bpm;
+    lv.settings.bpm = r.level.settings.bpm;
     lv.settings.offset = r.offset;
+    lv.settings.startDirection = r.level.settings.startDirection;
     lv.meta = { ...lv.meta, title, difficulty: r.level.meta.difficulty, previewStart: lv.meta.previewStart || r.level.meta.previewStart };
     this.estimate = { bpm: r.bpm, offset: r.offset, confidence: 1 };
     this.estimateMsg = `자동 생성: ${r.bpm} BPM · 타일 ${r.tiles}개`;
@@ -773,15 +776,34 @@ export class EditorScreen implements Screen {
             (() => {
               const sel = h(
                 'select',
-                { id: 'auto-diff', onchange: () => (this.autoDiff = sel.value as AutoDifficulty) },
+                {
+                  id: 'auto-diff',
+                  onchange: () => {
+                    this.autoDiff = sel.value as AutoDifficulty;
+                    this.renderSide();
+                  },
+                },
                 h('option', { value: 'easy' }, '쉬움'),
                 h('option', { value: 'normal' }, '보통'),
                 h('option', { value: 'hard' }, '어려움'),
                 h('option', { value: 'expert' }, '매우 어려움 (16분)'),
                 h('option', { value: 'master' }, '극한 (16분+셋잇단)'),
+                h('option', { value: 'full' }, '원곡 그대로 (모든 소리)'),
               );
               sel.value = this.autoDiff;
               return sel;
+            })(),
+            (() => {
+              const ss = h(
+                'select',
+                { id: 'auto-sens', title: '원곡 그대로 민감도', onchange: () => (this.autoSens = Number(ss.value)) },
+                h('option', { value: '0.3' }, '민감도 낮음'),
+                h('option', { value: '0.55' }, '민감도 보통'),
+                h('option', { value: '0.85' }, '민감도 높음'),
+              );
+              ss.value = String(this.autoSens);
+              ss.hidden = this.autoDiff !== 'full';
+              return ss;
             })(),
             h('button', { class: 'btn small cool', disabled: !hasSong, onclick: () => void this.generate() }, '생성'),
           ),

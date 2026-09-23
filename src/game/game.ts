@@ -223,7 +223,12 @@ export class Game {
   // ───────────────────────── 판정 ─────────────────────────
 
   private windowsFor(floor: number) {
-    return judgeWindows(beatMs(this.chart.tiles[floor], this.pitch), this.mult);
+    const tiles = this.chart.tiles;
+    const cur = tiles[floor].duration;
+    const next = tiles[floor + 1]?.duration ?? 0;
+    // 앞뒤 음표 간격의 절반 (실제 ms)
+    const gap = Math.min(cur, next > 0 ? next : cur) / this.pitch;
+    return judgeWindows(beatMs(tiles[floor], this.pitch), this.mult, gap * 500);
   }
 
   /** 입력의 판정용 곡 시각. */

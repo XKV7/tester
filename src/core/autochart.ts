@@ -1,6 +1,7 @@
 import { defaultMeta, defaultSettings } from './level';
 import { degToRad, flipDir, normDeg, TILE_LEN } from './math';
 import { estimateTempo, FRAME_LAG, HOP, onsetEnvelope } from './tempo';
+import { detectOnsets } from './onset';
 import type { Action, Dir, LevelData } from './types';
 
 /**
@@ -12,7 +13,7 @@ import type { Action, Dir, LevelData } from './types';
  * 4. 간격(박) → 각도. 트랙이 겹치지 않도록 필요할 때만 회전 반전(Twirl)을 넣는다.
  * 5. 체크포인트·색 변경 같은 이벤트는 넣지 않는다 (Twirl만). 필요하면 에디터에서 직접 추가.
  */
-export type AutoDifficulty = 'easy' | 'normal' | 'hard' | 'expert' | 'master';
+export type AutoDifficulty = 'easy' | 'normal' | 'hard' | 'expert' | 'master' | 'full';
 
 export interface AutoOptions {
   difficulty?: AutoDifficulty;
@@ -22,6 +23,8 @@ export interface AutoOptions {
   offset?: number;
   title?: string;
   songFile?: string;
+  /** '원곡 그대로' 민감도 (0~1). */
+  sensitivity?: number;
 }
 
 export interface AutoResult {
@@ -55,6 +58,8 @@ export const DIFF_CFG: Record<AutoDifficulty, DiffCfg> = {
   expert: { grid: [0, 0.25, 0.5, 0.75], beat: 0.05, half: 0.35, fine: 0.62, minBeats: 0.25, minGapSec: 0.12, diff: 8 },
   /** 16분음표 + 셋잇단 */
   master: { grid: [0, 0.25, 1 / 3, 0.5, 2 / 3, 0.75], beat: 0.02, half: 0.3, fine: 0.5, minBeats: 1 / 6, minGapSec: 0.1, diff: 10 },
+  /** 원곡 그대로: 격자 대신 정밀 onset 검출(autoChartFull). 여기 값은 생성 곡용 최소 간격. */
+  full: { grid: [0], beat: 0, half: 1, fine: 1, minBeats: 1 / 24, minGapSec: 0.06, diff: 10 },
 };
 
 export const DIFF_LABEL: Record<AutoDifficulty, string> = {
@@ -63,6 +68,7 @@ export const DIFF_LABEL: Record<AutoDifficulty, string> = {
   hard: '어려움',
   expert: '매우 어려움',
   master: '극한',
+  full: '원곡 그대로',
 };
 
 const EPS = 1e-6;
@@ -181,8 +187,68 @@ export function layoutBeats(intervals: number[], startDir: Dir = 'CW', lookahead
   return { path, twirls };
 }
 
+/** 경로가 자기와 겹치는 쌍 수 (i와 j가 3칸 이상 떨어졌는데 0.6타일보다 가까움). */
+export function countOverlaps(path: number[]): number {
+  const xs = [0];
+  const ys = [0];
+  for (const a of path) {
+    xs.push(xs[xs.length - 1] + TILE_LEN * Math.cos(degToRad(a)));
+    ys.push(ys[ys.length - 1] + TILE_LEN * Math.sin(degToRad(a)));
+  }
+  const grid = new Map<string, number[]>();
+  let bad = 0;
+  const lim = TILE_LEN * 0.6;
+  for (let i = 0; i < xs.length; i++) {
+    const cx = Math.floor(xs[i] / TILE_LEN);
+    const cy = Math.floor(ys[i] / TILE_LEN);
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (const j of grid.get(`${cx + dx},${cy + dy}`) ?? []) if (i - j >= 3 && Math.hypot(xs[i] - xs[j], ys[i] - ys[j]) < lim) bad++;
+    const k = `${cx},${cy}`;
+    const a = grid.get(k);
+    if (a) a.push(i);
+    else grid.set(k, [i]);
+  }
+  return bad;
+}
+
+/** 정해진 회전 박·Twirl 위치로 경로 계산. */
+export function layoutFixed(turns: number[], twirls: number[], startDir: Dir): number[] {
+  const tw = new Set(twirls);
+  const path: number[] = [];
+  let dir = startDir;
+  let heading = 0;
+  turns.forEach((t, k) => {
+    if (tw.has(k)) dir = flipDir(dir);
+    const start = k === 0 ? 180 : heading + 180;
+    const a = normDeg(dir === 'CW' ? start - t * 180 : start + t * 180);
+    path.push(a);
+    heading = a;
+  });
+  return path;
+}
+
+/** 여러 방식(앞보기 길이 × 시작 회전 방향)으로 배치해 가장 덜 겹치는 것을 고른다. */
+export function layoutBest(intervals: number[]): { path: number[]; twirls: number[]; dir: Dir } {
+  let best: { path: number[]; twirls: number[]; dir: Dir } | null = null;
+  let bestBad = Infinity;
+  for (const dir of ['CW', 'CCW'] as Dir[])
+    for (const la of [12, 24, 40]) {
+      const lay = layoutBeats(intervals, dir, la);
+      const bad = countOverlaps(lay.path);
+      // 겹침이 같으면 Twirl이 적은 쪽
+      if (bad < bestBad || (bad === bestBad && best && lay.twirls.length < best.twirls.length)) {
+        best = { ...lay, dir };
+        bestBad = bad;
+      }
+      if (bestBad === 0 && dir === 'CW' && la === 12) return best!;
+    }
+  return best!;
+}
+
 export function autoChart(samples: Float32Array, sampleRate: number, opts: AutoOptions = {}): AutoResult | null {
   const diff = opts.difficulty ?? 'normal';
+  if (diff === 'full') return autoChartFull(samples, sampleRate, { bpm: opts.bpm, offset: opts.offset, title: opts.title, songFile: opts.songFile, sensitivity: opts.sensitivity });
   const cfg = DIFF_CFG[diff];
   const est =
     opts.bpm && opts.bpm > 0
@@ -293,11 +359,11 @@ export function levelFromHits(
   if (hits.length < 8) return null;
   const intervals = hits.map((b, i) => b - (i === 0 ? 0 : hits[i - 1]));
 
-  const lay = layoutBeats(intervals, 'CW');
+  const lay = layoutBest(intervals);
   const actions: Action[] = lay.twirls.map((k) => ({ floor: k, type: 'Twirl' as const }));
   const n = lay.path.length + 1;
 
-  const settings = { ...defaultSettings(), bpm, offset: Math.round(first * 1000) / 1000, songFile: opts.songFile ?? '' };
+  const settings = { ...defaultSettings(), bpm, offset: Math.round(first * 1000) / 1000, songFile: opts.songFile ?? '', startDirection: lay.dir };
   const meta = {
     ...defaultMeta(),
     title: opts.title || '자동 생성 레벨',
@@ -311,6 +377,318 @@ export function levelFromHits(
     bpm,
     offset: settings.offset,
     tiles: n,
+    twirls: lay.twirls.length,
+  };
+}
+
+// ───────────────────────── 원곡 그대로 (모든 소리) ─────────────────────────
+
+export interface FullOptions {
+  /** 지정하면 추정 대신 사용. */
+  bpm?: number;
+  offset?: number;
+  /** 0(큰 소리만) ~ 1(작은 소리까지). */
+  sensitivity?: number;
+  /** 타일 사이 최소 간격(초). 기본 0.06. */
+  minGapSec?: number;
+  /** 가장 잘게 쪼갤 박 단위의 분모 (예: 8 → 32분음표, 12 → 16분 셋잇단). 기본 48. */
+  maxDiv?: number;
+  /** 빠른 구간에서 속도를 올려 길을 곧게 (기본 켜짐). */
+  speedUp?: boolean;
+  title?: string;
+  songFile?: string;
+  onProgress?: (r: number) => void;
+}
+
+/** 쪼갤 단위 후보 (단순한 것부터). */
+const DIVS = [1, 2, 4, 3, 8, 6, 16, 12, 24, 9, 32, 18, 36, 48];
+
+/** 박 단위의 '복잡도' (단순할수록 작음). */
+function divCost(d: number): number {
+  return Math.log2(d) + (d % 3 === 0 ? 0.6 : 0) + (d % 9 === 0 ? 1 : 0);
+}
+
+/**
+ * 템포 후보 선택: 검출한 BPM의 1/3·1/2·2/3·1·1.5·2·3배 중에서 onset들이 가장 단순한 박(정박·반박·16분)에
+ * 떨어지는 템포를 고른다. (강세가 없는 곡은 자기상관만으로 1/2·1/3 템포를 고르기 쉽다.)
+ */
+export function pickTempo(times: number[], bpm: number, first: number, lo = 70, hi = 240): { bpm: number; first: number } {
+  let best = { bpm, first, cost: Infinity };
+  const baseBeat = 60 / bpm;
+  for (const k of [1, 2, 3, 1.5, 0.5, 2 / 3, 1 / 3]) {
+    const b = bpm * k;
+    if (b < lo || b > hi) continue;
+    const beat = 60 / b;
+    // 느린 템포로 가면 첫 박 후보가 여러 개 (원래 박 중 어느 것이 새 정박인지)
+    const shifts = k < 1 ? Math.round(1 / k) : 1;
+    for (let j = 0; j < shifts; j++) {
+      const f = first + j * baseBeat;
+      const tol = Math.min(0.025, beat * 0.06) / beat;
+      let cost = 0;
+      let cnt = 0;
+      for (const t of times) {
+        const x = (t - f) / beat;
+        if (x <= 0) continue;
+        let c = divCost(48) + 2;
+        for (const d of DIVS) {
+          if (Math.abs(Math.round(x * d) / d - x) <= tol) {
+            c = divCost(d);
+            break;
+          }
+        }
+        cost += c;
+        cnt++;
+      }
+      if (!cnt) continue;
+      // 리듬게임에서 흔한 템포(100~200)를 약하게 선호
+      const pref = b < 100 ? (100 - b) / 60 : b > 200 ? (b - 200) / 60 : 0;
+      const total = cost / cnt + pref;
+      if (total < best.cost - 1e-9) best = { bpm: b, first: f, cost: total };
+    }
+  }
+  return { bpm: Math.round(best.bpm * 100) / 100, first: best.first };
+}
+
+/**
+ * x박을 가장 단순한 박 단위로 맞춘다: 1박, 반박, 16분, 셋잇단, 32분, 6연음, 64분, 12연음, 24분 순으로
+ * 허용 오차(tol박) 안에 들어오는 첫 단위를 쓴다.
+ */
+export function quantizeBeat(x: number, tolBeats: number, maxDiv = 24): number {
+  let best = x;
+  let bestErr = Infinity;
+  for (const d of DIVS) {
+    if (d > maxDiv) continue;
+    const q = Math.round(x * d) / d;
+    const e = Math.abs(q - x);
+    if (e <= tolBeats) return q;
+    if (e < bestErr) {
+      bestErr = e;
+      best = q;
+    }
+  }
+  return best;
+}
+
+/**
+ * 타격 위치(첫 박 기준 박) → 간격 목록. 2박을 넘는 쉼은 가짜 타일 없이 일시 공전(Pause)으로.
+ * 반환: 각 타일의 회전 박(0 < r ≤ 2)과 추가 공전 박.
+ */
+export function restsToPauses(hits: number[]): { turn: number; pause: number }[] {
+  const out: { turn: number; pause: number }[] = [];
+  let prev = 0;
+  for (const b of hits) {
+    const g = b - prev;
+    prev = b;
+    if (g <= 2 + 1e-9) out.push({ turn: g, pause: 0 });
+    else {
+      // 추가 공전은 2박 단위(한 바퀴)로 → 행성 속도가 일정
+      const p = 2 * Math.ceil((g - 2) / 2 - 1e-9);
+      out.push({ turn: g - p, pause: p });
+    }
+  }
+  return out;
+}
+
+const SPEED_MULTS = [1, 2, 3, 4, 6, 8];
+
+export interface PathPlan {
+  /** 타일별 보이는 회전 박 (0 < turn ≤ 2). */
+  turns: number[];
+  /** 타일별 추가 공전 박 (0이면 없음). */
+  pauses: number[];
+  /** 타일별 속도 배율. */
+  mults: number[];
+  twirls: number[];
+  dir: Dir;
+}
+
+/**
+ * 속도 배율·회전 방향을 함께 골라 길을 배치한다 (원곡 그대로 모드).
+ * 각 간격 g(원래 박)마다 배율 m 후보로 보이는 박 x = g·m을 만들고, 방향(Twirl)까지 조합해
+ * 앞으로 lookahead칸을 시뮬레이션해 가장 오래 겹치지 않는 선택을 한다. 배율 변경·Twirl·날카로운 꺾임에는 비용.
+ */
+export function planPath(gaps: number[], startDir: Dir = 'CW', lookahead = 12): PathPlan {
+  const split = (x: number) => (x <= 2 + 1e-9 ? { turn: x, pause: 0 } : { turn: x - 2 * Math.ceil((x - 2) / 2 - 1e-9), pause: 2 * Math.ceil((x - 2) / 2 - 1e-9) });
+  const pen = (x: number) => (x > 2 ? 0.8 : x < 0.5 - 1e-9 ? 3 + (0.5 - x) * 8 : Math.abs(Math.log2(x)) * (x < 1 ? 1.4 : 1));
+  const opts = (g: number) => {
+    const ms = SPEED_MULTS.filter((m) => g * m >= 0.5 - 1e-9 && g * m <= 2 + 1e-9);
+    return ms.length ? ms : [g * 1 > 2 ? 1 : SPEED_MULTS[SPEED_MULTS.length - 1]];
+  };
+  const xs: number[] = [0];
+  const ys: number[] = [0];
+  const cell = TILE_LEN;
+  const grid = new Map<string, number[]>();
+  const addPt = (i: number) => {
+    const k = `${Math.floor(xs[i] / cell)},${Math.floor(ys[i] / cell)}`;
+    const a = grid.get(k);
+    if (a) a.push(i);
+    else grid.set(k, [i]);
+  };
+  addPt(0);
+  const LIMIT = TILE_LEN * 0.75;
+  const blocked = (x: number, y: number, upto: number) => {
+    const cx = Math.floor(x / cell);
+    const cy = Math.floor(y / cell);
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (const i of grid.get(`${cx + dx},${cy + dy}`) ?? []) if (i < upto && Math.hypot(xs[i] - x, ys[i] - y) < LIMIT) return true;
+    return false;
+  };
+  const angleOf = (heading: number, first: boolean, turn: number, d: Dir) => {
+    const start = first ? 180 : heading + 180;
+    return normDeg(d === 'CW' ? start - turn * 180 : start + turn * 180);
+  };
+  /** 선택 뒤로 몇 칸이나 막히지 않는지 (이후는 배율 유지·방향 유지, 막히면 방향만 바꿔 봄). */
+  const run = (k: number, angle: number, m: number, d: Dir): number => {
+    let x = xs[xs.length - 1] + TILE_LEN * Math.cos(degToRad(angle));
+    let y = ys[ys.length - 1] + TILE_LEN * Math.sin(degToRad(angle));
+    const sim: [number, number][] = [];
+    const clash = (px: number, py: number) => blocked(px, py, xs.length - 1) || sim.slice(0, -2).some(([sx, sy]) => Math.hypot(sx - px, sy - py) < LIMIT);
+    if (clash(x, y)) return 0;
+    sim.push([x, y]);
+    let h = angle;
+    let dd = d;
+    let mm = m;
+    for (let j = 1; j <= lookahead && k + j < gaps.length; j++) {
+      const g = gaps[k + j];
+      const os = opts(g);
+      if (!os.includes(mm)) mm = os.reduce((a, b) => (Math.abs(Math.log2(g * b)) < Math.abs(Math.log2(g * a)) ? b : a));
+      const t = split(g * mm).turn;
+      let a = angleOf(h, false, t, dd);
+      let nx = x + TILE_LEN * Math.cos(degToRad(a));
+      let ny = y + TILE_LEN * Math.sin(degToRad(a));
+      if (clash(nx, ny)) {
+        const alt = angleOf(h, false, t, flipDir(dd));
+        const ax = x + TILE_LEN * Math.cos(degToRad(alt));
+        const ay = y + TILE_LEN * Math.sin(degToRad(alt));
+        if (clash(ax, ay)) return j;
+        a = alt;
+        dd = flipDir(dd);
+        nx = ax;
+        ny = ay;
+      }
+      x = nx;
+      y = ny;
+      h = a;
+      sim.push([x, y]);
+    }
+    return lookahead + 1;
+  };
+
+  const plan: PathPlan = { turns: [], pauses: [], mults: [], twirls: [], dir: startDir };
+  let dir = startDir;
+  let heading = 0;
+  let curM = 1;
+  gaps.forEach((g, k) => {
+    let best: { c: number; m: number; d: Dir; angle: number; turn: number; pause: number } | null = null;
+    // 첫 타일은 원래 템포
+    const ms = k === 0 ? [1] : opts(g);
+    for (const m of ms) {
+      const { turn, pause } = split(g * m);
+      const straight = Math.abs(turn - 1) < 1e-9 || Math.abs(turn - 2) < 1e-9;
+      for (const d of straight ? [dir] : [dir, flipDir(dir)]) {
+        const angle = angleOf(heading, k === 0, turn, d);
+        const free = run(k, angle, m, d);
+        const c = -Math.min(free, lookahead + 1) * 10 + (m !== curM ? 2.5 : 0) + (d !== dir ? 1.2 : 0) + pen(g * m) * 1.5;
+        if (!best || c < best.c - 1e-9) best = { c, m, d, angle, turn, pause };
+      }
+    }
+    const b = best!;
+    if (b.d !== dir) plan.twirls.push(k);
+    dir = b.d;
+    curM = b.m;
+    heading = b.angle;
+    plan.turns.push(b.turn);
+    plan.pauses.push(b.pause);
+    plan.mults.push(b.m);
+    const i = xs.length - 1;
+    xs.push(xs[i] + TILE_LEN * Math.cos(degToRad(b.angle)));
+    ys.push(ys[i] + TILE_LEN * Math.sin(degToRad(b.angle)));
+    addPt(xs.length - 1);
+  });
+  return plan;
+}
+
+/** 모든 소리를 타일로. 박을 찾지 못하면 null. */
+export function autoChartFull(samples: Float32Array, sampleRate: number, opts: FullOptions = {}): AutoResult | null {
+  const given = !!(opts.bpm && opts.bpm > 0);
+  const est = given ? { bpm: opts.bpm!, offset: opts.offset ?? 0 } : estimateTempo(samples, sampleRate);
+  if (!est) return null;
+  const minGap = opts.minGapSec ?? 0.06;
+  const maxDiv = opts.maxDiv ?? 48;
+  const onsets = detectOnsets(samples, sampleRate, { sensitivity: opts.sensitivity, minGap: Math.min(minGap, 0.05), onProgress: opts.onProgress });
+  let bpm = est.bpm;
+  let first = est.offset;
+  if (!given) {
+    const strongTimes = onsets.filter((o) => o.s >= 1.2).map((o) => o.t);
+    ({ bpm, first } = pickTempo(strongTimes.length >= 16 ? strongTimes : onsets.map((o) => o.t), bpm, first));
+  }
+  const beat = 60 / bpm;
+  while (first < 1) first += beat;
+  const songEnd = samples.length / sampleRate - 0.3;
+
+  // 박 위치로 변환 + 템포 흔들림 보정: 정박·반박 근처의 뚜렷한 소리로 위상(drift)을 천천히 따라간다
+  const tol = Math.min(0.03, beat * 0.08) / beat; // 30ms 또는 0.08박
+  let drift = 0;
+  const hits: number[] = [];
+  const strong = onsets.length ? [...onsets].map((o) => o.s).sort((a, b) => a - b)[Math.floor(onsets.length * 0.5)] : 0;
+  for (const o of onsets) {
+    if (o.t <= first + 0.02 || o.t >= songEnd) continue;
+    const raw = (o.t - first) / beat - drift;
+    const q = quantizeBeat(raw, tol, maxDiv);
+    const half = Math.round(raw * 2) / 2;
+    if (o.s >= strong && Math.abs(raw - half) < 0.12) drift += (raw - half) * 0.15;
+    if (q <= 0) continue;
+    const last = hits[hits.length - 1];
+    if (last !== undefined) {
+      if (q <= last + 1e-9) continue;
+      if ((q - last) * beat < minGap - 1e-9) continue;
+    }
+    hits.push(q);
+  }
+  if (hits.length < 8) return null;
+
+  // 간격(원래 박) → 속도 배율·방향을 함께 계획 → 보이는 박 (2박 초과는 일시 공전)
+  const gaps = hits.map((b, i) => b - (i === 0 ? 0 : hits[i - 1]));
+  let plan: PathPlan;
+  if (opts.speedUp === false) {
+    const segs = restsToPauses(hits);
+    const lay = layoutBest(segs.map((x) => x.turn));
+    plan = { turns: segs.map((x) => x.turn), pauses: segs.map((x) => x.pause), mults: gaps.map(() => 1), twirls: lay.twirls, dir: lay.dir };
+    (plan as PathPlan & { path?: number[] }).path = lay.path;
+  } else {
+    // 두 시작 방향 중 덜 겹치는 쪽
+    const a = planPath(gaps, 'CW');
+    const b = planPath(gaps, 'CCW');
+    const pathOf = (p: PathPlan) => layoutFixed(p.turns, p.twirls, p.dir);
+    plan = countOverlaps(pathOf(a)) <= countOverlaps(pathOf(b)) ? a : b;
+  }
+  const path = (plan as PathPlan & { path?: number[] }).path ?? layoutFixed(plan.turns, plan.twirls, plan.dir);
+  const mults = plan.mults;
+  const lay = { path, twirls: plan.twirls, dir: plan.dir };
+  const actions: Action[] = lay.twirls.map((k) => ({ floor: k, type: 'Twirl' as const }));
+  plan.pauses.forEach((p, k) => {
+    if (p > 0) actions.push({ floor: k, type: 'Pause', beats: p });
+  });
+  for (let k = 1; k < mults.length; k++)
+    if (mults[k] !== mults[k - 1]) actions.push({ floor: k, type: 'SetSpeed', bpm: Math.round(bpm * mults[k] * 1000) / 1000 });
+  actions.sort((a, b) => a.floor - b.floor);
+  const startBpm = Math.round(bpm * (mults[0] ?? 1) * 1000) / 1000;
+  // 첫 박(타일 0 시각)은 원래 템포 기준 — 시작 배율이 1이 아니어도 박 시각은 곡에 맞다
+  const settings = { ...defaultSettings(), bpm: startBpm, offset: Math.round(first * 1000) / 1000, songFile: opts.songFile ?? '', startDirection: lay.dir };
+  const meta = {
+    ...defaultMeta(),
+    title: opts.title || '자동 생성 레벨',
+    artist: '',
+    author: 'ORBIT 자동 생성 (원곡 그대로)',
+    difficulty: 10,
+    previewStart: Math.round(Math.max(0, (samples.length / sampleRate) * 0.3) * 10) / 10,
+  };
+  return {
+    level: { version: 1, meta, settings, path: lay.path, actions },
+    bpm,
+    offset: settings.offset,
+    tiles: lay.path.length + 1,
     twirls: lay.twirls.length,
   };
 }

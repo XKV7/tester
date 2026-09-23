@@ -132,6 +132,13 @@ export const DIFFICULTY_CHOICES = [
   { value: 'hard' as const, label: '어려움', hint: '8분음표 리듬까지' },
   { value: 'expert' as const, label: '매우 어려움', hint: '16분음표까지' },
   { value: 'master' as const, label: '극한', hint: '16분음표 + 셋잇단' },
+  { value: 'full' as const, label: '원곡 그대로', hint: '들리는 소리 하나하나 전부 (빠른 연타까지)' },
+];
+
+export const SENSITIVITY_CHOICES = [
+  { value: '0.3' as const, label: '낮음', hint: '킥·스네어 같은 큰 소리 위주' },
+  { value: '0.55' as const, label: '보통', hint: '대부분의 소리' },
+  { value: '0.85' as const, label: '높음', hint: '작은 소리까지 (하이햇·잔 멜로디)' },
 ];
 
 export function stars(n: number): string {
