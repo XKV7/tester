@@ -219,6 +219,86 @@ export class EditorScreen implements Screen {
     if (focus) this.ensureVisible();
   }
 
+  /** 선택 타일 뒤에 angle 방향 타일 추가 (키보드·방향 패드 공용). */
+  private addTile(angle: number): void {
+    const r = insertTileAfter(this.level, this.sel, angle);
+    this.commit(r.level, r.sel);
+    this.ensureVisible();
+  }
+
+  private removeTile(): void {
+    const r = deleteTile(this.level, this.sel);
+    if (r.level !== this.level) this.commit(r.level, r.sel);
+    this.ensureVisible();
+  }
+
+  /** 선택 타일의 나가는 각도 ±15°. */
+  private nudgeAngle(d: number): void {
+    if (this.sel >= this.level.path.length) {
+      toast('도착 타일은 방향이 없습니다. 앞 타일을 선택하세요.');
+      return;
+    }
+    this.commit(setOutAngle(this.level, this.sel, this.level.path[this.sel] + d));
+  }
+
+  /** 방향 패드 (터치 기기·좁은 화면은 기본으로 표시). */
+  private padVisible = (() => {
+    try {
+      const saved = localStorage.getItem('orbit.editor.pad');
+      if (saved !== null) return saved === '1';
+    } catch {
+      /* 무시 */
+    }
+    return matchMedia('(hover: none) and (pointer: coarse)').matches || window.innerWidth < 760;
+  })();
+  private padEl: HTMLElement | null = null;
+
+  private togglePad(): void {
+    this.padVisible = !this.padVisible;
+    try {
+      localStorage.setItem('orbit.editor.pad', this.padVisible ? '1' : '0');
+    } catch {
+      /* 무시 */
+    }
+    if (this.padEl) this.padEl.hidden = !this.padVisible;
+  }
+
+  private buildPad(): HTMLElement {
+    const btn = (label: string, title: string, fn: () => void, cls = '') =>
+      h('button', { class: `btn pad-btn ${cls}`, title, 'aria-label': title, onclick: fn }, label);
+    // 3×3: 가운데는 삭제. 화살표 방향 = 새 타일이 이어지는 방향
+    const dirs: [string, number, string][] = [
+      ['↖', 135, '왼쪽 위 (Q)'],
+      ['↑', 90, '위 (W)'],
+      ['↗', 45, '오른쪽 위 (E)'],
+      ['←', 180, '왼쪽 (A)'],
+      ['', -1, ''],
+      ['→', 0, '오른쪽 (D)'],
+      ['↙', 225, '왼쪽 아래 (Z)'],
+      ['↓', 270, '아래 (S)'],
+      ['↘', 315, '오른쪽 아래 (C)'],
+    ];
+    const grid = h(
+      'div',
+      { class: 'pad-grid' },
+      ...dirs.map(([l, a, t]) => (a < 0 ? btn('⌫', '선택 타일 삭제 (Backspace)', () => this.removeTile(), 'danger') : btn(l, `${t} 타일 추가`, () => this.addTile(a)))),
+    );
+    const row = h(
+      'div',
+      { class: 'pad-row' },
+      btn('◀', '이전 타일 선택 (←)', () => this.select(this.sel - 1)),
+      btn('▶', '다음 타일 선택 (→)', () => this.select(this.sel + 1)),
+      btn('↺', '각도 +15° (Shift+←)', () => this.nudgeAngle(15)),
+      btn('↻', '각도 −15° (Shift+→)', () => this.nudgeAngle(-15)),
+      btn('🌀', '회전 반전 토글 (T)', () => this.toggleAction('Twirl')),
+      btn('↶', '실행 취소 (Ctrl+Z)', () => this.undo()),
+    );
+    const pad = h('div', { class: 'dir-pad ui-interactive' }, grid, row);
+    pad.hidden = !this.padVisible;
+    this.padEl = pad;
+    return pad;
+  }
+
   /** 화면 좌표(sx, sy) 아래의 지점을 고정한 채 확대/축소. */
   private zoomAt(zoom: number, sx: number, sy: number): void {
     const cam = stage.camera;
@@ -446,19 +526,15 @@ export class EditorScreen implements Screen {
     }
     if (e.code in KEY_ANGLES) {
       e.preventDefault();
-      const r = insertTileAfter(this.level, this.sel, KEY_ANGLES[e.code]);
-      this.commit(r.level, r.sel);
-      this.ensureVisible();
+      this.addTile(KEY_ANGLES[e.code]);
       return;
     }
     switch (e.key) {
       case 'Backspace':
-      case 'Delete': {
+      case 'Delete':
         e.preventDefault();
-        const r = deleteTile(this.level, this.sel);
-        if (r.level !== this.level) this.commit(r.level, r.sel);
+        this.removeTile();
         break;
-      }
       case 'ArrowLeft':
       case 'ArrowDown':
         e.preventDefault();
@@ -907,7 +983,9 @@ export class EditorScreen implements Screen {
             (this.zoomLabel = h('span', { class: 'zoom-val' }, '')),
             h('button', { class: 'btn small', title: '축소 (−)', 'aria-label': '축소', onclick: () => this.zoomStep(0.8) }, '−'),
             h('button', { class: 'btn small', title: '트랙 전체 보기 (0)', onclick: () => this.zoomFit() }, '전체'),
+            h('button', { class: 'btn small', title: '방향 패드 보이기/숨기기', onclick: () => this.togglePad() }, '패드'),
           ),
+          this.buildPad(),
           h(
             'div',
             { class: 'hint' },
