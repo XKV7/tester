@@ -1,7 +1,7 @@
 import { audio } from '../audio/engine';
 import { encodeMp3 } from '../audio/mp3';
 import { decodeErrorMessage, download, SONG_ACCEPT } from '../levels/package';
-import { fileInput, h } from './dom';
+import { fileButton, h, setFileButtonDisabled, warnIfHuge } from './dom';
 
 const fmtSize = (n: number) => (n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)}MB` : `${Math.round(n / 1024)}KB`);
 const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -29,14 +29,14 @@ export function openMp3Converter(): Promise<File | null> {
     const bar = h('div', { style: 'width:0%' });
     const progress = h('div', { class: 'progress-line', hidden: true }, bar);
     const actions = h('div', { class: 'row end' });
-    const pick = fileInput({ accept: SONG_ACCEPT }, (f) => void convert(f[0]));
-    const pickBtn = h('button', { class: 'btn primary', onclick: () => pick.click() }, '파일 고르기');
+    const pickBtn = fileButton('파일 고르기', { accept: SONG_ACCEPT, cls: 'primary' }, (f) => void convert(f[0]));
     const closeBtn = h('button', { class: 'btn ghost', onclick: () => done(null) }, '닫기');
     actions.append(closeBtn, pickBtn);
 
     const convert = async (file: File | undefined) => {
       if (!file) return;
-      pickBtn.disabled = true;
+      warnIfHuge(file);
+      setFileButtonDisabled(pickBtn, true);
       progress.hidden = false;
       bar.style.width = '0%';
       status.textContent = `${file.name} — 소리를 꺼내는 중…`;
@@ -45,7 +45,7 @@ export function openMp3Converter(): Promise<File | null> {
         buf = await audio().decode(await file.arrayBuffer());
       } catch {
         status.textContent = decodeErrorMessage(file.name);
-        pickBtn.disabled = false;
+        setFileButtonDisabled(pickBtn, false);
         progress.hidden = true;
         return;
       }
@@ -72,7 +72,7 @@ export function openMp3Converter(): Promise<File | null> {
       });
       actions.append(
         h('button', { class: 'btn ghost', onclick: () => done(null) }, '닫기'),
-        h('button', { class: 'btn', onclick: () => ((actions.innerHTML = ''), (progress.hidden = true), (pickBtn.disabled = false), actions.append(closeBtn, pickBtn), (status.textContent = '다른 파일을 고르세요.')) }, '다른 파일'),
+        h('button', { class: 'btn', onclick: () => ((actions.innerHTML = ''), (progress.hidden = true), setFileButtonDisabled(pickBtn, false), actions.append(closeBtn, pickBtn), (status.textContent = '다른 파일을 고르세요.')) }, '다른 파일'),
         save,
         h('button', { class: 'btn primary', onclick: () => done(result) }, '이 곡으로 레벨 만들기'),
       );
@@ -88,11 +88,10 @@ export function openMp3Converter(): Promise<File | null> {
         h('div', { class: 'form', style: 'grid-template-columns: 70px 1fr; margin: 10px 0' }, h('label', { for: 'mp3-kbps' }, '음질'), quality),
         status,
         progress,
-        pick,
         actions,
       ),
     );
     document.body.appendChild(wrap);
-    pickBtn.focus();
+    pickBtn.input.focus();
   });
 }

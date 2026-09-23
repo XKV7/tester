@@ -39,7 +39,7 @@ import {
 } from '../levels/package';
 import { stage } from '../render/stage';
 import { fmtBeats, TrackView } from '../render/track';
-import { alertBox, confirmBox, fileInput, h, isTyping, show, toast, type Screen } from '../ui/dom';
+import { alertBox, confirmBox, fileButton, h, isTyping, show, toast, warnIfHuge, type Screen } from '../ui/dom';
 import { PlayScreen } from '../ui/play';
 import { openSongGenerator } from '../ui/songgen';
 import { openMp3Converter } from '../ui/convert';
@@ -882,6 +882,7 @@ export class EditorScreen implements Screen {
   private async loadSong(files: FileList | File[]): Promise<void> {
     let f = files[0];
     if (!f) return;
+    warnIfHuge(f);
     try {
       const inner = await songFromZip(f);
       if (inner) f = inner;
@@ -954,9 +955,9 @@ export class EditorScreen implements Screen {
   // ───────────────────────── DOM ─────────────────────────
 
   private buildDom(root: HTMLElement): void {
-    const pickLevel = fileInput({ accept: PACKAGE_ACCEPT, multiple: true }, (f) => this.loadFiles(f));
-    const pickSong = fileInput({ accept: SONG_OR_ZIP_ACCEPT }, (f) => this.loadSong(f));
-    const pickImg = fileInput({ accept: 'image/*' }, (f) => this.addImage(f));
+    const pickLevel = fileButton('불러오기', { accept: PACKAGE_ACCEPT, multiple: true, cls: 'small' }, (f) => this.loadFiles(f));
+    const pickSong = fileButton('음원 선택 (음악·동영상)', { accept: SONG_OR_ZIP_ACCEPT, cls: 'small' }, (f) => this.loadSong(f));
+    const pickImg = fileButton('배경 이미지', { accept: 'image/*', cls: 'small' }, (f) => this.addImage(f));
     this.info = h('div', { class: 'info' });
     this.recBadge = h('span', { class: 'rec-badge' });
     this.side = h('div', { class: 'ed-side' });
@@ -971,10 +972,10 @@ export class EditorScreen implements Screen {
           h('button', { class: 'btn small', onclick: () => show(new TitleScreen()) }, '← 타이틀'),
           h('span', { class: 'title' }, '레벨 에디터'),
           h('button', { class: 'btn small', onclick: () => void this.newLevel() }, '새로 만들기'),
-          h('button', { class: 'btn small', onclick: () => pickLevel.click() }, '불러오기'),
+          pickLevel,
           h('button', { class: 'btn small', onclick: () => void this.saveJson() }, '.orbit.json 저장'),
           h('button', { class: 'btn small', onclick: () => void this.exportZipFile() }, 'zip 내보내기'),
-          h('button', { class: 'btn small', onclick: () => pickSong.click() }, '음원 선택 (음악·동영상)'),
+          pickSong,
           h('button', { class: 'btn small cool', onclick: () => void this.generateSongLevel() }, '음악 자동 생성'),
           h(
             'button',
@@ -987,16 +988,13 @@ export class EditorScreen implements Screen {
             },
             '동영상 → mp3',
           ),
-          h('button', { class: 'btn small', onclick: () => pickImg.click() }, '배경 이미지'),
+          pickImg,
           h('button', { class: 'btn small', onclick: () => this.addToLibrary() }, '목록에 추가'),
           h('span', { class: 'grow' }),
           this.recBadge,
           h('button', { class: 'btn small', onclick: () => this.undo(), title: 'Ctrl+Z' }, '↶'),
           h('button', { class: 'btn small', onclick: () => this.redo(), title: 'Ctrl+Y' }, '↷'),
           h('button', { class: 'btn small primary', onclick: () => this.playtest(), title: 'Space' }, '▶ 플레이테스트'),
-          pickLevel,
-          pickSong,
-          pickImg,
         ),
         (this.canvasEl = h(
           'div',
