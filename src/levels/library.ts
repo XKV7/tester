@@ -36,11 +36,11 @@ class Library {
       return errors;
     }
     if (!Array.isArray(names)) return [`${base}index.json은 폴더 이름 배열이어야 합니다.`];
-    await Promise.all(
-      names.map(async (name) => {
+    const loaded: (LevelPackage | null)[] = await Promise.all(
+      names.map(async (name): Promise<LevelPackage | null> => {
         if (typeof name !== 'string' || !/^[\w\-가-힣. ]+$/.test(name)) {
           errors.push(`잘못된 폴더 이름: ${String(name)}`);
-          return;
+          return null;
         }
         try {
           const dir = `${base}${encodeURIComponent(name)}/`;
@@ -56,13 +56,15 @@ class Library {
           }
           pkg.warnings = [];
           pkg.builtin = true;
-          this.add(pkg);
+          return pkg;
         } catch (e) {
           errors.push(`${name}: ${(e as Error).message}`);
+          return null;
         }
       }),
     );
-    // 폴더 이름 순서 유지
+    // index.json 순서대로 추가
+    for (const pkg of loaded) if (pkg) this.add(pkg);
     return errors;
   }
 }
