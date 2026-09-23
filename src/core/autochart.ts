@@ -176,12 +176,59 @@ export function autoChart(samples: Float32Array, sampleRate: number, opts: AutoO
   const offTh = cfg.off >= 1 ? Infinity : percentile(pos.filter((p) => !p.on).map((p) => p.s), cfg.off);
   const picked = pos.filter((p) => p.s > 0 && p.s >= (p.on ? onTh : offTh)).map((p) => p.b);
 
-  // 간격 정리: 2박 이상 빈 곳은 1박씩 채우고, 너무 짧은 간격은 버린다
+  // 채움 후보: 격자 중 소리가 조금이라도 있는 곳 (세기 순 상위 절반)
+  const fillTh = percentile(pos.map((p) => p.s), 0.5);
+  const fill = pos.filter((p) => p.s > 0 && p.s >= fillTh).map((p) => p.b);
+  return levelFromHits(picked, bpm, first, {
+    fill,
+    title: opts.title,
+    songFile: opts.songFile,
+    difficulty: cfg.diff,
+    previewStart: Math.max(0, (samples.length / sampleRate) * 0.3),
+  });
+}
+
+/**
+ * 타격 위치(첫 박 기준 박, 오름차순) → 레벨. 음원 분석과 음악 생성이 함께 쓴다.
+ * 간격 정리: 입력 간격 최소 반박·200ms, 1.5박보다 긴 빈 곳은 1박 타일로 채운다.
+ */
+export function levelFromHits(
+  beats: number[],
+  bpm: number,
+  first: number,
+  opts: {
+    title?: string;
+    songFile?: string;
+    difficulty?: number;
+    previewStart?: number;
+    author?: string;
+    artist?: string;
+    /** 빈 곳을 채울 때 우선 고를 위치 (약한 소리가 나는 박). 없으면 1박 간격. */
+    fill?: number[];
+  } = {},
+): AutoResult | null {
+  const beat = 60 / bpm;
+  const fill = [...(opts.fill ?? [])].sort((x, y) => x - y);
   const hits: number[] = [];
   let prev = 0;
-  for (const b of picked) {
+  for (const b of [...beats].sort((x, y) => x - y)) {
+    if (b <= 0) continue;
     while (b - prev > 1.5 + 1e-9) {
-      prev += 1;
+      // 다음 채움 위치: prev+1에 가장 가까운 소리 (prev+0.5 ~ prev+1.5, 다음 타격 0.5박 전까지)
+      const lo = prev + Math.max(0.5, MIN_GAP_SEC / beat);
+      const hi = Math.min(prev + 1.5, b - 0.5);
+      let pickB = prev + 1;
+      let best = Infinity;
+      for (const f of fill) {
+        if (f < lo - 1e-9) continue;
+        if (f > hi + 1e-9) break;
+        const d = Math.abs(f - (prev + 1));
+        if (d < best) {
+          best = d;
+          pickB = f;
+        }
+      }
+      prev = pickB;
       hits.push(prev);
     }
     if ((b - prev) * beat < MIN_GAP_SEC - 1e-9 || b - prev < 0.5 - 1e-9) continue;
@@ -199,10 +246,10 @@ export function autoChart(samples: Float32Array, sampleRate: number, opts: AutoO
   const meta = {
     ...defaultMeta(),
     title: opts.title || '자동 생성 레벨',
-    artist: '',
-    author: 'ORBIT 자동 생성',
-    difficulty: cfg.diff,
-    previewStart: Math.round(Math.max(0, (samples.length / sampleRate) * 0.3) * 10) / 10,
+    artist: opts.artist ?? '',
+    author: opts.author ?? 'ORBIT 자동 생성',
+    difficulty: opts.difficulty ?? 4,
+    previewStart: Math.round((opts.previewStart ?? 0) * 10) / 10,
   };
   return {
     level: { version: 1, meta, settings, path: lay.path, actions },

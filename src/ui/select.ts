@@ -6,6 +6,7 @@ import { ambient } from '../render/stage';
 import { alertBox, choiceBox, DIFFICULTY_CHOICES, fileInput, h, isTyping, show, stars, toast, type Screen } from './dom';
 import { PlayScreen } from './play';
 import { speedSelect } from './speed';
+import { openSongGenerator } from './songgen';
 import { TitleScreen } from './title';
 
 let lastSelected: string | null = null;
@@ -50,6 +51,7 @@ export class SelectScreen implements Screen {
           pickDir,
           pickSong,
           h('button', { class: 'btn small primary', onclick: () => pickSong.click() }, '음원으로 레벨 만들기'),
+          h('button', { class: 'btn small cool', onclick: () => void this.generateSong() }, '음악 자동 생성'),
           h('button', { class: 'btn small', onclick: () => pickFiles.click() }, '레벨 불러오기 (zip / json)'),
           h('button', { class: 'btn small', onclick: () => pickDir.click() }, '폴더 불러오기'),
         ),
@@ -123,6 +125,15 @@ export class SelectScreen implements Screen {
       const lines = e instanceof PackageError ? e.details : [(e as Error).message];
       await alertBox('레벨을 불러올 수 없습니다', lines);
     }
+  }
+
+  /** 곡을 작곡해 레벨과 함께 목록에 추가하고 선택. */
+  private async generateSong(): Promise<void> {
+    const pkg = await openSongGenerator();
+    if (!pkg) return;
+    library.add(pkg);
+    this.sel = null;
+    this.select(pkg);
   }
 
   /** 음원 → 자동 생성 레벨을 목록에 추가하고 선택. */
