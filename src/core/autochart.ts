@@ -412,10 +412,10 @@ function divCost(d: number): number {
  * 템포 후보 선택: 검출한 BPM의 1/3·1/2·2/3·1·1.5·2·3배 중에서 onset들이 가장 단순한 박(정박·반박·16분)에
  * 떨어지는 템포를 고른다. (강세가 없는 곡은 자기상관만으로 1/2·1/3 템포를 고르기 쉽다.)
  */
-export function pickTempo(times: number[], bpm: number, first: number, lo = 70, hi = 240): { bpm: number; first: number } {
+export function pickTempo(times: number[], bpm: number, first: number, lo = 70, hi = 240, ks = [1, 2, 3, 1.5, 0.5, 2 / 3, 1 / 3]): { bpm: number; first: number; cost: number } {
   let best = { bpm, first, cost: Infinity };
   const baseBeat = 60 / bpm;
-  for (const k of [1, 2, 3, 1.5, 0.5, 2 / 3, 1 / 3]) {
+  for (const k of ks) {
     const b = bpm * k;
     if (b < lo || b > hi) continue;
     const beat = 60 / b;
@@ -446,7 +446,53 @@ export function pickTempo(times: number[], bpm: number, first: number, lo = 70, 
       if (total < best.cost - 1e-9) best = { bpm: b, first: f, cost: total };
     }
   }
-  return { bpm: Math.round(best.bpm * 100) / 100, first: best.first };
+  return { bpm: Math.round(best.bpm * 100) / 100, first: best.first, cost: best.cost };
+}
+
+/**
+ * onset 시각만으로 템포 후보 찾기: 각 BPM에서 16분 격자 위상을 2ms 칸 히스토그램으로 모아
+ * ±12ms 안에 드는 비율이 가장 높은 위상을 잰다. 봉우리 상위 몇 개를 (bpm, 16분 위상)으로 돌려준다.
+ * 파형 자기상관이 엉뚱한 템포(예: 125 대신 78.7)를 고를 때 보완.
+ */
+export function scanTempo(times: number[], lo = 70, hi = 240, top = 3): { bpm: number; phase: number; score: number }[] {
+  if (times.length < 16) return [];
+  const res: { bpm: number; phase: number; score: number }[] = [];
+  for (let b = lo; b <= hi + 1e-9; b += 0.25) res.push({ bpm: b, ...gridFit(times, b) });
+  const peaks = res.filter((r, i) => (i === 0 || r.score >= res[i - 1].score) && (i === res.length - 1 || r.score >= res[i + 1].score));
+  peaks.sort((a, b) => b.score - a.score);
+  const out: typeof peaks = [];
+  for (const p of peaks) {
+    if (out.some((o) => Math.abs(o.bpm - p.bpm) / o.bpm < 0.02)) continue;
+    out.push(p);
+    if (out.length >= top) break;
+  }
+  return out;
+}
+
+/** 한 BPM에서 16분 격자 적합도: 가장 잘 맞는 위상과 (±12ms 안 비율 − 우연히 맞을 비율). */
+export function gridFit(times: number[], bpm: number): { phase: number; score: number } {
+  const BIN = 0.002;
+  const W = 6; // ±12ms
+  const sixteenth = 60 / bpm / 4;
+  const nb = Math.max(1, Math.round(sixteenth / BIN));
+  const h = new Float32Array(nb);
+  for (const t of times) {
+    const r = ((t % sixteenth) + sixteenth) % sixteenth;
+    h[Math.floor((r / sixteenth) * nb) % nb]++;
+  }
+  let win = 0;
+  for (let i = -W; i <= W; i++) win += h[((i % nb) + nb) % nb];
+  let best = win;
+  let arg = 0;
+  for (let c = 1; c < nb; c++) {
+    win += h[(c + W) % nb] - h[(((c - W - 1) % nb) + nb) % nb];
+    if (win > best) {
+      best = win;
+      arg = c;
+    }
+  }
+  // 격자가 촘촘할수록 우연히 맞는 비율(2W+1)/nb 이 커지므로 뺀다
+  return { phase: (arg / nb) * sixteenth, score: best / Math.max(1, times.length) - Math.min(1, (2 * W + 1) / nb) };
 }
 
 /**
@@ -491,6 +537,61 @@ export function restsToPauses(hits: number[]): { turn: number; pause: number }[]
 
 const SPEED_MULTS = [1, 2, 3, 4, 6, 8];
 
+/**
+ * 구간(프레이즈) 단위 속도 배율: 타일마다 배율을 바꾸면 읽기 어렵다 (원작 맵은 구간 경계에서만 속도를 바꾼다).
+ * 비터비로 '보이는 박이 보기 좋은 범위(½~2박, 곧은길=1박)' 비용 + 변경 비용의 합이 가장 작은 배율 열을 고른다.
+ * 2박을 넘는 간격은 일시 공전(Pause)으로 버틸 수 있어 4박까지 허용 (비용 있음).
+ */
+export function chooseMults(gaps: number[], changeCost = 8): number[] {
+  const n = gaps.length;
+  if (!n) return [];
+  const M = SPEED_MULTS;
+  // 보이는 회전 x박: ½~1½박(90°~270°)이 보기 좋고, 2박 가까이면 길이 되돌아와 겹친다 (360° 머리핀)
+  const turnCost = (t: number) => (t < 0.5 - 1e-9 ? Infinity : t <= 1.5 + 1e-9 ? Math.abs(Math.log2(t)) * (t < 1 ? 1.4 : 1) : 5);
+  const tileCost = (g: number, m: number) => {
+    const x = g * m;
+    if (x <= 2 + 1e-9) return turnCost(x);
+    const pause = 2 * Math.ceil((x - 2) / 2 - 1e-9);
+    if (x > 4 + 1e-9 && m !== M[0]) return Infinity; // 긴 쉼은 원래 템포에서만
+    return turnCost(x - pause) + (m === M[0] ? 1 : 2);
+  };
+  let cost = M.map((m) => (m === 1 ? tileCost(gaps[0], 1) : Infinity));
+  if (!Number.isFinite(cost[0])) cost[0] = 0; // 첫 타일은 원래 템포 고정
+  const back: number[][] = [];
+  for (let k = 1; k < n; k++) {
+    const prev = cost;
+    const bk: number[] = [];
+    cost = M.map((m, j) => {
+      const tc = tileCost(gaps[k], m);
+      let best = Infinity;
+      let arg = j;
+      for (let i = 0; i < M.length; i++) {
+        const c = prev[i] + (i === j ? 0 : changeCost);
+        if (c < best) {
+          best = c;
+          arg = i;
+        }
+      }
+      bk.push(arg);
+      return best + tc;
+    });
+    // 어떤 배율로도 못 나타내는 간격 (극히 드묾) → 가장 가까운 배율 허용
+    if (cost.every((c) => !Number.isFinite(c))) {
+      const pm = Math.min(...prev);
+      cost = M.map((m) => pm + changeCost + Math.abs(Math.log2(gaps[k] * m)) * 3);
+      for (let j = 0; j < M.length; j++) bk[j] = prev.indexOf(pm);
+    }
+    back.push(bk);
+  }
+  let j = cost.indexOf(Math.min(...cost));
+  const out = new Array<number>(n);
+  for (let k = n - 1; k >= 0; k--) {
+    out[k] = M[j];
+    if (k > 0) j = back[k - 1][j];
+  }
+  return out;
+}
+
 export interface PathPlan {
   /** 타일별 보이는 회전 박 (0 < turn ≤ 2). */
   turns: number[];
@@ -507,10 +608,14 @@ export interface PathPlan {
  * 각 간격 g(원래 박)마다 배율 m 후보로 보이는 박 x = g·m을 만들고, 방향(Twirl)까지 조합해
  * 앞으로 lookahead칸을 시뮬레이션해 가장 오래 겹치지 않는 선택을 한다. 배율 변경·Twirl·날카로운 꺾임에는 비용.
  */
-export function planPath(gaps: number[], startDir: Dir = 'CW', lookahead = 12): PathPlan {
+export function planPath(gaps: number[], startDir: Dir = 'CW', lookahead = 12, fixedMults?: number[]): PathPlan {
   const split = (x: number) => (x <= 2 + 1e-9 ? { turn: x, pause: 0 } : { turn: x - 2 * Math.ceil((x - 2) / 2 - 1e-9), pause: 2 * Math.ceil((x - 2) / 2 - 1e-9) });
   const pen = (x: number) => (x > 2 ? 0.8 : x < 0.5 - 1e-9 ? 3 + (0.5 - x) * 8 : Math.abs(Math.log2(x)) * (x < 1 ? 1.4 : 1));
-  const opts = (g: number) => {
+  const opts = (g: number, k: number) => {
+    const base = optsFree(g);
+    return fixedMults && !base.includes(fixedMults[k]) ? [fixedMults[k], ...base] : base;
+  };
+  const optsFree = (g: number) => {
     const ms = SPEED_MULTS.filter((m) => g * m >= 0.5 - 1e-9 && g * m <= 2 + 1e-9);
     return ms.length ? ms : [g * 1 > 2 ? 1 : SPEED_MULTS[SPEED_MULTS.length - 1]];
   };
@@ -551,8 +656,11 @@ export function planPath(gaps: number[], startDir: Dir = 'CW', lookahead = 12): 
     let mm = m;
     for (let j = 1; j <= lookahead && k + j < gaps.length; j++) {
       const g = gaps[k + j];
-      const os = opts(g);
-      if (!os.includes(mm)) mm = os.reduce((a, b) => (Math.abs(Math.log2(g * b)) < Math.abs(Math.log2(g * a)) ? b : a));
+      if (fixedMults) mm = fixedMults[k + j];
+      else {
+        const os = opts(g, k + j);
+        if (!os.includes(mm)) mm = os.reduce((a, b) => (Math.abs(Math.log2(g * b)) < Math.abs(Math.log2(g * a)) ? b : a));
+      }
       const t = split(g * mm).turn;
       let a = angleOf(h, false, t, dd);
       let nx = x + TILE_LEN * Math.cos(degToRad(a));
@@ -582,14 +690,16 @@ export function planPath(gaps: number[], startDir: Dir = 'CW', lookahead = 12): 
   gaps.forEach((g, k) => {
     let best: { c: number; m: number; d: Dir; angle: number; turn: number; pause: number } | null = null;
     // 첫 타일은 원래 템포
-    const ms = k === 0 ? [1] : opts(g);
+    const ms = k === 0 ? [fixedMults?.[0] ?? 1] : opts(g, k);
     for (const m of ms) {
       const { turn, pause } = split(g * m);
       const straight = Math.abs(turn - 1) < 1e-9 || Math.abs(turn - 2) < 1e-9;
       for (const d of straight ? [dir] : [dir, flipDir(dir)]) {
         const angle = angleOf(heading, k === 0, turn, d);
         const free = run(k, angle, m, d);
-        const c = -Math.min(free, lookahead + 1) * 10 + (m !== curM ? 2.5 : 0) + (d !== dir ? 1.2 : 0) + pen(g * m) * 1.5;
+        // 구간 배율이 정해져 있으면 거기서 벗어나는 데 큰 비용 (겹침을 피할 때만)
+        const mc = fixedMults ? (m !== fixedMults[k] ? 125 : 0) : m !== curM ? 2.5 : 0;
+        const c = -Math.min(free, lookahead + 1) * 10 + mc + (d !== dir ? 1.2 : 0) + pen(g * m) * 1.5;
         if (!best || c < best.c - 1e-9) best = { c, m, d, angle, turn, pause };
       }
     }
@@ -621,7 +731,20 @@ export function autoChartFull(samples: Float32Array, sampleRate: number, opts: F
   let first = est.offset;
   if (!given) {
     const strongTimes = onsets.filter((o) => o.s >= 1.2).map((o) => o.t);
-    ({ bpm, first } = pickTempo(strongTimes.length >= 16 ? strongTimes : onsets.map((o) => o.t), bpm, first));
+    const times = strongTimes.length >= 16 ? strongTimes : onsets.map((o) => o.t);
+    let best = pickTempo(times, bpm, first);
+    // 파형 추정이 엉뚱할 때: onset 격자 스캔의 최고 봉우리가 훨씬 잘 맞으면 그쪽 (16분 위상 → 정박 위상 4가지 중 선택)
+    const seed = scanTempo(times, 70, 240, 1)[0];
+    if (seed && seed.score > gridFit(times, best.bpm).score * 1.4 + 0.02) {
+      const q = 60 / seed.bpm / 4;
+      let alt: ReturnType<typeof pickTempo> | null = null;
+      for (let j = 0; j < 4; j++) {
+        const c = pickTempo(times, seed.bpm, seed.phase + j * q, 70, 240, [1]); // 스캔이 이미 격자 적합도로 고른 템포
+        if (!alt || c.cost < alt.cost) alt = c;
+      }
+      best = alt!;
+    }
+    ({ bpm, first } = best);
   }
   const beat = 60 / bpm;
   while (first < 1) first += beat;
@@ -725,8 +848,9 @@ export function autoChartFull(samples: Float32Array, sampleRate: number, opts: F
     (plan as PathPlan & { path?: number[] }).path = lay.path;
   } else {
     // 두 시작 방향 중 덜 겹치는 쪽
-    const a = planPath(gaps, 'CW');
-    const b = planPath(gaps, 'CCW');
+    const fixed = chooseMults(gaps);
+    const a = planPath(gaps, 'CW', 12, fixed);
+    const b = planPath(gaps, 'CCW', 12, fixed);
     const pathOf = (p: PathPlan) => layoutFixed(p.turns, p.twirls, p.dir);
     plan = countOverlaps(pathOf(a)) <= countOverlaps(pathOf(b)) ? a : b;
   }

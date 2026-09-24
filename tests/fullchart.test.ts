@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { autoChartFull, pickTempo, quantizeBeat, restsToPauses } from '../src/core/autochart';
+import { autoChartFull, chooseMults, pickTempo, quantizeBeat, restsToPauses, scanTempo } from '../src/core/autochart';
 import { compileChart } from '../src/core/chart';
 import { validateLevel } from '../src/core/level';
 import { detectOnsets, fft } from '../src/core/onset';
@@ -216,5 +216,37 @@ describe('원곡 그대로: 박자가 아닌 소리는 거른다', () => {
       expect(body.filter((t) => near(t, truthT)).length / body.length, `sens ${sens}: 정밀도`).toBeGreaterThan(0.95);
       expect(truthT.filter((t) => near(t, body)).length / truthT.length, `sens ${sens}: 재현율`).toBeGreaterThan(sens < 0.4 ? 0.45 : 0.85);
     }
+  });
+});
+
+describe('원곡 그대로: 구간 단위 속도·템포 스캔', () => {
+  it('16분 연타와 8분·4분이 섞여도 속도를 타일마다 바꾸지 않는다', () => {
+    // 한 마디: 16분 8개 + 8분 2개 + 4분 1개 (타일 11개), 8마디
+    const bar = [...Array(8).fill(0.25), 0.5, 0.5, 1];
+    const gaps = Array.from({ length: 8 }, () => bar).flat();
+    const m = chooseMults(gaps);
+    let changes = 0;
+    for (let k = 1; k < m.length; k++) if (m[k] !== m[k - 1]) changes++;
+    expect(changes).toBeLessThanOrEqual(1);
+    // 보이는 회전(2박 넘는 부분은 일시 공전)이 ½~1½ 범위 (360° 머리핀 없음)
+    for (let k = 1; k < m.length; k++) {
+      let x = gaps[k] * m[k];
+      while (x > 2 + 1e-9) x -= 2;
+      expect(x).toBeGreaterThanOrEqual(0.5 - 1e-9);
+      expect(x).toBeLessThanOrEqual(1.5 + 1e-9);
+    }
+  });
+
+  it('onset 격자 스캔으로 템포를 찾는다 (125 BPM, 16분·8분 섞임)', () => {
+    const beat = 60 / 125;
+    const times: number[] = [];
+    let seed = 3;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 4294967296);
+    for (let b = 0; b < 64; b++)
+      for (let q = 0; q < 4; q++) if (q === 0 || rnd() < 0.45) times.push(0.3 + (b + q / 4) * beat + (rnd() - 0.5) * 0.006);
+    const top = scanTempo(times)[0];
+    expect(Math.abs(top.bpm - 125)).toBeLessThan(0.6);
+    const r = pickTempo(times, 125, top.phase, 70, 240, [1]);
+    expect(r.bpm).toBe(125);
   });
 });
