@@ -15,6 +15,8 @@ export interface Windows {
   perfect: number;
   near: number;
   far: number;
+  /** far를 조금 넘긴 입력도 '빠름·느림'으로 받아주는 여유 한계 (없으면 far). 이웃 음표와 헷갈리지 않는 범위. */
+  grace?: number;
 }
 
 /**
@@ -23,10 +25,13 @@ export interface Windows {
  */
 export function judgeWindows(beatMs: number, mult = 1, minCapMs = 0): Windows {
   const cap = Math.max(beatMs * 0.25, minCapMs);
+  const far = Math.min(BASE_WINDOWS.far * mult, cap);
   return {
     perfect: Math.min(BASE_WINDOWS.perfect * mult, cap),
     near: Math.min(BASE_WINDOWS.near * mult, cap),
-    far: Math.min(BASE_WINDOWS.far * mult, cap),
+    far,
+    // 근접 입력 여유: far의 1.5배까지, 단 이웃 음표 간격의 절반(minCapMs)을 넘지 않게
+    grace: minCapMs > 0 ? Math.max(far, Math.min(far * 1.5, minCapMs)) : far,
   };
 }
 
@@ -38,7 +43,7 @@ export function judgeError(e: number, w: Windows, tooEarlyLimitMs: number): Judg
   const a = Math.abs(e);
   if (a <= w.perfect) return 'perfect';
   if (a <= w.near) return e < 0 ? 'earlyPerfect' : 'latePerfect';
-  if (a <= w.far) return e < 0 ? 'early' : 'late';
+  if (a <= (w.grace ?? w.far)) return e < 0 ? 'early' : 'late';
   if (e > 0) return 'miss';
   if (-e <= tooEarlyLimitMs) return 'tooEarly';
   return null;

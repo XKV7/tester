@@ -133,9 +133,10 @@ describe('원곡 그대로 (모든 소리)', () => {
     expect(got.filter((b) => setTruth.has(b)).length / got.length).toBeGreaterThan(0.95); // 가짜 타일 거의 없음
     // 긴 쉼은 일시 공전으로 (채움 타일 없음)
     expect(r!.level.actions.some((a) => a.type === 'Pause')).toBe(true);
-    // 빠른 구간은 속도를 올려 곧게: 회전 반전이 적고, 속도 변경이 있다
+    // 빠른 구간은 속도를 올린다 (최대 2배 → 16분 = 90° 꺾임, 겹치지 않게 계단·지그재그용 회전 반전)
     expect(r!.level.actions.some((a) => a.type === 'SetSpeed')).toBe(true);
-    expect(r!.twirls).toBeLessThan(c.tiles.length * 0.15);
+    expect(r!.twirls).toBeLessThan(c.tiles.length * 0.35);
+    for (const t of c.tiles) expect(t.bpm).toBeLessThanOrEqual(bpm * 2 + 1e-6);
     // 셋잇단·16분 간격(초)이 그대로
     const gapsMs = c.tiles.slice(1, -1).map((t) => Math.round(t.duration * 1000));
     expect(gapsMs).toContain(Math.round((beat / 4) * 1000));

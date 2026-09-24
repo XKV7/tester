@@ -43,8 +43,23 @@ describe('판정 경계값', () => {
     const w2 = judgeWindows(83.3, 1, 83.3 / 2);
     expect(w2.perfect).toBe(35);
     expect(w2.far).toBeCloseTo(41.65, 1);
-    // 일반 타일은 그대로
-    expect(judgeWindows(500, 1, 250)).toEqual(judgeWindows(500));
+    // 일반 타일은 창이 그대로 (근접 여유만 추가)
+    const { grace: _g, ...plain } = judgeWindows(500, 1, 250);
+    const { grace: _h, ...base } = judgeWindows(500);
+    expect(plain).toEqual(base);
+  });
+
+  it('근접 입력 여유: far를 조금 넘겨도 빠름·느림 (이웃 음표 간격 절반까지)', () => {
+    // 125BPM 1박 타일, 보통: far ±126.5ms, 여유 ±189.75ms
+    const g = judgeWindows(480, DIFFICULTY_MULT.normal, 240);
+    expect(g.far).toBeCloseTo(126.5);
+    expect(g.grace).toBeCloseTo(189.75);
+    expect(judgeError(170, g, 240)).toBe('late');
+    expect(judgeError(-170, g, 240)).toBe('early');
+    expect(judgeError(191, g, 240)).toBe('miss');
+    // 연타(간격 120ms)에서는 이웃과 헷갈리지 않게 여유 없음
+    const s = judgeWindows(120, DIFFICULTY_MULT.normal, 60);
+    expect(s.grace).toBeCloseTo(s.far);
   });
 
   it('난이도 배율 (보통 ±40 / ±80 / ±126ms)', () => {

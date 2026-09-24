@@ -389,12 +389,14 @@ export interface FullOptions {
   offset?: number;
   /** 0(큰 소리만) ~ 1(작은 소리까지). */
   sensitivity?: number;
-  /** 타일 사이 최소 간격(초). 기본 0.06. */
+  /** 타일 사이 최소 간격(초). 기본 0.075 (200BPM 16분까지). */
   minGapSec?: number;
   /** 가장 잘게 쪼갤 박 단위의 분모 (예: 8 → 32분음표, 12 → 16분 셋잇단). 기본 48. */
   maxDiv?: number;
   /** 빠른 구간에서 속도를 올려 길을 곧게 (기본 켜짐). */
   speedUp?: boolean;
+  /** 속도를 올려도 넘지 않을 공전 BPM (기본 250, 단 2배까지는 항상 허용 → 16분 = 90°). 너무 빠르게 돌면 치기 어렵다. */
+  maxBpm?: number;
   title?: string;
   songFile?: string;
   onProgress?: (r: number) => void;
@@ -542,12 +544,14 @@ const SPEED_MULTS = [1, 2, 3, 4, 6, 8];
  * 비터비로 '보이는 박이 보기 좋은 범위(½~2박, 곧은길=1박)' 비용 + 변경 비용의 합이 가장 작은 배율 열을 고른다.
  * 2박을 넘는 간격은 일시 공전(Pause)으로 버틸 수 있어 4박까지 허용 (비용 있음).
  */
-export function chooseMults(gaps: number[], changeCost = 8): number[] {
+export function chooseMults(gaps: number[], changeCost = 8, mults: number[] = SPEED_MULTS): number[] {
   const n = gaps.length;
   if (!n) return [];
-  const M = SPEED_MULTS;
+  const M = mults;
   // 보이는 회전 x박: ½~1½박(90°~270°)이 보기 좋고, 2박 가까이면 길이 되돌아와 겹친다 (360° 머리핀)
-  const turnCost = (t: number) => (t < 0.5 - 1e-9 ? Infinity : t <= 1.5 + 1e-9 ? Math.abs(Math.log2(t)) * (t < 1 ? 1.4 : 1) : 5);
+  // ¼~½박(45°~90°)은 날카로워 비용이 크지만, 속도 상한 때문에 필요할 때는 허용
+  const turnCost = (t: number) =>
+    t < 0.25 - 1e-9 ? Infinity : t < 0.5 - 1e-9 ? 3 + (0.5 - t) * 8 : t <= 1.5 + 1e-9 ? Math.abs(Math.log2(t)) * (t < 1 ? 1.4 : 1) : 5;
   const tileCost = (g: number, m: number) => {
     const x = g * m;
     if (x <= 2 + 1e-9) return turnCost(x);
@@ -608,7 +612,7 @@ export interface PathPlan {
  * 각 간격 g(원래 박)마다 배율 m 후보로 보이는 박 x = g·m을 만들고, 방향(Twirl)까지 조합해
  * 앞으로 lookahead칸을 시뮬레이션해 가장 오래 겹치지 않는 선택을 한다. 배율 변경·Twirl·날카로운 꺾임에는 비용.
  */
-export function planPath(gaps: number[], startDir: Dir = 'CW', lookahead = 12, fixedMults?: number[]): PathPlan {
+export function planPath(gaps: number[], startDir: Dir = 'CW', lookahead = 12, fixedMults?: number[], mults: number[] = SPEED_MULTS): PathPlan {
   const split = (x: number) => (x <= 2 + 1e-9 ? { turn: x, pause: 0 } : { turn: x - 2 * Math.ceil((x - 2) / 2 - 1e-9), pause: 2 * Math.ceil((x - 2) / 2 - 1e-9) });
   const pen = (x: number) => (x > 2 ? 0.8 : x < 0.5 - 1e-9 ? 3 + (0.5 - x) * 8 : Math.abs(Math.log2(x)) * (x < 1 ? 1.4 : 1));
   const opts = (g: number, k: number) => {
@@ -616,8 +620,10 @@ export function planPath(gaps: number[], startDir: Dir = 'CW', lookahead = 12, f
     return fixedMults && !base.includes(fixedMults[k]) ? [fixedMults[k], ...base] : base;
   };
   const optsFree = (g: number) => {
-    const ms = SPEED_MULTS.filter((m) => g * m >= 0.5 - 1e-9 && g * m <= 2 + 1e-9);
-    return ms.length ? ms : [g * 1 > 2 ? 1 : SPEED_MULTS[SPEED_MULTS.length - 1]];
+    const ms = mults.filter((m) => g * m >= 0.5 - 1e-9 && g * m <= 2 + 1e-9);
+    if (ms.length) return ms;
+    const sharp = mults.filter((m) => g * m >= 0.25 - 1e-9 && g * m <= 2 + 1e-9);
+    return sharp.length ? sharp : [g > 2 ? 1 : mults[mults.length - 1]];
   };
   const xs: number[] = [0];
   const ys: number[] = [0];
@@ -724,7 +730,7 @@ export function autoChartFull(samples: Float32Array, sampleRate: number, opts: F
   const given = !!(opts.bpm && opts.bpm > 0);
   const est = given ? { bpm: opts.bpm!, offset: opts.offset ?? 0 } : estimateTempo(samples, sampleRate);
   if (!est) return null;
-  const minGap = opts.minGapSec ?? 0.06;
+  const minGap = opts.minGapSec ?? 0.075;
   const maxDiv = opts.maxDiv ?? 48;
   const onsets = detectOnsets(samples, sampleRate, { sensitivity: opts.sensitivity, minGap: Math.min(minGap, 0.05), onProgress: opts.onProgress });
   let bpm = est.bpm;
@@ -848,9 +854,11 @@ export function autoChartFull(samples: Float32Array, sampleRate: number, opts: F
     (plan as PathPlan & { path?: number[] }).path = lay.path;
   } else {
     // 두 시작 방향 중 덜 겹치는 쪽
-    const fixed = chooseMults(gaps);
-    const a = planPath(gaps, 'CW', 12, fixed);
-    const b = planPath(gaps, 'CCW', 12, fixed);
+    const maxBpm = opts.maxBpm ?? 250;
+    const ms = SPEED_MULTS.filter((m) => m <= 2 || bpm * m <= maxBpm + 1e-6);
+    const fixed = chooseMults(gaps, 8, ms);
+    const a = planPath(gaps, 'CW', 12, fixed, ms);
+    const b = planPath(gaps, 'CCW', 12, fixed, ms);
     const pathOf = (p: PathPlan) => layoutFixed(p.turns, p.twirls, p.dir);
     plan = countOverlaps(pathOf(a)) <= countOverlaps(pathOf(b)) ? a : b;
   }
