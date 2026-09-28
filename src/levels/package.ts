@@ -4,6 +4,7 @@ import { parseLevelJson, serializeLevel } from '../core/level';
 import type { LevelData } from '../core/types';
 import { audio } from '../audio/engine';
 import { synthBeatTrack } from '../audio/beatTrack';
+import { convertAdofai } from './adofai';
 
 /** 레벨 패키지: 레벨 JSON + 음원 + 부가 파일. */
 export interface LevelPackage {
@@ -17,6 +18,8 @@ export interface LevelPackage {
   /** 음원이 없어 합성 비트를 쓰는지. */
   synthesized?: boolean;
   warnings: string[];
+  /** 얼음과 불의 춤(.adofai)에서 변환한 레벨 (원작 맵·음원 저작권 주의). */
+  imported?: 'adofai';
 }
 
 export class PackageError extends Error {
@@ -42,6 +45,10 @@ export function packageFromFiles(files: Map<string, Uint8Array>, id = newPackage
     flat.set(baseName(k), v);
   }
   const names = [...flat.keys()];
+  const orbitJson = names.find((n) => lower(n) === 'level.orbit.json') ?? names.find((n) => lower(n).endsWith('.orbit.json'));
+  // 얼음과 불의 춤 레벨: ORBIT 레벨이 없고 .adofai가 있으면 변환 (backup 파일은 뒤로)
+  const adofai = names.filter((n) => lower(n).endsWith('.adofai')).sort((a, b) => Number(/backup/i.test(a)) - Number(/backup/i.test(b)) || a.length - b.length)[0];
+  if (!orbitJson && adofai) return packageFromAdofai(flat, adofai, id);
   const jsonName =
     names.find((n) => lower(n) === 'level.orbit.json') ??
     names.find((n) => lower(n).endsWith('.orbit.json')) ??
@@ -53,6 +60,20 @@ export function packageFromFiles(files: Map<string, Uint8Array>, id = newPackage
   const song = r.level.settings.songFile;
   if (song && !findFile(flat, song)) warnings.push(`음원 파일 '${song}'을(를) 찾지 못해 합성 비트로 대체합니다.`);
   return { id, level: r.level, files: flat, builtin: false, warnings };
+}
+
+function packageFromAdofai(flat: Map<string, Uint8Array>, name: string, id: string): LevelPackage {
+  let conv: ReturnType<typeof convertAdofai>;
+  try {
+    conv = convertAdofai(strFromU8(flat.get(name)!));
+  } catch (e) {
+    throw new PackageError([`${name}: ${(e as Error).message}`]);
+  }
+  const warnings = ['얼음과 불의 춤 레벨을 변환했습니다. 개인 플레이용으로만 쓰고, 원작 음원·맵은 공개로 올리지 마세요.', ...conv.warnings];
+  const song = conv.level.settings.songFile;
+  if (song && !findFile(flat, song)) warnings.push(`음원 파일 '${song}'이(가) 없어 합성 비트로 대체합니다. 레벨 파일과 음원을 함께 zip으로 묶어 불러오세요.`);
+  if (!song) warnings.push('원작 레벨에 음원 파일 정보가 없어 합성 비트로 재생합니다.');
+  return { id, level: conv.level, files: flat, builtin: false, warnings, imported: 'adofai' };
 }
 
 /** 음원 파일 하나 → 자동 생성 레벨 패키지. 박을 찾지 못하면 PackageError. */
@@ -88,7 +109,7 @@ export async function packageFromSong(file: File, difficulty: import('../core/au
 export const SONG_ACCEPT =
   'audio/*,video/mp4,video/webm,video/quicktime,video/x-matroska,.mp3,.wav,.ogg,.oga,.opus,.m4a,.aac,.flac,.mp4,.m4v,.webm,.mkv,.mov';
 
-export const PACKAGE_ACCEPT = `.zip,.json,image/*,${SONG_ACCEPT}`;
+export const PACKAGE_ACCEPT = `.zip,.json,.adofai,application/json,text/plain,application/octet-stream,image/*,${SONG_ACCEPT}`;
 
 /** 음원 선택용: 음원·동영상 + 음원을 담은 zip. */
 export const SONG_OR_ZIP_ACCEPT = `${SONG_ACCEPT},.zip,application/zip`;
@@ -114,7 +135,7 @@ export async function songFromZip(file: File): Promise<File | null> {
     throw new PackageError([`${file.name}: zip 파일을 열 수 없습니다.`]);
   }
   const names = Object.keys(entries).filter((n) => !n.endsWith('/') && !n.includes('__MACOSX'));
-  if (names.some((n) => lower(n).endsWith('.json'))) return null;
+  if (names.some((n) => lower(n).endsWith('.json') || lower(n).endsWith('.adofai'))) return null;
   const song = names.find((n) => SONG_EXT.test(n));
   if (!song) throw new PackageError([`${file.name}: zip 안에 음원 파일이 없습니다.`]);
   return new File([entries[song] as Uint8Array<ArrayBuffer>], baseName(song));

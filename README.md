@@ -62,6 +62,16 @@ npx firebase-tools emulators:start --only auth,firestore --project demo-orbit
 npx vite build --mode emulator && npx vite preview   # .env.emulator 사용
 ```
 
+## 얼음과 불의 춤 레벨 가져오기
+
+"레벨 불러오기"나 에디터의 "불러오기"로 `.adofai` 파일을 열 수 있습니다. 음원까지 쓰려면 `.adofai`와 음원을 함께 zip으로 묶어 여세요.
+
+- **그대로 옮기는 것:** 타일 각도(`angleData`/`pathData`), 미드스핀, BPM·오프셋·피치, 트랙·배경색, 그리고 아래 이벤트입니다.
+  - 속도 변경, 회전 반전, 일시 공전, 홀드, 체크포인트, 트랙 색, 카메라, 번쩍임, 트랙 이동, 트랙 위치(PositionTrack), 배경색
+- **빼는 것:** ORBIT에 없는 연출은 빼고 개수만 알려줍니다 (장식, 필터 등).
+- **박이 달라지는 것:** 행성 3개, 자유 이동 같은 이벤트는 경고로 알려줍니다.
+- **저작권:** 원작 맵과 음원에는 저작권이 있습니다. 개인 플레이용으로 쓰세요. 변환한 레벨을 온라인에 올리려 하면 경고를 띄웁니다.
+
 ## 레벨 형식
 
 `level.orbit.json` + 음원(+ 배경 이미지)을 zip 또는 폴더로 묶는다. 형식은 설계서 3장을 따르며, 추가로 `Text` 이벤트(안내 문구)를 지원한다. 음원이 없으면 레벨의 hitTime에 맞춘 합성 비트가 자동으로 재생된다.
