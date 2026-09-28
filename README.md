@@ -50,12 +50,10 @@ Firebase 설정이 있으면 온라인 기능이 켜집니다. 설정이 없거�
    - **Authentication:** Google 로그인을 사용 설정합니다.
    - **Firestore Database:** 데이터베이스를 만듭니다 (프로덕션 모드).
    - **프로젝트 설정 → 내 앱:** 웹 앱을 추가하고 `firebaseConfig` 값을 받습니다.
-2. `.env.example`을 복사해 `.env.production`을 만들고 값을 채워 커밋합니다. 웹 설정값은 공개돼도 되는 식별자이고, 데이터는 `firestore.rules`가 보호합니다.
+2. `.env.production`에 웹 설정값을 넣고(현재 `adofai-cb912`), `.firebaserc`에 프로젝트 ID를 적습니다. 웹 설정값은 공개돼도 되는 식별자이고, 데이터는 `firestore.rules`가 보호합니다.
 3. 배포 방법을 하나 고릅니다.
    - **로컬에서:** `npm run build && npx firebase-tools deploy --only hosting,firestore --project <프로젝트ID>`
-   - **자동 배포 (GitHub Actions):** 저장소 설정에 아래 두 가지를 넣으면 main에 머지될 때마다 `.github/workflows/firebase-deploy.yml`이 배포합니다.
-     - secret `FIREBASE_SERVICE_ACCOUNT`: 서비스 계정 키 JSON 전체. 역할은 Firebase 관리자입니다.
-     - variable `FIREBASE_PROJECT_ID`: 프로젝트 ID.
+   - **자동 배포 (GitHub Actions):** 저장소 secret `FIREBASE_SERVICE_ACCOUNT`(서비스 계정 키 JSON 전체)를 넣으면 main에 머지될 때마다 `.github/workflows/firebase-deploy.yml`이 `.firebaserc`의 프로젝트로 배포합니다.
 
 ### 로컬 에뮬레이터로 시험
 
