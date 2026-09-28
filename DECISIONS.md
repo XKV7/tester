@@ -84,3 +84,8 @@
   - firebase SDK는 동적 import(별도 청크). 설정이 없거나 iframe 안(아티팩트)이면 온라인 UI를 숨김.
   - 보안 규칙은 에뮬레이터 + @firebase/rules-unit-testing으로 21개 경우를 확인, 앱 흐름(로그인·이름 변경·업로드·목록·받기·순위·플레이·설정 동기화)은 에뮬레이터 빌드에서 Playwright로 확인. Google 로그인 팝업 자체는 이 환경에서 apis.google.com이 막혀 시험용 익명 로그인으로 대체.
 - 아티팩트 뷰어가 body 글자색을 #141413으로 지정해 레벨 카드 제목이 검게 보이던 문제: html/body와 카드 제목 글자색을 명시.
+- 얼음과 불의 춤(.adofai) 가져오기 (`src/levels/adofai.ts`): ORBIT의 좌표·회전 규칙(angle[i]=타일 i→i+1 절대 각도, 첫 진입 180°, 기본 시계 방향, 같은 각도=360°, 트랙은 y-위)이 원작과 같아 각도를 그대로 옮긴다. 999(미드스핀) → 이전 방향의 반대 + Midspin. pathData 글자표, 5/6/7/8은 이전 방향 ±72°·±360/7°.
+  - 오프셋: 원작 ms → 초, 타일 0 시각으로 사용. Hold duration(추가 바퀴) → beats = 2×바퀴 (0이면 표현 불가 → 경고). 카메라 zoom 100/z, position·positionOffset은 타일 단위 × TILE_LEN.
+  - PositionTrack(정적 위치 이동, 뒤 타일에 누적)은 같은 위치 구간마다 duration 0 MoveTrack(첫 타일)으로.
+  - 느슨한 JSON(BOM, 끝 쉼표, 문자열 안 줄바꿈) 처리. zip 안의 backup .adofai는 뒤로.
+  - 가져온 패키지에 imported='adofai' 표시 → 불러올 때 개인 플레이용 안내, 온라인 올리기 전에 저작권 경고("허락받았음 — 올리기").

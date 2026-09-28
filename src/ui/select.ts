@@ -35,7 +35,7 @@ export class SelectScreen implements Screen {
 
   enter(root: HTMLElement): void {
     ambient(true);
-    const pickFiles = fileButton('레벨 불러오기 (zip / json)', { accept: PACKAGE_ACCEPT, multiple: true, cls: 'small' }, (f) => this.load(f));
+    const pickFiles = fileButton('레벨 불러오기 (zip / json / adofai)', { accept: PACKAGE_ACCEPT, multiple: true, cls: 'small' }, (f) => this.load(f));
     const pickDir = fileButton('폴더 불러오기', { directory: true, cls: 'small' }, (f) => this.load(f));
     const pickSong = fileButton('음원으로 레벨 만들기', { accept: SONG_OR_ZIP_ACCEPT, cls: 'small primary' }, (f) => void this.fromSong(f[0]));
     this.cards = h('div', { class: 'cards' });

@@ -241,6 +241,15 @@ async function shrinkSong(pkg: LevelPackage, files: { name: string; data: Uint8A
 
 /** 선택한 레벨(과 음원)을 온라인에 올린다. */
 export async function uploadSelected(pkg: LevelPackage): Promise<void> {
+  if (pkg.imported === 'adofai') {
+    const go = await confirmBox(
+      '원작에서 가져온 레벨입니다',
+      '얼음과 불의 춤에서 변환한 레벨은 원작 맵 제작자와 음원의 저작권이 있어요. 개인 플레이용으로만 쓰는 것을 권합니다.\n' +
+        '제작자와 음원 권리자에게 허락을 받은 경우에만 올려 주세요.',
+      '허락받았음 — 올리기',
+    );
+    if (!go) return;
+  }
   if (!(await ensureSignedIn('레벨을 올리려면 로그인해야 합니다.'))) return;
   let files = referencedFiles(pkg);
   const hasSong = !!pkg.level.settings.songFile && !!findFile(pkg.files, pkg.level.settings.songFile);
