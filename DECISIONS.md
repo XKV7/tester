@@ -89,3 +89,5 @@
   - PositionTrack(정적 위치 이동, 뒤 타일에 누적)은 같은 위치 구간마다 duration 0 MoveTrack(첫 타일)으로.
   - 느슨한 JSON(BOM, 끝 쉼표, 문자열 안 줄바꿈) 처리. zip 안의 backup .adofai는 뒤로.
   - 가져온 패키지에 imported='adofai' 표시 → 불러올 때 개인 플레이용 안내, 온라인 올리기 전에 저작권 경고("허락받았음 — 올리기").
+  - 오프셋 정정 (실제 커스텀 맵 + 음원으로 확인): 원작 offset은 타일 0이 아니라 **타일 1을 누르는 순간**. 강한 소리 상위 10% 중 타일에 맞는 비율이 '타일 0 = offset'이면 68%, '타일 1 = offset'이면 80% (±20ms 어긋나면 8~75%로 떨어짐), 곡의 첫 소리(1.355s)도 타일 1(1.360s)과 일치. → ORBIT offset = 원작 offset − 첫 회전 시간.
+  - CustomBackground의 bgImage는 Background image로 옮긴다 (zip 안 이미지 파일 사용).
