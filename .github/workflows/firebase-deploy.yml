@@ -1,0 +1,32 @@
+# main에 머지되면 Firebase Hosting + Firestore 규칙을 배포한다.
+# 필요한 저장소 설정 (Settings → Secrets and variables → Actions):
+#   secret   FIREBASE_SERVICE_ACCOUNT  서비스 계정 키 JSON 전체 (역할: Firebase 관리자)
+#   variable FIREBASE_PROJECT_ID       Firebase 프로젝트 ID
+# 웹 설정값(VITE_FIREBASE_*)은 저장소의 .env.production에 있다 (공개돼도 되는 값).
+name: Deploy to Firebase
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ vars.FIREBASE_PROJECT_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - name: Deploy
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          echo "$SA" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          npx --yes firebase-tools@15 deploy --only hosting,firestore --project "${{ vars.FIREBASE_PROJECT_ID }}" --non-interactive

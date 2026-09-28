@@ -5,6 +5,7 @@ import { stage } from './render/stage';
 import { library } from './levels/library';
 import { initUi, show } from './ui/dom';
 import { TitleScreen } from './ui/title';
+import { startSync } from './online/sync';
 
 async function main(): Promise<void> {
   await stage.init(document.getElementById('stage')!);
@@ -18,6 +19,8 @@ async function main(): Promise<void> {
   };
   window.addEventListener('pointerdown', unlock, { capture: true });
   window.addEventListener('keydown', unlock, { capture: true });
+  // Firebase 설정이 있으면 로그인 유지·설정 동기화 (없으면 아무것도 안 함)
+  startSync();
   // 함께 배포된 레벨 (public/levels) — 없으면 건너뜀
   const errs = await library.loadBundled();
   if (errs.length) console.warn('[ORBIT] 포함 레벨 불러오기:', errs.join('\n'));

@@ -9,6 +9,7 @@ import { speedSelect } from './speed';
 import { openSongGenerator } from './songgen';
 import { openMp3Converter } from './convert';
 import { TitleScreen } from './title';
+import { onlineAvailable, openOnlineLevels, openRanking, uploadSelected } from './online';
 
 let lastSelected: string | null = null;
 let lastAuto = false;
@@ -63,6 +64,7 @@ export class SelectScreen implements Screen {
           ),
           pickFiles,
           pickDir,
+          onlineAvailable() ? h('button', { class: 'btn small cool', onclick: () => void openOnlineLevels((pkg) => this.addAndSelect(pkg)) }, '온라인 레벨') : null,
         ),
         h('div', { class: 'page-body' }, this.cards),
         h(
@@ -71,6 +73,8 @@ export class SelectScreen implements Screen {
           h('label', { class: 'row' }, this.autoBox, '자동 플레이'),
           h('label', { class: 'row' }, '속도', h('div', { style: 'width:120px' }, speedSelect())),
           h('span', { class: 'grow dim' }, 'Enter로 시작 · 방향키로 선택'),
+          onlineAvailable() ? h('button', { class: 'btn small', onclick: () => this.sel && void openRanking(this.sel) }, '순위') : null,
+          onlineAvailable() ? h('button', { class: 'btn small', onclick: () => this.sel && void uploadSelected(this.sel) }, '올리기') : null,
           h('button', { class: 'btn primary', onclick: () => this.play() }, '플레이'),
         ),
       ),
@@ -89,7 +93,12 @@ export class SelectScreen implements Screen {
       const card = h(
         'div',
         { class: 'card' + (p === this.sel ? ' sel' : ''), onclick: () => this.select(p), ondblclick: () => this.play() },
-        h('h3', null, m.title, p.builtin ? h('span', { class: 'tag' }, p.id.startsWith('bundled-') ? '포함됨' : '데모') : null),
+        h(
+          'h3',
+          null,
+          m.title,
+          p.builtin ? h('span', { class: 'tag' }, p.id.startsWith('bundled-') ? '포함됨' : '데모') : p.id.startsWith('cloud-') ? h('span', { class: 'tag' }, '온라인') : null,
+        ),
         h('div', { class: 'meta' }, `${m.artist}${m.author ? ' · 제작 ' + m.author : ''}`),
         h('div', { class: 'meta' }, `${p.level.settings.bpm} BPM · ${p.level.path.length + 1} 타일`),
         h('div', { class: 'stars' }, stars(m.difficulty)),
@@ -134,6 +143,12 @@ export class SelectScreen implements Screen {
       const lines = e instanceof PackageError ? e.details : [(e as Error).message];
       await alertBox('레벨을 불러올 수 없습니다', lines);
     }
+  }
+
+  private addAndSelect(pkg: LevelPackage): void {
+    library.add(pkg);
+    this.sel = null;
+    this.select(pkg);
   }
 
   /** 곡을 작곡해 레벨과 함께 목록에 추가하고 선택. */

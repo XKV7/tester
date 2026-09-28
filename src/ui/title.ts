@@ -8,6 +8,7 @@ import { TrackView } from '../render/track';
 import { h, show, type Screen } from './dom';
 import { SelectScreen } from './select';
 import { SettingsScreen } from './settings';
+import { accountBar } from './online';
 
 /** 타이틀: 배경에서 두 행성이 천천히 공전하는 데모. */
 export class TitleScreen implements Screen {
@@ -59,6 +60,7 @@ export class TitleScreen implements Screen {
           ),
           h('button', { class: 'btn', onclick: () => show(new SettingsScreen(() => new TitleScreen())) }, '설정'),
         ),
+        accountBar(),
       ),
       h('div', { class: 'footer-note' }, `아무 키 또는 터치로 플레이 · Esc 일시정지 · 버전 ${__BUILD__}`),
     );
