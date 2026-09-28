@@ -29,10 +29,11 @@ describe('.adofai 변환', () => {
   it('pathData 각도·박: 곧은 길 1박, 왼쪽 꺾기 ½박, 오른쪽 꺾기 1½박 (시계 방향)', () => {
     const r = level({ pathData: 'RRUR' });
     expect(r.level.path).toEqual([0, 0, 90, 0]);
-    expect(r.level.settings.offset).toBeCloseTo(0.5);
+    // 원작 offset(500ms) = 타일 1을 누르는 순간 → 타일 0은 한 박(0.6초) 앞
+    expect(r.level.settings.offset).toBeCloseTo(0.5 - 0.6);
     const c = compileChart(r.level);
     expect(c.tiles.slice(0, 4).map((t) => t.beats)).toEqual([1, 1, 0.5, 1.5]);
-    expect(c.times[1]).toBeCloseTo(0.5 + 0.6);
+    expect(c.times[1]).toBeCloseTo(0.5);
     expect(r.level.meta).toMatchObject({ title: 'Song', artist: 'Artist', author: '원작 맵: Maker' });
     expect(r.songFile).toBe('song.ogg');
   });
@@ -102,6 +103,11 @@ describe('.adofai 변환', () => {
       { floor: 0, type: 'MoveTrack', from: 2, to: 3, offset: [0, TILE_LEN], duration: 0 },
       { floor: 0, type: 'MoveTrack', from: 4, to: 5, offset: [TILE_LEN, TILE_LEN], duration: 0 },
     ]);
+  });
+
+  it('배경: 색과 이미지 파일', () => {
+    const r = level({ angleData: [0, 0], actions: [{ floor: 1, eventType: 'CustomBackground', color: '000000', bgImage: 'BG1.jpg' }] });
+    expect(r.level.actions).toContainEqual({ floor: 1, type: 'Background', color: '#000000', image: 'BG1.jpg' });
   });
 
   it('행성 3개처럼 박이 달라지는 이벤트는 경고', () => {

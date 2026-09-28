@@ -1,3 +1,4 @@
+import { compileChart } from '../core/chart';
 import { TILE_LEN } from '../core/math';
 import { defaultMeta, defaultSettings } from '../core/level';
 import { EASE_NAMES } from '../core/ease';
@@ -156,7 +157,9 @@ export function convertAdofai(text: string): AdofaiResult {
   const s = (typeof r.settings === 'object' && r.settings !== null ? r.settings : {}) as Record<string, unknown>;
   const settings = defaultSettings();
   settings.bpm = Math.max(1, Math.min(10000, num(s.bpm, 100)));
-  settings.offset = Math.max(-60, Math.min(3600, num(s.offset, 0) / 1000));
+  // 원작 offset = 첫 타일(floor 1)을 누르는 순간. ORBIT offset = 타일 0 시각 → 아래에서 첫 회전만큼 당긴다.
+  const firstHit = num(s.offset, 0) / 1000;
+  settings.offset = firstHit;
   settings.pitch = Math.max(0.25, Math.min(4, num(s.pitch, 100) / 100));
   settings.volume = Math.max(0, Math.min(1, num(s.volume, 100) / 100));
   settings.countdownTicks = Math.max(0, Math.min(16, Math.round(num(s.countdownTicks, 4))));
@@ -273,8 +276,8 @@ export function convertAdofai(text: string): AdofaiResult {
       }
       case 'CustomBackground': {
         const c = adofaiColor(e.color);
-        if (c) actions.push({ floor, type: 'Background', color: c });
-        if (str(e.bgImage)) bump(skipped, 'CustomBackground(이미지)');
+        const img = str(e.bgImage).split(/[\\/]/).pop() ?? '';
+        if (c || img) actions.push({ floor, type: 'Background', ...(c ? { color: c } : {}), ...(img ? { image: img } : {}) });
         break;
       }
       case 'MultiPlanet':
@@ -320,5 +323,9 @@ export function convertAdofai(text: string): AdofaiResult {
       `ORBIT에 없는 연출은 뺐습니다: ${[...skipped].map(([k, n]) => `${k} ${n}개`).join(', ')}${ignoredDecor ? `${skipped.size ? ', ' : ''}장식 ${ignoredDecor}개` : ''}.`,
     );
 
-  return { level: { version: 1, meta, settings, path, actions }, songFile, warnings };
+  const level: LevelData = { version: 1, meta, settings, path, actions };
+  // 첫 회전(타일 0 → 1) 시간만큼 앞당겨, 타일 1이 원작 offset 시각에 오게 한다
+  const first = compileChart(level).tiles[0].duration;
+  settings.offset = Math.max(-60, Math.min(3600, Math.round((firstHit - first) * 10000) / 10000));
+  return { level, songFile, warnings };
 }
