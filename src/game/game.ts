@@ -406,12 +406,12 @@ export class Game {
       // 홀드 떼기 시간 초과
       if (this.state === 'playing' && this.hold && !this.autoplay) {
         const w = this.windowsFor(this.hold.floor);
-        if (tj > this.hold.release + (w.far / 1000) * this.pitch) this.fail('holdLate');
+        if (tj > this.hold.release + ((w.grace ?? w.far) / 1000) * this.pitch) this.fail('holdLate');
       }
       // 놓침
       if (this.state === 'playing' && !this.hold && this.cur < ch.finish) {
         const w = this.windowsFor(this.cur);
-        if (tj > ch.times[this.cur + 1] + (w.far / 1000) * this.pitch) this.fail('miss');
+        if (tj > ch.times[this.cur + 1] + ((w.grace ?? w.far) / 1000) * this.pitch) this.fail('miss');
       }
       // 자동 타격음 예약
       if (settings.autoHitSound && this.state === 'playing') {
