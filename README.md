@@ -33,6 +33,35 @@ npm run build    # 타입 검사 + 프로덕션 빌드 (dist/)
 에디터의 **음악 맞추기** 패널에서 BPM·첫 박 자동 추정, 탭 템포, offset 미세 조정, 타격음과 함께 듣기를 쓸 수 있다.
 `public/levels/`에 넣은 레벨은 앱 시작 시 목록에 자동으로 추가된다.
 
+## 온라인 (Firebase)
+
+Firebase 설정이 있으면 온라인 기능이 켜집니다. 설정이 없거나 claude.ai 아티팩트처럼 iframe 안에서 열면 이 기능은 숨겨지고, 게임은 오프라인으로 그대로 동작합니다.
+
+- **로그인:** 타이틀 화면에서 Google 계정으로 로그인하고 이름을 바꿀 수 있습니다.
+- **온라인 레벨:** 레벨 선택 화면의 "올리기"로 레벨과 음원을 올리고, "온라인 레벨"에서 받습니다.
+  - WAV 음원은 mp3로 줄여서 올립니다. 파일 하나당 15MB까지입니다.
+  - 음원은 Firestore에 750KB 조각으로 나눠 저장합니다. Storage를 쓰지 않아서 무료(Spark) 요금제로 동작합니다.
+- **순위:** 포함 레벨과 온라인 레벨은 클리어할 때 최고 정확도가 순위표에 올라갑니다. 레벨 선택 화면의 "순위"로 봅니다.
+- **동기화:** 설정과 최고 기록이 기기 간에 맞춰집니다. 설정은 더 최근에 바꾼 쪽, 기록은 레벨마다 높은 쪽을 따릅니다.
+
+### 처음 설정
+
+1. [Firebase 콘솔](https://console.firebase.google.com)에서 프로젝트를 만듭니다.
+   - **Authentication:** Google 로그인을 사용 설정합니다.
+   - **Firestore Database:** 데이터베이스를 만듭니다 (프로덕션 모드).
+   - **프로젝트 설정 → 내 앱:** 웹 앱을 추가하고 `firebaseConfig` 값을 받습니다.
+2. `.env.production`에 웹 설정값을 넣고(현재 `adofai-cb912`), `.firebaserc`에 프로젝트 ID를 적습니다. 웹 설정값은 공개돼도 되는 식별자이고, 데이터는 `firestore.rules`가 보호합니다.
+3. 배포 방법을 하나 고릅니다.
+   - **로컬에서:** `npm run build && npx firebase-tools deploy --only hosting,firestore --project <프로젝트ID>`
+   - **자동 배포 (GitHub Actions):** 저장소 secret `FIREBASE_SERVICE_ACCOUNT`(서비스 계정 키 JSON 전체)를 넣으면 main에 머지될 때마다 `.github/workflows/firebase-deploy.yml`이 `.firebaserc`의 프로젝트로 배포합니다.
+
+### 로컬 에뮬레이터로 시험
+
+```
+npx firebase-tools emulators:start --only auth,firestore --project demo-orbit
+npx vite build --mode emulator && npx vite preview   # .env.emulator 사용
+```
+
 ## 레벨 형식
 
 `level.orbit.json` + 음원(+ 배경 이미지)을 zip 또는 폴더로 묶는다. 형식은 설계서 3장을 따르며, 추가로 `Text` 이벤트(안내 문구)를 지원한다. 음원이 없으면 레벨의 hitTime에 맞춘 합성 비트가 자동으로 재생된다.

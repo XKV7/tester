@@ -15,7 +15,10 @@
   background: var(--bg);
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); overscroll-behavior: none; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); overscroll-behavior: none; }
+/* 제목 색을 명시 (임베드 뷰어·밝은 모드 기본 스타일이 검은색으로 덮지 않게) */
+h1, h2, h3, h4, b, strong, td, th, label { color: inherit; }
+#ui, .modal { color: var(--text); }
 body { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
 #stage { position: fixed; inset: 0; }
 #stage canvas { display: block; }
@@ -65,7 +68,7 @@ body { touch-action: none; -webkit-user-select: none; user-select: none; -webkit
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; cursor: pointer; transition: border-color .15s, transform .1s; }
 .card:hover { border-color: #4a5480; }
 .card.sel { border-color: var(--warm); box-shadow: 0 0 0 1px var(--warm), 0 0 24px rgba(255,138,61,.2); }
-.card h3 { margin: 0 0 4px; font-size: 18px; }
+.card h3 { margin: 0 0 4px; font-size: 18px; color: #fff; }
 .card .meta { color: var(--dim); font-size: 13px; }
 .card .stars { color: #ffd36b; font-size: 14px; margin-top: 10px; }
 .card .best { font-size: 13px; margin-top: 4px; color: var(--cool); }
@@ -195,3 +198,18 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--warm); }
   .select-bar { padding: 10px 14px; }
 }
 select:disabled { opacity: .45; }
+
+/* 온라인 */
+.account-bar { margin-top: 18px; display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap; font-size: 14px; }
+.modal.wide { width: min(640px, 92vw); }
+.online-row { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.online-row .dim { font-size: 13px; }
+.online-row .grow { flex: 1; min-width: 0; }
+.stars-inline { color: #ffd36b; }
+.progress { height: 10px; border-radius: 6px; background: var(--panel2); overflow: hidden; margin: 10px 0; min-width: 260px; }
+.progress-fill { height: 100%; width: 0; background: var(--cool); transition: width .2s; }
+.text-input { width: 100%; box-sizing: border-box; margin-top: 10px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel2); color: inherit; font: inherit; }
+table.rank { width: 100%; border-collapse: collapse; }
+table.rank td { padding: 6px 8px; border-bottom: 1px solid var(--line); }
+table.rank td:last-child { text-align: right; color: var(--cool); }
+table.rank tr.me td { color: var(--warm); font-weight: 600; }

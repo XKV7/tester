@@ -1,6 +1,7 @@
 import { JUDGE_LABEL, type Judgment } from '../core/judge';
 import { Game, type GameHud, type GameResult } from '../game/game';
 import { settings, submitBest } from '../game/settings';
+import { currentProfile, rankKey, submitScore } from '../online/cloud';
 import type { LevelPackage } from '../levels/package';
 import { ambient } from '../render/stage';
 import { alertBox, h, show, type Screen } from './dom';
@@ -142,7 +143,11 @@ export class PlayScreen implements Screen, GameHud {
       void show(this.opts.back());
       return;
     }
-    const newBest = !r.autoplay && r.speed === 1 && submitBest(this.pkg.id, r.accuracy);
+    const ranked = !r.autoplay && r.speed === 1;
+    const newBest = ranked && submitBest(this.pkg.id, r.accuracy);
+    // 로그인했고 순위가 있는 레벨이면 온라인 기록도 (더 높을 때만)
+    const key = ranked ? rankKey(this.pkg) : null;
+    if (key && currentProfile()) void submitScore(key, r.accuracy).catch((e) => console.warn('[ORBIT] 기록 올리기 실패', e));
     void show(new ResultScreen(this.pkg, r, newBest, this.opts));
   }
 }

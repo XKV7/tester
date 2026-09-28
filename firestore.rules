@@ -1,0 +1,78 @@
+rules_version = '2';
+
+// ORBIT 온라인 데이터 규칙.
+// - 레벨·순위: 누구나 읽기, 로그인한 사람만 쓰기, 자기 것만 고치기·지우기
+// - users/{uid}: 본인만 읽기·쓰기
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+    function shortString(v, max) {
+      return v is string && v.size() <= max;
+    }
+    function levelOwner(id) {
+      return get(/databases/$(database)/documents/levels/$(id)).data.ownerUid;
+    }
+
+    match /levels/{levelId} {
+      allow read: if true;
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ready == false
+        && request.resource.data.createdAt == request.time
+        && shortString(request.resource.data.title, 100)
+        && shortString(request.resource.data.artist, 100)
+        && shortString(request.resource.data.author, 20)
+        && request.resource.data.levelJson is string
+        && request.resource.data.levelJson.size() < 900000
+        && request.resource.data.bpm is number
+        && request.resource.data.tiles is int
+        && request.resource.data.files is list
+        && request.resource.data.files.size() <= 8;
+      // 올린 사람은 업로드 완료 표시(ready)만 바꿀 수 있다
+      allow update: if signedIn()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ready']);
+      allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+
+      match /chunks/{chunkId} {
+        allow read: if true;
+        allow create: if signedIn()
+          && levelOwner(levelId) == request.auth.uid
+          && request.resource.data.data is bytes
+          && request.resource.data.f is int
+          && request.resource.data.i is int;
+        allow delete: if signedIn() && levelOwner(levelId) == request.auth.uid;
+      }
+    }
+
+    match /scores/{scoreId} {
+      allow read: if true;
+      // 문서 ID = {levelKey}__{uid}, 자기 기록만, 더 높을 때만 갱신
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && scoreId == request.resource.data.levelKey + '__' + request.auth.uid
+        && shortString(request.resource.data.levelKey, 200)
+        && shortString(request.resource.data.name, 20)
+        && request.resource.data.acc is number
+        && request.resource.data.acc >= 0 && request.resource.data.acc <= 100
+        && request.resource.data.at == request.time;
+      allow update: if signedIn()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.levelKey == resource.data.levelKey
+        && shortString(request.resource.data.name, 20)
+        && request.resource.data.acc is number
+        && request.resource.data.acc > resource.data.acc && request.resource.data.acc <= 100
+        && request.resource.data.at == request.time;
+      allow delete: if false;
+    }
+
+    match /users/{uid} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['nickname', 'settings', 'settingsAt', 'best']);
+    }
+  }
+}

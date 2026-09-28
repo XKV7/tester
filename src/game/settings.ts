@@ -17,7 +17,14 @@ export interface UserSettings {
 }
 
 const KEY = 'orbit.settings.v1';
+const AT_KEY = 'orbit.settings.at';
 const BEST_KEY = 'orbit.best.v1';
+
+/** 설정·기록이 바뀌면 호출 (온라인 동기화용). */
+let changeHook: (() => void) | null = null;
+export function onLocalChange(fn: () => void): void {
+  changeHook = fn;
+}
 
 export function defaultUserSettings(): UserSettings {
   return {
@@ -49,12 +56,36 @@ export const settings: UserSettings = load();
 
 export const SPEED_OPTIONS = [0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.25, 1.5];
 
-export function saveSettings(): void {
+export function saveSettings(at = Date.now(), notify = true): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(settings));
+    localStorage.setItem(AT_KEY, String(at));
   } catch {
     /* 무시 */
   }
+  if (notify) changeHook?.();
+}
+
+/** 설정을 마지막으로 바꾼 시각 (ms, 모르면 0). */
+export function settingsChangedAt(): number {
+  try {
+    return Number(localStorage.getItem(AT_KEY)) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** 다른 기기에서 받은 설정 적용 (알 수 없는 키·잘못된 타입은 무시). */
+export function applyRemoteSettings(remote: Record<string, unknown>, at: number): void {
+  const d = defaultUserSettings() as unknown as Record<string, unknown>;
+  const cur = settings as unknown as Record<string, unknown>;
+  for (const k of Object.keys(d)) {
+    const v = remote[k];
+    if (!(k in remote) || typeof v !== typeof d[k] || (typeof v === 'number' && !Number.isFinite(v))) continue;
+    if (k === 'difficulty' && !['lenient', 'normal', 'strict'].includes(v as string)) continue;
+    cur[k] = v;
+  }
+  saveSettings(at, false);
 }
 
 let bestCache: Record<string, number> | null = null;
@@ -78,10 +109,34 @@ export function submitBest(id: string, acc: number): boolean {
   const b = bests();
   if (b[id] !== undefined && b[id] >= acc) return false;
   b[id] = acc;
+  storeBests();
+  changeHook?.();
+  return true;
+}
+
+function storeBests(): void {
   try {
-    localStorage.setItem(BEST_KEY, JSON.stringify(b));
+    localStorage.setItem(BEST_KEY, JSON.stringify(bests()));
   } catch {
     /* 무시 */
   }
-  return true;
+}
+
+export function allBests(): Record<string, number> {
+  return { ...bests() };
+}
+
+/** 다른 기기의 기록과 합침 (레벨마다 높은 쪽). 바뀐 게 있으면 true. */
+export function mergeBests(remote: Record<string, number>): boolean {
+  const b = bests();
+  let changed = false;
+  for (const [k, v] of Object.entries(remote)) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+    if (b[k] === undefined || v > b[k]) {
+      b[k] = v;
+      changed = true;
+    }
+  }
+  if (changed) storeBests();
+  return changed;
 }
