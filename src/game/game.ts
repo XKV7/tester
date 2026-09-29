@@ -182,14 +182,19 @@ export class Game {
     let songStart: number;
     const ticks: number[] = [];
     if (floor === 0 && !resume) {
+      // 원작처럼 마지막 째깍 한 박 뒤가 첫 타격 (타일 1)
       const n = ch.level.settings.countdownTicks;
       const beat = 60 / tile.bpm;
-      for (let k = n; k >= 1; k--) ticks.push(tile.time - k * beat);
-      songStart = Math.min(0, tile.time - (n + 0.5) * beat);
+      const firstHit = ch.tiles.length > 1 ? ch.tiles[1].time : tile.time;
+      for (let k = n; k >= 1; k--) ticks.push(firstHit - k * beat);
+      songStart = Math.min(0, firstHit - (n + 0.5) * beat);
     } else {
+      // 이 타일에 서서 시작 → 다음 타일이 첫 타격, 째깍 두 번 뒤 한 박에 친다
       const beat = 60 / prevBpm;
-      songStart = resumeTime(ch, floor, 2) - 0.5 * beat;
-      ticks.push(tile.time - 2 * beat, tile.time - beat);
+      const nextHit = floor + 1 < ch.tiles.length ? ch.tiles[floor + 1].time : tile.time;
+      const nb = 60 / tile.bpm;
+      songStart = Math.min(resumeTime(ch, floor, 2) - 0.5 * beat, nextHit - 2.5 * nb);
+      ticks.push(nextHit - 2 * nb, nextHit - nb);
     }
     this.eng.cancelScheduled();
     this.eng.play(this.buffer, songStart, this.pitch, ch.level.settings.volume, 0.15);
@@ -414,7 +419,14 @@ export class Game {
 
     const t = this.eng.songTime(now);
     const tj = t - (settings.inputOffset / 1000) * this.pitch;
-    const tr = t + (settings.visualOffset / 1000) * this.pitch;
+    let tr = t + (settings.visualOffset / 1000) * this.pitch;
+    // 자동 시험용 (화면 비교): 이 시각에서 화면만 멈춘다
+    const freeze = (window as unknown as { __orbitFreezeAt?: number }).__orbitFreezeAt;
+    let vcur = this.cur; // 화면에 그릴 현재 타일 (멈춤 시험 중에는 그 시각의 타일)
+    if (typeof freeze === 'number' && tr > freeze) {
+      tr = freeze;
+      while (vcur > 0 && ch.tiles[vcur].time > tr) vcur--;
+    }
 
     if (this.state === 'playing') {
       // 자동 플레이
@@ -460,8 +472,8 @@ export class Game {
       { loop: tl.bgVideoLoop, opacity: Math.max(tl.bgOpacity, tl.bgImage ? 0 : 1) },
     );
 
-    const tile = ch.tiles[this.cur];
-    const pivot = this.track.pos(this.cur);
+    const tile = ch.tiles[vcur];
+    const pivot = this.track.pos(vcur);
     const angle = orbiterAngle(tile, tr);
     const tail: number[] = [];
     for (let k = 1; k <= 8; k++) {
@@ -470,7 +482,7 @@ export class Game {
       tail.push(orbiterAngle(tile, tt));
     }
     const holdProgress = this.hold ? (tr - this.hold.start) / (this.hold.release - this.hold.start) : null;
-    const aIsPivot = this.cur % 2 === 0;
+    const aIsPivot = vcur % 2 === 0;
     if (this.state !== 'failed') {
       this.orbiterPos = this.planets.update(pivot, angle, TILE_LEN, this.state === 'cleared' ? [] : tail, aIsPivot, holdProgress);
     }
@@ -497,7 +509,7 @@ export class Game {
     const phase = beatPhaseAt(ch, tr);
     const frac = phase - Math.floor(phase);
     const pulse = settings.beatPulse && !reduce && this.state === 'playing' ? Math.exp(-frac * 6) : 0;
-    this.track.update({ passed: this.cur, pulse, now, view: stage.viewRect(), time: tr });
+    this.track.update({ passed: vcur, pulse, now, view: stage.viewRect(), time: tr });
     this.track.uprightTexts((stage.camera.rotation * Math.PI) / 180);
     this.fx.rotation = (stage.camera.rotation * Math.PI) / 180;
     this.fx.update(now);

@@ -222,6 +222,35 @@ describe('원작 연출 타임라인', () => {
     expect([tl.shakeX, tl.shakeY]).toEqual(a);
   });
 
+  it('등장 전에 트랙 이동이 불투명도를 정했으면 그 값을 따른다 (원작 R 직사각형)', () => {
+    const tl = lv([
+      { floor: 0, type: 'TrackAnim', appear: 'fade', beatsAhead: 1 },
+      { floor: 1, type: 'MoveTrack', from: 8, to: 9, opacity: 0, duration: 0 },
+      { floor: 3, type: 'MoveTrack', from: 8, to: 9, opacity: 1, duration: 1 },
+    ]);
+    tl.update(2);
+    expect(tl.tileAlpha[8]).toBe(0);
+    tl.update(4.5);
+    // 등장 애니메이션(8-1=7초)보다 먼저 이동 이벤트가 보이게 했다 → 그대로 보임
+    expect(tl.tileAlpha[8]).toBe(1);
+    expect(tl.tileAnimAt(8, 4.5)!.alpha).toBe(1);
+    // 이동 이벤트가 건드리지 않은 타일은 여전히 등장 전
+    expect(tl.tileAnimAt(10, 4.5)!.alpha).toBe(0);
+  });
+
+  it('같은 타일을 움직이는 이동 이벤트가 겹치면 나중 것이 이어받는다', () => {
+    const tl = lv([
+      { floor: 1, type: 'MoveTrack', from: 5, to: 5, offset: [100, 0], duration: 4 },
+      { floor: 2, type: 'MoveTrack', from: 5, to: 5, offset: [0, 0], duration: 1 },
+    ]);
+    tl.update(3.5);
+    tl.update(4);
+    // 앞 이벤트(1~5초)는 2초에 끊겼으므로 3초 이후엔 제자리
+    expect(tl.tileOffX[5]).toBeCloseTo(0);
+    tl.update(4.9);
+    expect(tl.tileOffX[5]).toBeCloseTo(0);
+  });
+
   it('타일 등장·퇴장: 3박 전 페이드 인, 4박 뒤 사라짐', () => {
     const tl = lv([{ floor: 0, type: 'TrackAnim', appear: 'fade', beatsAhead: 3, disappear: 'shrink', beatsBehind: 4 }]);
     // 타일 8 (8초): 5초 전에는 안 보임, 5.2초에는 나타나는 중, 6초에는 다 보임, 12.5초 이후 사라짐

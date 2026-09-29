@@ -123,6 +123,17 @@ export class VisualTimeline {
   readonly tileOffY: Float32Array;
   readonly tileRot: Float32Array;
   readonly tileAlpha: Float32Array;
+  /**
+   * 트랙 이동(MoveTrack)이 이 타일의 불투명도를 처음 정한 시각 (없으면 NaN).
+   * 원작처럼 불투명도는 하나의 값이라, 등장 애니메이션보다 먼저 이동 이벤트가 정했으면 그 값을 따른다.
+   */
+  private readonly tileOpSet: Float64Array;
+  /** 타일·속성별로 지금 값을 정하는 이동 이벤트 번호 (나중 이벤트가 앞 이벤트를 끊는다) */
+  private readonly claimPos: Int32Array;
+  private readonly claimRot: Int32Array;
+  private readonly claimAlpha: Int32Array;
+  private readonly claimScale: Int32Array;
+  private moveSerial = 0;
   /** 상태가 바뀔 때마다 증가 (렌더러 캐시 무효화용). */
   version = 0;
 
@@ -142,6 +153,11 @@ export class VisualTimeline {
     this.tileOffY = new Float32Array(n);
     this.tileRot = new Float32Array(n);
     this.tileAlpha = new Float32Array(n);
+    this.tileOpSet = new Float64Array(n).fill(NaN);
+    this.claimPos = new Int32Array(n);
+    this.claimRot = new Int32Array(n);
+    this.claimAlpha = new Int32Array(n);
+    this.claimScale = new Int32Array(n);
     this.tileScale = new Float32Array(n);
     this.tileStyle = new Uint8Array(n);
     this.tileColor2 = new Float64Array(n);
@@ -220,6 +236,12 @@ export class VisualTimeline {
     this.tileOffY.fill(0);
     this.tileRot.fill(0);
     this.tileAlpha.fill(1);
+    this.tileOpSet.fill(NaN);
+    this.claimPos.fill(0);
+    this.claimRot.fill(0);
+    this.claimAlpha.fill(0);
+    this.claimScale.fill(0);
+    this.moveSerial = 0;
     this.idx = 0;
     this.active = [];
     this.lastT = -Infinity;
@@ -270,7 +292,9 @@ export class VisualTimeline {
     const seed = Math.sin(i * 12.9898) * 43758.5453;
     const rx = (seed - Math.floor(seed)) * 2 - 1;
     const ry = ((seed * 7.13) % 1 + 1) % 1 * 2 - 1;
-    if (cfg.appear !== 'none') {
+    // 등장 전에 이동 이벤트가 불투명도를 정했으면 그 값이 우선 (등장 애니메이션 없음)
+    const opSet = this.tileOpSet[i];
+    if (cfg.appear !== 'none' && !(opSet <= tile.time - cfg.ahead * beat)) {
       const t0 = tile.time - cfg.ahead * beat;
       const p = (t - t0) / len;
       if (p <= 0) return { ...out, alpha: 0 };
@@ -495,19 +519,30 @@ export class VisualTimeline {
         const fr = this.tileRot.slice(lo, hi + 1);
         const fa = this.tileAlpha.slice(lo, hi + 1);
         const fs = this.tileScale.slice(lo, hi + 1);
+        // 같은 타일·속성을 움직이던 앞 이벤트는 여기서 끊긴다 (지금 값에서 이어서)
+        const id = ++this.moveSerial;
+        for (let i = lo; i <= hi; i++) {
+          if (a.offset) this.claimPos[i] = id;
+          if (a.rotation !== undefined) this.claimRot[i] = id;
+          if (a.scale !== undefined) this.claimScale[i] = id;
+          if (a.opacity !== undefined) {
+            this.claimAlpha[i] = id;
+            if (Number.isNaN(this.tileOpSet[i])) this.tileOpSet[i] = ev.time;
+          }
+        }
         return {
           ev,
           apply: (p) => {
             const k = ease(a.ease as EaseName | undefined, p);
             for (let i = lo; i <= hi; i++) {
               const j = i - lo;
-              if (a.offset) {
+              if (a.offset && this.claimPos[i] === id) {
                 this.tileOffX[i] = lerp(fx[j], a.offset[0], k);
                 this.tileOffY[i] = lerp(fy[j], a.offset[1], k);
               }
-              if (a.rotation !== undefined) this.tileRot[i] = lerp(fr[j], a.rotation, k);
-              if (a.opacity !== undefined) this.tileAlpha[i] = lerp(fa[j], a.opacity, k);
-              if (a.scale !== undefined) this.tileScale[i] = lerp(fs[j], a.scale, k);
+              if (a.rotation !== undefined && this.claimRot[i] === id) this.tileRot[i] = lerp(fr[j], a.rotation, k);
+              if (a.opacity !== undefined && this.claimAlpha[i] === id) this.tileAlpha[i] = lerp(fa[j], a.opacity, k);
+              if (a.scale !== undefined && this.claimScale[i] === id) this.tileScale[i] = lerp(fs[j], a.scale, k);
             }
           },
         };
