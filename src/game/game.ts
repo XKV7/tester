@@ -2,11 +2,13 @@ import { beatMs, beatPhaseAt, compileChart, orbiterAngle, resumeTime, type Chart
 import { advances, DIFFICULTY_MULT, JUDGE_COLOR, JUDGE_LABEL, judgeError, judgeWindows, OverloadTracker, type Judgment } from '../core/judge';
 import { TILE_LEN } from '../core/math';
 import { PlayStats } from '../core/stats';
-import { VisualTimeline } from '../core/timeline';
+import { cameraCenter, VisualTimeline } from '../core/timeline';
 import { audio } from '../audio/engine';
 import { Sfx } from '../audio/sfx';
 import { fileUrl, loadPackageAudio, type LevelPackage } from '../levels/package';
+import { DecorationView } from '../render/decorations';
 import { FxView } from '../render/fx';
+import { ScreenFx } from '../render/screenfx';
 import { COLOR_A, COLOR_B, PlanetsView } from '../render/planets';
 import { stage } from '../render/stage';
 import { TrackView } from '../render/track';
@@ -75,6 +77,8 @@ export class Game {
   private track!: TrackView;
   private planets!: PlanetsView;
   private fx!: FxView;
+  private deco!: DecorationView;
+  private screenFx!: ScreenFx;
   private buffer: AudioBuffer | null = null;
 
   /** 현재 축 타일. */
@@ -115,8 +119,13 @@ export class Game {
     this.track = new TrackView(this.chart, this.timeline);
     this.planets = new PlanetsView();
     this.fx = new FxView();
+    this.deco = new DecorationView(this.chart, this.timeline, (name) => fileUrl(this.opts.pkg, name));
+    this.screenFx = new ScreenFx();
     stage.clearWorld();
-    stage.world.addChild(this.track.container, this.planets.container, this.fx.container);
+    stage.world.addChild(this.deco.behind, this.track.container, this.planets.container, this.deco.front, this.fx.container);
+    stage.screenLayer.addChild(this.screenFx.weather);
+    // '직전 위치 기준' 카메라: 지금 카메라 중심 (월드, y 위쪽)
+    this.timeline.resolveCenter = () => ({ x: stage.camera.x, y: -stage.camera.y });
     this.input.onEscape = () => this.togglePause();
     this.input.attach();
     document.addEventListener('visibilitychange', this.visHandler);
@@ -137,6 +146,14 @@ export class Game {
     this.track?.destroy();
     this.planets?.container.destroy({ children: true });
     this.fx?.container.destroy({ children: true });
+    this.deco?.destroy();
+    if (this.screenFx) {
+      stage.screenLayer.removeChild(this.screenFx.weather);
+      this.screenFx.weather.destroy({ children: true });
+    }
+    stage.setScreenFilters([]);
+    stage.camera.shakeX = 0;
+    stage.camera.shakeY = 0;
     stage.setBackgroundImage(null);
   }
 
@@ -177,7 +194,8 @@ export class Game {
     this.timeline.reset();
     this.timeline.update(songStart);
     const p = this.track.pos(floor);
-    stage.camera.snap(p.x, p.y, this.timeline.camera.zoom, this.timeline.camera.rotation);
+    const c0 = cameraCenter(this.timeline.camera, { x: p.x, y: -p.y });
+    stage.camera.snap(c0.x, -c0.y, this.timeline.camera.zoom, this.timeline.camera.rotation);
     this.state = 'playing';
   }
 
@@ -428,7 +446,7 @@ export class Game {
     const tl = this.timeline;
     const reduce = settings.reduceEffects;
     stage.setBackground(tl.bgColor);
-    stage.setBackgroundImage(tl.bgImage ? fileUrl(this.opts.pkg, tl.bgImage) : null);
+    stage.setBackgroundImage(tl.bgImage ? fileUrl(this.opts.pkg, tl.bgImage) : null, { fit: tl.bgFit, tint: tl.bgTint, opacity: tl.bgOpacity });
 
     const tile = ch.tiles[this.cur];
     const pivot = this.track.pos(this.cur);
@@ -446,11 +464,23 @@ export class Game {
     }
 
     const cam = tl.camera;
-    stage.camera.follow(pivot.x + cam.ox, pivot.y - cam.oy, cam.zoom, reduce ? 0 : cam.rotation, stage.tick());
+    // 카메라 중심: 기준점(행성·타일·월드·직전 위치) + 오프셋 — 월드는 y 위쪽, 화면은 y 아래쪽
+    const cc = cameraCenter(cam, { x: pivot.x, y: -pivot.y });
+    const dt = stage.tick();
+    const px0 = stage.camera.x;
+    const py0 = stage.camera.y;
+    stage.camera.follow(cc.x, -cc.y, cam.zoom, reduce ? 0 : cam.rotation, dt);
+    const sc = stage.baseScale * stage.camera.zoom;
+    const motion = dt > 0 ? { x: ((stage.camera.x - px0) * sc) / dt, y: ((stage.camera.y - py0) * sc) / dt } : { x: 0, y: 0 };
+    stage.camera.shakeX = reduce ? 0 : tl.shakeX;
+    stage.camera.shakeY = reduce ? 0 : -tl.shakeY;
+    this.deco.update(stage.camera.x, stage.camera.y, stage.camera.rotation);
+    stage.setScreenFilters(this.screenFx.filters(tl.filters, tl.bloom, tr, reduce, motion));
+    this.screenFx.drawWeather(tl.filters, stage.width, stage.height, dt, reduce);
     const phase = beatPhaseAt(ch, tr);
     const frac = phase - Math.floor(phase);
     const pulse = settings.beatPulse && !reduce && this.state === 'playing' ? Math.exp(-frac * 6) : 0;
-    this.track.update({ passed: this.cur, pulse, now, view: stage.viewRect() });
+    this.track.update({ passed: this.cur, pulse, now, view: stage.viewRect(), time: tr });
     this.track.uprightTexts((stage.camera.rotation * Math.PI) / 180);
     this.fx.rotation = (stage.camera.rotation * Math.PI) / 180;
     this.fx.update(now);

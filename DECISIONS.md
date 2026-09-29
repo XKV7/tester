@@ -93,3 +93,12 @@
   - CustomBackground의 bgImage는 Background image로 옮긴다 (zip 안 이미지 파일 사용).
 - 극단적인 BPM 맵(원작 'Hello (BPM)' 류) 대응: 레벨 한계를 BPM 1천만, 배율 10만, Pause/Hold 1만 박으로 올림 (이전 1만 BPM·×100·64박에서 변환기가 속도 변경을 조용히 버려 박이 깨졌다). 범위를 넘는 값은 경고로 알림. 음원이 없을 때의 합성 비트는 소리 간격 60ms 미만을 솎아 수백만 BPM에서도 멈추지 않게.
 - 연출 이벤트 지속 시간 한계 1000박 → 1천만 박 (원작 맵에 2400·5000박 카메라/번쩍임이 있음). 변환기는 값을 한계 안으로 맞추고, 그래도 검증을 못 넘는 이벤트는 그 이벤트만 빼고 경고한다 (레벨 전체 거부 방지).
+- 원작 연출 지원 (사용자 요청: 원본 맵을 기믹·배경까지 그대로). 실제 커스텀 맵(R, 730타일)의 이벤트 분포를 보고 우선순위: 카메라 기준(Tile 29·LastPosition 21), SetFilter(Aberration 35·PixelSnow 9·Compression 4 …), AnimateTrack, Bloom, ShakeScreen, 배경 표시 방식, MoveDecorations, 거의 모든 이벤트의 angleOffset.
+  - 레벨 형식 확장: 이벤트 공통 `delay`(박), Camera `relativeTo`/`tile`, MoveTrack `scale`, Background `fit`/`tint`/`opacity`, 새 이벤트 Filter·Bloom·Shake·TrackAnim·MoveDecorations, 레벨 `decorations` 배열. 에디터에도 필드(선택지·예/아니오 입력 추가).
+  - 카메라 중심 = lerp(이전 기준점, 새 기준점, k) + 오프셋 → 기준이 바뀌어도 화면이 튀지 않고 절대 위치 사이를 보간. 'last'는 시작 순간 카메라 중심을 기준점으로 고정.
+  - TrackAnim은 시간이 아니라 타일 기준(그 타일부터 뒤로) — 미리 계산하고 타일마다 곡 시각으로 알파·크기·이동을 구한다.
+  - 필터는 무대 전체에: 색 행렬 하나(흑백·세피아·반전·대비·야간·네온·펑크·빛 번짐 근사를 곱해 합침) + BlurFilter + NoiseFilter + 직접 만든 셰이더 하나(픽셀화·색 번짐·주사선·어안·포스터화). 쓰는 것만 건다. 날씨는 화면 입자.
+  - MotionBlur는 원작처럼 카메라가 움직일 때만(속도 비례, 최대 8px) — 원작 맵은 켜 두고 끄지 않으므로 고정 블러면 화면이 뭉개졌다.
+  - 셰이더 정밀도: 꼭짓점·조각 셰이더의 uInputSize 정밀도가 달라 링크 실패 → highp로 통일.
+  - 효과 줄이기 설정이면 흐림·잡음·왜곡 필터는 건너뜀(색만), 흔들림·모션 블러 끔.
+  - 미지원(경고로 알림): SetPlanetRotation, MultiPlanet·FreeRoam(박이 달라짐), 목록에 없는 필터, 타격음·소리 이벤트.

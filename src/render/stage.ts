@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Sprite, Texture } from 'pixi.js';
+import { Application, Container, Graphics, Sprite, Texture, TilingSprite, type Filter } from 'pixi.js';
 import { TILE_LEN } from '../core/math';
 
 interface Mote {
@@ -16,6 +16,9 @@ export class Camera {
   y = 0;
   zoom = 1;
   rotation = 0; // 도
+  /** 화면 흔들림 (월드 단위, 보간 없이 그대로 더함). */
+  shakeX = 0;
+  shakeY = 0;
   /** 목표를 지수 감쇠로 따라감. dt: 초 (시각 보간 전용). */
   follow(tx: number, ty: number, tzoom: number, trot: number, dt: number, k = 6): void {
     const f = 1 - Math.exp(-k * dt);
@@ -39,8 +42,12 @@ export class Stage {
   readonly world = new Container();
   readonly overlay = new Container();
   private readonly flash = new Graphics();
-  private bgSprite: Sprite | null = null;
+  private bgSprite: Sprite | TilingSprite | null = null;
   private bgImageUrl: string | null = null;
+  private bgFit: 'cover' | 'contain' | 'unscaled' | 'tile' = 'cover';
+  private bgTex: Texture | null = null;
+  /** 날씨 입자 등 화면 좌표 오버레이 (플래시 아래). */
+  readonly screenLayer = new Container();
   private motes: Mote[] = [];
   private readonly moteGfx = new Graphics();
   readonly camera = new Camera();
@@ -61,7 +68,7 @@ export class Stage {
     host.appendChild(this.app.canvas);
     this.bg.addChild(this.moteGfx);
     this.app.stage.addChild(this.bg, this.world, this.overlay);
-    this.overlay.addChild(this.flash);
+    this.overlay.addChild(this.screenLayer, this.flash);
     for (let i = 0; i < 70; i++) {
       this.motes.push({
         x: Math.random(),
@@ -92,32 +99,64 @@ export class Stage {
     this.app.renderer.background.color = color;
   }
 
-  setBackgroundImage(url: string | null): void {
-    if (url === this.bgImageUrl) return;
-    this.bgImageUrl = url;
-    if (this.bgSprite) {
-      this.bgSprite.destroy();
-      this.bgSprite = null;
+  /**
+   * 배경 이미지. fit: cover(화면 채움) · contain(전체 보이게) · unscaled(원래 크기, 가운데) · tile(바둑판).
+   * tint: 색조, opacity: 불투명도 (기본 0.55 — 트랙이 잘 보이게).
+   */
+  setBackgroundImage(url: string | null, opts: { fit?: 'cover' | 'contain' | 'unscaled' | 'tile'; tint?: number; opacity?: number } = {}): void {
+    const fit = opts.fit ?? 'cover';
+    if (url !== this.bgImageUrl || fit !== this.bgFit) {
+      this.bgImageUrl = url;
+      this.bgFit = fit;
+      if (this.bgSprite) {
+        this.bgSprite.destroy();
+        this.bgSprite = null;
+      }
+      this.bgTex = null;
+      if (url) {
+        const img = new Image();
+        img.onload = () => {
+          if (this.bgImageUrl !== url || this.bgFit !== fit) return;
+          const tex = Texture.from(img);
+          const s = fit === 'tile' ? new TilingSprite({ texture: tex, width: this.width, height: this.height }) : new Sprite(tex);
+          this.bgTex = tex;
+          this.bgSprite = s;
+          this.bg.addChildAt(s, 0);
+          this.layoutBg();
+        };
+        img.src = url;
+      }
     }
-    if (!url) return;
-    const img = new Image();
-    img.onload = () => {
-      if (this.bgImageUrl !== url) return;
-      const s = new Sprite(Texture.from(img));
-      s.alpha = 0.55;
-      this.bgSprite = s;
-      this.bg.addChildAt(s, 0);
-      this.layoutBg();
-    };
-    img.src = url;
+    if (this.bgSprite) {
+      this.bgSprite.alpha = opts.opacity ?? 0.55;
+      this.bgSprite.tint = opts.tint ?? 0xffffff;
+    }
   }
 
   private layoutBg(): void {
     const s = this.bgSprite;
-    if (!s) return;
-    const k = Math.max(this.width / s.texture.width, this.height / s.texture.height);
+    const tex = this.bgTex;
+    if (!s || !tex) return;
+    if (s instanceof TilingSprite) {
+      s.width = this.width;
+      s.height = this.height;
+      return;
+    }
+    const k =
+      this.bgFit === 'unscaled' ? 1 : this.bgFit === 'contain' ? Math.min(this.width / tex.width, this.height / tex.height) : Math.max(this.width / tex.width, this.height / tex.height);
     s.scale.set(k);
-    s.position.set((this.width - s.texture.width * k) / 2, (this.height - s.texture.height * k) / 2);
+    s.position.set((this.width - tex.width * k) / 2, (this.height - tex.height * k) / 2);
+  }
+
+  /** 화면 전체 필터 (없으면 빈 배열). */
+  setScreenFilters(fs: Filter[]): void {
+    const st = this.app.stage;
+    if (fs.length === 0) {
+      if (st.filters && (st.filters as Filter[]).length) st.filters = [];
+      return;
+    }
+    st.filterArea = this.app.screen;
+    st.filters = fs;
   }
 
   /** 프레임 간격 (초). 카메라·입자 보간 전용 — 게임 시간에는 쓰지 않는다. */
@@ -135,7 +174,7 @@ export class Stage {
     const h = this.height;
     const c = this.camera;
     this.world.position.set(w / 2, h / 2);
-    this.world.pivot.set(c.x, c.y);
+    this.world.pivot.set(c.x + c.shakeX, c.y + c.shakeY);
     this.world.scale.set(this.baseScale * c.zoom);
     this.world.rotation = (c.rotation * Math.PI) / 180;
 
@@ -184,6 +223,9 @@ export function ambient(on: boolean): void {
   stage.clearWorld();
   stage.setBackground(0x0e0f16);
   stage.setBackgroundImage(null);
+  stage.setScreenFilters([]);
+  stage.camera.shakeX = 0;
+  stage.camera.shakeY = 0;
   ambientFn = () => {
     stage.tick();
     stage.frame(0, 0);

@@ -1,14 +1,18 @@
 import { EASE_NAMES } from '../core/ease';
+import { FILTER_NAMES } from '../core/level';
 import type { Action, ActionType } from '../core/types';
 
-export type FieldKind = 'num' | 'int' | 'color' | 'vec' | 'ease' | 'text';
+export type FieldKind = 'num' | 'int' | 'color' | 'vec' | 'ease' | 'text' | 'bool' | 'choice';
 export interface Field {
   k: string;
   label: string;
   kind: FieldKind;
   optional?: boolean;
   step?: number;
+  /** kind='choice'의 선택지. */
+  options?: string[];
 }
+
 
 export const ACTION_LABEL: Record<ActionType, string> = {
   SetSpeed: '속도 변경',
@@ -23,6 +27,11 @@ export const ACTION_LABEL: Record<ActionType, string> = {
   MoveTrack: '트랙 이동',
   Background: '배경',
   Text: '안내 문구',
+  Filter: '화면 필터',
+  Bloom: '빛 번짐',
+  Shake: '화면 흔들림',
+  TrackAnim: '타일 등장·퇴장',
+  MoveDecorations: '장식 움직이기',
 };
 
 export const SCHEMA: Record<ActionType, Field[]> = {
@@ -36,6 +45,8 @@ export const SCHEMA: Record<ActionType, Field[]> = {
   Pause: [{ k: 'beats', label: '박', kind: 'num', step: 0.5 }],
   Hold: [{ k: 'beats', label: '박', kind: 'num', step: 0.5 }],
   Camera: [
+    { k: 'relativeTo', label: '기준', kind: 'choice', optional: true, options: ['player', 'tile', 'global', 'last'] },
+    { k: 'tile', label: '기준 타일', kind: 'int', optional: true },
     { k: 'zoom', label: '줌', kind: 'num', optional: true, step: 0.05 },
     { k: 'rotation', label: '회전(°)', kind: 'num', optional: true, step: 5 },
     { k: 'offset', label: '오프셋', kind: 'vec', optional: true },
@@ -59,14 +70,55 @@ export const SCHEMA: Record<ActionType, Field[]> = {
     { k: 'offset', label: '오프셋', kind: 'vec', optional: true },
     { k: 'rotation', label: '회전(°)', kind: 'num', optional: true, step: 5 },
     { k: 'opacity', label: '불투명도', kind: 'num', optional: true, step: 0.05 },
+    { k: 'scale', label: '크기', kind: 'num', optional: true, step: 0.1 },
     { k: 'duration', label: '길이(박)', kind: 'num', optional: true, step: 0.5 },
     { k: 'ease', label: '이징', kind: 'ease', optional: true },
   ],
   Background: [
     { k: 'color', label: '색', kind: 'color', optional: true },
     { k: 'image', label: '이미지 파일', kind: 'text', optional: true },
+    { k: 'fit', label: '이미지 배치', kind: 'choice', optional: true, options: ['cover', 'contain', 'unscaled', 'tile'] },
+    { k: 'tint', label: '이미지 색조', kind: 'color', optional: true },
+    { k: 'opacity', label: '이미지 불투명도', kind: 'num', optional: true, step: 0.05 },
   ],
   Text: [{ k: 'text', label: '문구', kind: 'text' }],
+  Filter: [
+    { k: 'filter', label: '필터', kind: 'choice', options: FILTER_NAMES },
+    { k: 'enabled', label: '켜기', kind: 'bool' },
+    { k: 'intensity', label: '세기 (1=100%)', kind: 'num', optional: true, step: 0.1 },
+    { k: 'exclusive', label: '다른 필터 끄기', kind: 'bool', optional: true },
+    { k: 'duration', label: '길이(박)', kind: 'num', optional: true, step: 0.5 },
+    { k: 'delay', label: '지연(박)', kind: 'num', optional: true, step: 0.25 },
+  ],
+  Bloom: [
+    { k: 'enabled', label: '켜기', kind: 'bool' },
+    { k: 'intensity', label: '세기', kind: 'num', optional: true, step: 0.1 },
+    { k: 'threshold', label: '기준 밝기 (0~1)', kind: 'num', optional: true, step: 0.05 },
+    { k: 'color', label: '색', kind: 'color', optional: true },
+  ],
+  Shake: [
+    { k: 'duration', label: '길이(박)', kind: 'num', step: 0.5 },
+    { k: 'strength', label: '세기 (1=100%)', kind: 'num', optional: true, step: 0.1 },
+    { k: 'frequency', label: '초당 횟수', kind: 'num', optional: true, step: 1 },
+    { k: 'fadeOut', label: '점점 약하게', kind: 'bool', optional: true },
+  ],
+  TrackAnim: [
+    { k: 'appear', label: '나타나기', kind: 'choice', optional: true, options: ['none', 'fade', 'grow', 'extend', 'drop', 'rise', 'scatter', 'spin'] },
+    { k: 'beatsAhead', label: '몇 박 전에', kind: 'num', optional: true, step: 0.5 },
+    { k: 'disappear', label: '사라지기', kind: 'choice', optional: true, options: ['none', 'fade', 'shrink', 'scatter', 'retract', 'spin'] },
+    { k: 'beatsBehind', label: '몇 박 뒤에', kind: 'num', optional: true, step: 0.5 },
+  ],
+  MoveDecorations: [
+    { k: 'tag', label: '태그', kind: 'text' },
+    { k: 'offset', label: '이동', kind: 'vec', optional: true },
+    { k: 'rotation', label: '회전(°)', kind: 'num', optional: true, step: 5 },
+    { k: 'scale', label: '크기', kind: 'vec', optional: true },
+    { k: 'color', label: '색', kind: 'color', optional: true },
+    { k: 'opacity', label: '불투명도', kind: 'num', optional: true, step: 0.05 },
+    { k: 'visible', label: '보이기', kind: 'bool', optional: true },
+    { k: 'duration', label: '길이(박)', kind: 'num', optional: true, step: 0.5 },
+    { k: 'ease', label: '이징', kind: 'ease', optional: true },
+  ],
 };
 
 export function defaultAction(type: ActionType, floor: number, finish: number): Action {
@@ -89,6 +141,16 @@ export function defaultAction(type: ActionType, floor: number, finish: number): 
       return { floor, type, color: '#0e0f16' };
     case 'Text':
       return { floor, type, text: '안내 문구' };
+    case 'Filter':
+      return { floor, type, filter: 'Grayscale', enabled: true, intensity: 1 };
+    case 'Bloom':
+      return { floor, type, enabled: true, intensity: 1, threshold: 0.3 };
+    case 'Shake':
+      return { floor, type, duration: 2, strength: 1, fadeOut: true };
+    case 'TrackAnim':
+      return { floor, type, appear: 'fade', beatsAhead: 3, disappear: 'fade', beatsBehind: 2 };
+    case 'MoveDecorations':
+      return { floor, type, tag: '', offset: [0, 0], duration: 1, ease: 'outSine' };
     default:
       return { floor, type } as Action;
   }

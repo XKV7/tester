@@ -1,7 +1,7 @@
 import { isColor } from './color';
 import { EASE_NAMES } from './ease';
 import { sameAngle } from './math';
-import type { Action, ActionType, LevelData, LevelMeta, LevelSettings } from './types';
+import type { Action, ActionType, Decoration, LevelData, LevelMeta, LevelSettings } from './types';
 
 /** 극단적인 BPM 맵(원작의 'Hello (BPM)' 류)도 담을 수 있게 넉넉히. */
 export const MAX_BPM = 10_000_000;
@@ -9,6 +9,14 @@ export const MAX_MULTIPLIER = 100_000;
 export const MAX_EXTRA_BEATS = 10_000;
 /** 연출 이벤트(카메라·번쩍임·트랙 색/이동) 지속 시간 한계 (박). */
 export const MAX_EFFECT_BEATS = 10_000_000;
+
+/** 게임이 그리는 필터 (원작 이름). 목록에 없는 이름도 저장은 되지만 무시된다. */
+export const FILTER_NAMES = [
+  'Grayscale', 'Sepia', 'Invert', 'Blur', 'GaussianBlur', 'BlurFocus', 'MotionBlur', 'Pixelate', 'Compression',
+  'Aberration', 'Contrast', 'Posterize', 'NightVision', 'Grain', 'Static', 'VHS', 'EightiesTV', 'FiftiesTV', 'Arcade',
+  'LED', 'Rain', 'Blizzard', 'PixelSnow', 'Drawing', 'Neon', 'Fisheye', 'Funk', 'Sharpen', 'EdgeBlackLine',
+];
+
 
 export const ACTION_TYPES: ActionType[] = [
   'SetSpeed',
@@ -23,6 +31,11 @@ export const ACTION_TYPES: ActionType[] = [
   'MoveTrack',
   'Background',
   'Text',
+  'Filter',
+  'Bloom',
+  'Shake',
+  'TrackAnim',
+  'MoveDecorations',
 ];
 
 /** 게임 진행에 영향을 주는 이벤트 (나머지는 연출). */
@@ -174,7 +187,10 @@ export function validateLevel(raw: unknown): ValidateResult {
         errors.push(`${where} (${type}): floor는 0 ~ ${tileCount - 1} 범위의 정수여야 합니다.`);
         return;
       }
-      const err = validateActionParams(a, type, tileCount);
+      const err =
+        a.delay !== undefined && (!isNum(a.delay) || a.delay < 0 || a.delay > MAX_EFFECT_BEATS)
+          ? 'delay는 0 이상의 숫자(박)여야 합니다.'
+          : validateActionParams(a, type, tileCount);
       if (err) {
         errors.push(`${where} (${type}, floor ${a.floor}): ${err}`);
         return;
@@ -210,8 +226,37 @@ export function validateLevel(raw: unknown): ValidateResult {
     }
   }
 
+  // decorations (선택)
+  let decorations: Decoration[] | undefined;
+  if (raw.decorations !== undefined) {
+    if (!Array.isArray(raw.decorations)) errors.push('decorations는 배열이어야 합니다.');
+    else {
+      decorations = [];
+      raw.decorations.forEach((d, i) => {
+        const err = validateDecoration(d, tileCount);
+        if (err) errors.push(`decorations[${i}]: ${err}`);
+        else decorations!.push(d as Decoration);
+      });
+    }
+  }
+
   if (errors.length) return { ok: false, errors };
-  return { ok: true, level: { version: 1, meta, settings, path, actions }, warnings };
+  const level: LevelData = { version: 1, meta, settings, path, actions };
+  if (decorations && decorations.length) level.decorations = decorations;
+  return { ok: true, level, warnings };
+}
+
+function validateDecoration(d: unknown, tileCount: number): string | null {
+  if (!isObj(d)) return '객체여야 합니다.';
+  const vec = (k: string) => (d[k] === undefined || (Array.isArray(d[k]) && (d[k] as unknown[]).length === 2 && (d[k] as unknown[]).every(isNum)) ? null : `${k}는 [x, y] 숫자 배열이어야 합니다.`);
+  const n = (k: string) => (d[k] === undefined || isNum(d[k]) ? null : `${k}는 숫자여야 합니다.`);
+  const str = (k: string) => (d[k] === undefined || typeof d[k] === 'string' ? null : `${k}는 문자열이어야 합니다.`);
+  if (d.image === undefined && d.text === undefined) return 'image 또는 text가 필요합니다.';
+  if (d.relativeTo !== undefined && !['tile', 'global', 'camera'].includes(d.relativeTo as string)) return "relativeTo는 'tile', 'global', 'camera' 중 하나여야 합니다.";
+  if (d.floor !== undefined && (!isNum(d.floor) || !Number.isInteger(d.floor) || d.floor < 0 || d.floor >= tileCount)) return `floor는 0 ~ ${tileCount - 1} 범위의 정수여야 합니다.`;
+  if (d.color !== undefined && !isColor(d.color)) return 'color 형식이 잘못되었습니다.';
+  if (d.visible !== undefined && typeof d.visible !== 'boolean') return 'visible은 true/false여야 합니다.';
+  return [str('tag'), str('image'), str('text'), vec('position'), vec('pivot'), vec('scale'), vec('parallax'), n('rotation'), n('opacity'), n('depth'), n('fontSize')].find((x) => x) ?? null;
 }
 
 function validateActionParams(a: Record<string, unknown>, type: ActionType, tileCount: number): string | null {
@@ -248,6 +293,9 @@ function validateActionParams(a: Record<string, unknown>, type: ActionType, tile
     case 'Hold':
       return isNum(a.beats) && a.beats > 0 && a.beats <= MAX_EXTRA_BEATS ? null : `beats는 0보다 크고 ${MAX_EXTRA_BEATS} 이하인 숫자여야 합니다.`;
     case 'Camera':
+      if (a.relativeTo !== undefined && !['player', 'tile', 'global', 'last'].includes(a.relativeTo as string))
+        return "relativeTo는 'player', 'tile', 'global', 'last' 중 하나여야 합니다.";
+      if (a.tile !== undefined && (!isNum(a.tile) || !Number.isInteger(a.tile) || a.tile < 0 || a.tile >= tileCount)) return 'tile은 타일 번호여야 합니다.';
       return first(optNum('zoom', 0.05, 20), optNum('rotation'), vec('offset'), optNum('duration', 0, MAX_EFFECT_BEATS), easeOk());
     case 'Flash':
       return first(
@@ -258,14 +306,49 @@ function validateActionParams(a: Record<string, unknown>, type: ActionType, tile
     case 'RecolorTrack':
       return first(range(), isColor(a.color) ? null : 'color가 필요합니다.', optNum('duration', 0, MAX_EFFECT_BEATS));
     case 'MoveTrack':
-      return first(range(), vec('offset'), optNum('rotation'), optNum('opacity', 0, 1), optNum('duration', 0, MAX_EFFECT_BEATS), easeOk());
+      return first(range(), vec('offset'), optNum('rotation'), optNum('opacity', 0, 1), optNum('scale', 0, 100), optNum('duration', 0, MAX_EFFECT_BEATS), easeOk());
     case 'Background':
       if (a.color === undefined && a.image === undefined) return 'color 또는 image가 필요합니다.';
       if (a.color !== undefined && !isColor(a.color)) return 'color 형식이 잘못되었습니다.';
       if (a.image !== undefined && typeof a.image !== 'string') return 'image는 파일 이름 문자열이어야 합니다.';
-      return null;
+      if (a.fit !== undefined && !['cover', 'contain', 'unscaled', 'tile'].includes(a.fit as string)) return "fit은 'cover', 'contain', 'unscaled', 'tile' 중 하나여야 합니다.";
+      if (a.tint !== undefined && !isColor(a.tint)) return 'tint 형식이 잘못되었습니다.';
+      return optNum('opacity', 0, 1);
     case 'Text':
       return typeof a.text === 'string' ? null : 'text는 문자열이어야 합니다.';
+    case 'Filter':
+      if (typeof a.filter !== 'string' || !a.filter) return 'filter 이름이 필요합니다.';
+      if (typeof a.enabled !== 'boolean') return 'enabled는 true/false여야 합니다.';
+      if (a.exclusive !== undefined && typeof a.exclusive !== 'boolean') return 'exclusive는 true/false여야 합니다.';
+      return first(optNum('intensity', 0, 100), optNum('duration', 0, MAX_EFFECT_BEATS));
+    case 'Bloom':
+      if (typeof a.enabled !== 'boolean') return 'enabled는 true/false여야 합니다.';
+      return first(optNum('intensity', 0, 100), optNum('threshold', 0, 1), a.color !== undefined && !isColor(a.color) ? 'color 형식이 잘못되었습니다.' : null);
+    case 'Shake':
+      if (a.fadeOut !== undefined && typeof a.fadeOut !== 'boolean') return 'fadeOut은 true/false여야 합니다.';
+      return isNum(a.duration) && a.duration >= 0 && a.duration <= MAX_EFFECT_BEATS
+        ? first(optNum('strength', 0, 100), optNum('frequency', 0, 1000))
+        : 'duration은 0 이상의 숫자(박)여야 합니다.';
+    case 'TrackAnim': {
+      const ap = ['none', 'fade', 'grow', 'extend', 'drop', 'rise', 'scatter', 'spin'];
+      const dp = ['none', 'fade', 'shrink', 'scatter', 'retract', 'spin'];
+      if (a.appear !== undefined && !ap.includes(a.appear as string)) return `appear는 ${ap.join(', ')} 중 하나여야 합니다.`;
+      if (a.disappear !== undefined && !dp.includes(a.disappear as string)) return `disappear는 ${dp.join(', ')} 중 하나여야 합니다.`;
+      return first(optNum('beatsAhead', 0, MAX_EFFECT_BEATS), optNum('beatsBehind', 0, MAX_EFFECT_BEATS));
+    }
+    case 'MoveDecorations':
+      if (typeof a.tag !== 'string') return 'tag(문자열)가 필요합니다.';
+      if (a.visible !== undefined && typeof a.visible !== 'boolean') return 'visible은 true/false여야 합니다.';
+      if (a.image !== undefined && typeof a.image !== 'string') return 'image는 파일 이름이어야 합니다.';
+      return first(
+        vec('offset'),
+        vec('scale'),
+        optNum('rotation'),
+        optNum('opacity', 0, 1),
+        a.color !== undefined && !isColor(a.color) ? 'color 형식이 잘못되었습니다.' : null,
+        optNum('duration', 0, MAX_EFFECT_BEATS),
+        easeOk(),
+      );
   }
 }
 
