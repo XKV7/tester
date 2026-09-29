@@ -35,9 +35,13 @@ import {
   newPackageId,
   PACKAGE_ACCEPT,
   packageFromFileList,
+  packageFromFiles,
   PackageError,
+  levelFileNames,
+  findFile,
   type LevelPackage,
 } from '../levels/package';
+import { loadEditorFiles, loadEditorLevel, saveEditorFiles, saveEditorLevel } from '../levels/store';
 import { stage } from '../render/stage';
 import { fmtBeats, TrackView } from '../render/track';
 import { alertBox, confirmBox, fileButton, h, isTyping, show, toast, warnIfHuge, type Screen } from '../ui/dom';
@@ -77,6 +81,15 @@ interface Recording {
 
 /** 편집 중인 패키지 (화면 전환 사이 유지). */
 let editing: LevelPackage | null = null;
+/** 이번 세션에 저장소(IndexedDB)에서 되살리기를 해 봤는지 */
+let restoreTried = false;
+/** 되살리기가 끝나기 전에는 저장하지 않는다 (빈 초기 상태가 저장본을 덮지 않게) */
+let restoreDone = false;
+/** 불러온 뒤 사용자가 고쳤는지 (안 고쳤으면 되살릴 때 원작 파일로 다시 변환) */
+let editedSinceLoad = false;
+/** 파일 묶음을 저장한 패키지 id (같으면 파일은 다시 저장하지 않음) */
+let savedFilesId: string | null = null;
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 function initialPackage(): LevelPackage {
   if (editing) return editing;
@@ -153,6 +166,93 @@ export class EditorScreen implements Screen {
       this.wave.buffer = this.pkg.synthesized ? null : b;
       this.wave.draw();
     });
+    if (!restoreTried) {
+      restoreTried = true;
+      void this.restoreSaved();
+    }
+  }
+
+  /**
+   * 새로고침 뒤: 저장소에 둔 레벨과 파일(그림·음원)을 되살린다.
+   * 원작에서 불러온 뒤 고치지 않은 레벨은 원작 파일로 다시 변환해 최신 변환 결과를 쓴다.
+   */
+  private async restoreSaved(): Promise<void> {
+    try {
+      await this.restoreSavedInner();
+    } finally {
+      restoreDone = true;
+      this.scheduleSave();
+    }
+  }
+
+  private async restoreSavedInner(): Promise<void> {
+    const lv = await loadEditorLevel();
+    if (!lv) {
+      // 예전 자동 저장(레벨만)에서 되살린 경우: 그림·음원이 없으면 알린다
+      this.warnMissingFiles();
+      return;
+    }
+    const fs = await loadEditorFiles();
+    const files = new Map<string, Uint8Array>(fs && fs.id === lv.id ? fs.files : []);
+    let pkg: LevelPackage | null = null;
+    if (lv.imported === 'adofai' && !lv.edited && lv.source && files.has(lv.source)) {
+      try {
+        pkg = packageFromFiles(files, lv.id);
+        pkg.warnings = [];
+      } catch {
+        pkg = null;
+      }
+    }
+    if (!pkg) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(lv.level);
+      } catch {
+        return;
+      }
+      const r = validateLevel(parsed);
+      if (!r.ok) return;
+      pkg = { id: lv.id, level: r.level, files, builtin: false, warnings: [], imported: lv.imported, source: lv.source };
+    }
+    if (editing !== this.pkg || !this.isScreenActive()) return;
+    editing = pkg;
+    this.pkg = pkg;
+    this.level = pkg.level;
+    editedSinceLoad = lv.edited;
+    savedFilesId = files.size ? pkg.id : null;
+    this.rebuild();
+    const b = await loadPackageAudio(pkg);
+    this.wave.buffer = pkg.synthesized ? null : b;
+    this.wave.draw();
+    this.warnMissingFiles();
+  }
+
+  private isScreenActive(): boolean {
+    return !!this.canvasEl?.isConnected || !!this.side?.isConnected;
+  }
+
+  /** 레벨이 쓰는 그림·음원 파일이 없으면 알린다 (예전 자동 저장은 파일을 담지 못했다). */
+  private warnMissingFiles(): void {
+    const missing = levelFileNames(this.pkg).filter((n) => !findFile(this.pkg.files, n));
+    if (missing.length) toast(`그림·음원 파일 ${missing.length}개가 없어요 — 원래 zip을 다시 불러오면 배경·장식이 나옵니다.`, 5000);
+  }
+
+  /** 레벨·파일을 저장소에 (잠시 모아서). */
+  private scheduleSave(): void {
+    if (!restoreDone) return;
+    if (saveTimer) clearTimeout(saveTimer);
+    const pkg = this.pkg;
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      void (async () => {
+        if (savedFilesId !== pkg.id) {
+          // zip에서 꺼낸 파일은 큰 버퍼의 일부일 수 있다 — 그대로 저장하면 버퍼 전체가 복사되므로 잘라서
+          const files: [string, Uint8Array][] = [...pkg.files].map(([k, v]) => [k, v.byteLength === v.buffer.byteLength ? v : v.slice()]);
+          if (await saveEditorFiles({ id: pkg.id, files })) savedFilesId = pkg.id;
+        }
+        await saveEditorLevel({ id: pkg.id, level: serializeLevel(pkg.level), imported: pkg.imported, source: pkg.source, edited: editedSinceLoad });
+      })();
+    }, 800);
   }
 
   exit(): void {
@@ -184,8 +284,14 @@ export class EditorScreen implements Screen {
     try {
       localStorage.setItem(AUTOSAVE, serializeLevel(this.level));
     } catch {
-      /* 무시 */
+      // 너무 커서 못 담으면 예전 자동 저장이 되살아나지 않게 지운다 (저장소에는 따로 저장)
+      try {
+        localStorage.removeItem(AUTOSAVE);
+      } catch {
+        /* 무시 */
+      }
     }
+    this.scheduleSave();
     if (sidePanel && this.side) this.renderSide();
     this.wave.chart = this.chart;
     this.wave.selected = this.sel;
@@ -194,6 +300,7 @@ export class EditorScreen implements Screen {
   }
 
   private commit(level: LevelData, sel = this.sel): void {
+    editedSinceLoad = true;
     this.undoStack.push({ level: JSON.stringify(this.level), sel: this.sel });
     if (this.undoStack.length > 300) this.undoStack.shift();
     this.redoStack = [];
@@ -903,6 +1010,7 @@ export class EditorScreen implements Screen {
       pkg.id = newPackageId('edit');
       editing = pkg;
       this.pkg = pkg;
+      editedSinceLoad = false;
       this.undoStack.push({ level: JSON.stringify(this.level), sel: this.sel });
       this.level = pkg.level;
       this.sel = 0;

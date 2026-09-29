@@ -20,6 +20,27 @@ export interface LevelPackage {
   warnings: string[];
   /** 얼음과 불의 춤(.adofai)에서 변환한 레벨 (원작 맵·음원 저작권 주의). */
   imported?: 'adofai';
+  /** 변환에 쓴 원작 레벨 파일 이름 (files 안에 있음) — 나중에 새 변환기로 다시 변환할 때 쓴다. */
+  source?: string;
+}
+
+/** 레벨이 쓰는 파일 이름 모두 (음원·배경 그림·배경 동영상·장식 그림 + 원작 레벨 파일). */
+export function levelFileNames(pkg: LevelPackage): string[] {
+  const lv = pkg.level;
+  const names = new Set<string>();
+  const add = (n: string | undefined | null) => {
+    if (n) names.add(n);
+  };
+  add(lv.settings.songFile);
+  for (const a of lv.actions) {
+    if (a.type === 'Background') {
+      add(a.image);
+      add(a.video);
+    } else if (a.type === 'MoveDecorations') add(a.image);
+  }
+  for (const d of lv.decorations ?? []) add(d.image);
+  if (pkg.source) add(pkg.source);
+  return [...names];
 }
 
 export class PackageError extends Error {
@@ -112,7 +133,7 @@ function packageFromAdofai(flat: Map<string, Uint8Array>, name: string, id: stri
   if (song && !findSong(flat, song)) warnings.push(`음원 파일 '${song}'이(가) 없어 합성 비트로 대체합니다. 레벨 파일과 음원을 함께 zip으로 묶어 불러오세요.`);
   if (!song) warnings.push('원작 레벨에 음원 파일 정보가 없어 합성 비트로 재생합니다.');
   if (conv.level.path.length < 2) warnings.push(`'${name}'에 타일이 ${conv.level.path.length + 1}개뿐입니다. 레벨 파일이 맞는지 확인하세요.`);
-  return { id, level: conv.level, files: flat, builtin: false, warnings, imported: 'adofai' };
+  return { id, level: conv.level, files: flat, builtin: false, warnings, imported: 'adofai', source: name };
 }
 
 /** 음원 파일 하나 → 자동 생성 레벨 패키지. 박을 찾지 못하면 PackageError. */
@@ -256,15 +277,11 @@ export function exportZip(pkg: LevelPackage): Uint8Array {
   const song = pkg.level.settings.songFile;
   const songData = findSong(pkg.files, song);
   if (song && songData) entries[baseName(song)] = songData;
-  const add = (n: string | undefined) => {
-    const d = n ? findFile(pkg.files, n) : undefined;
-    if (n && d) entries[baseName(n)] = d;
-  };
-  for (const a of pkg.level.actions) {
-    if (a.type === 'Background') {
-      add(a.image);
-      add(a.video);
-    }
+  // 음원은 위에서 넣었다 — 나머지 레벨이 쓰는 파일 (장식 그림·원작 레벨 파일 포함)
+  for (const n of levelFileNames(pkg)) {
+    if (n === song) continue;
+    const d = findFile(pkg.files, n);
+    if (d) entries[baseName(n)] = d;
   }
   return zipSync(entries, { level: 6 });
 }

@@ -2,7 +2,7 @@ import type { FirebaseApp } from 'firebase/app';
 import type { Auth, User } from 'firebase/auth';
 import type { Firestore } from 'firebase/firestore';
 import { parseLevelJson, serializeLevel } from '../core/level';
-import { findFile, findSong, type LevelPackage } from '../levels/package';
+import { findFile, findSong, levelFileNames, packageFromFiles, type LevelPackage } from '../levels/package';
 import { firebaseConfig, onlineAvailable } from './config';
 
 /**
@@ -184,9 +184,9 @@ export async function saveUserData(uid: string, data: UserData): Promise<void> {
 
 // ───────────────────────── 온라인 레벨 ─────────────────────────
 
-/** 올릴 파일: 레벨이 참조하는 음원·배경 이미지. */
+/** 올릴 파일: 레벨이 쓰는 음원·배경·장식 그림 (+ 원작 레벨 파일: 받을 때 새 변환기로 다시 변환). */
 export function referencedFiles(pkg: LevelPackage): { name: string; data: Uint8Array }[] {
-  const names = [pkg.level.settings.songFile, ...pkg.level.actions.flatMap((a) => (a.type === 'Background' && a.image ? [a.image] : []))];
+  const names = levelFileNames(pkg);
   const out: { name: string; data: Uint8Array }[] = [];
   for (const n of names) {
     if (!n || out.some((o) => o.name === n)) continue;
@@ -292,6 +292,16 @@ export async function downloadLevel(docId: string, onProgress?: (r: number) => v
   });
   const warnings = [...r.warnings];
   if (r.level.settings.songFile && !findFile(files, r.level.settings.songFile)) warnings.push('음원을 받지 못해 합성 비트로 대체합니다.');
+  // 원작 레벨 파일이 같이 올라와 있으면 지금 변환기로 다시 변환 (변환 개선이 바로 반영되게)
+  if ([...files.keys()].some((n) => n.toLowerCase().endsWith('.adofai'))) {
+    try {
+      const re = packageFromFiles(files, cloudPackageId(docId));
+      re.level.meta = r.level.meta;
+      return { ...re, warnings: [] };
+    } catch {
+      // 다시 변환이 안 되면 올라온 레벨 그대로
+    }
+  }
   return { id: cloudPackageId(docId), level: r.level, files, builtin: false, warnings };
 }
 
