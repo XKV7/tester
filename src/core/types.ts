@@ -123,6 +123,12 @@ export interface BackgroundAction extends ActionBase {
   tint?: string;
   /** 이미지 불투명도 (0~1, 기본 0.55). */
   opacity?: number;
+  /** 배경 동영상 파일 이름 ('' = 끔). 소리 없이 곡 시각에 맞춰 재생. */
+  video?: string;
+  /** 동영상 시작 시각 (초, 곡 시각 기준). */
+  videoOffset?: number;
+  /** 끝나면 반복 */
+  videoLoop?: boolean;
 }
 /** 화면 필터 (원작 SetFilter). intensity 0~1. */
 export interface FilterAction extends ActionBase {

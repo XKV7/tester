@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { synthBeatTrack } from '../src/audio/beatTrack';
 import { compileChart } from '../src/core/chart';
 import { emptyLevel, serializeLevel } from '../src/core/level';
-import { exportZip, packageFromFiles, PackageError } from '../src/levels/package';
+import { exportZip, findFile, findSong, packageFromFiles, PackageError, zipNameCandidates } from '../src/levels/package';
 import { demoLevels } from '../src/levels/demos';
 
 describe('레벨 패키지', () => {
@@ -32,6 +32,40 @@ describe('레벨 패키지', () => {
   it('레벨 파일 없음 / 잘못된 레벨은 오류', () => {
     expect(() => packageFromFiles(new Map([['song.mp3', new Uint8Array(1)]]))).toThrow(PackageError);
     expect(() => packageFromFiles(new Map([['level.orbit.json', strToU8('{"path": 3}')]]))).toThrow(PackageError);
+  });
+});
+
+describe('파일 이름 찾기', () => {
+  // UTF-8 표시 없는 zip의 이름은 fflate가 latin1로 읽는다 → 그 모양을 흉내
+  const asLatin1 = (bytes: number[]) => String.fromCharCode(...bytes);
+
+  it('깨진 한국어(EUC-KR)·일본어(Shift_JIS) 이름 복원', () => {
+    // '음악' (EUC-KR: C0 BD BE C7)
+    expect(zipNameCandidates(asLatin1([0xc0, 0xbd, 0xbe, 0xc7, 0x2e, 0x6f, 0x67, 0x67]))).toContain('음악.ogg');
+    // 'テスト' (Shift_JIS: 83 65 83 58 83 67)
+    expect(zipNameCandidates(asLatin1([0x83, 0x65, 0x83, 0x58, 0x83, 0x67, 0x2e, 0x70, 0x6e, 0x67]))).toContain('テスト.png');
+    expect(zipNameCandidates('plain.ogg')).toEqual(['plain.ogg']);
+  });
+
+  it('레벨이 가리키는 이름으로 zip 속 깨진 이름의 파일을 찾는다', () => {
+    const song = new Uint8Array([1, 2, 3]);
+    const adofai = JSON.stringify({ pathData: 'RRRR', settings: { bpm: 120, offset: 0, songFilename: '음악.ogg' }, actions: [] });
+    const files = new Map<string, Uint8Array>([
+      ['lv/main.adofai', strToU8(adofai)],
+      ['lv/' + asLatin1([0xc0, 0xbd, 0xbe, 0xc7, 0x2e, 0x6f, 0x67, 0x67]), song],
+    ]);
+    const pkg = packageFromFiles(files);
+    expect(findSong(pkg.files, '음악.ogg')).toBe(song);
+    expect(pkg.warnings.some((w) => w.includes('합성 비트'))).toBe(false);
+  });
+
+  it('맥 NFD 이름·대소문자·경로·확장자 차이, 음원이 하나뿐이면 그것', () => {
+    const d = new Uint8Array([9]);
+    const files = new Map([['음악.MP3'.normalize('NFD'), d]]);
+    expect(findFile(files, 'songs\\음악.mp3')).toBe(d);
+    expect(findFile(files, '음악.ogg')).toBe(d);
+    expect(findFile(files, '음악.png')).toBeUndefined();
+    expect(findSong(files, 'other.ogg')).toBe(d);
   });
 });
 

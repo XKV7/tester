@@ -273,4 +273,9 @@ describe('극단적인 BPM (Hello (BPM) 류)', () => {
     expect(pcm.length).toBeGreaterThan(0);
     expect(Date.now() - t0).toBeLessThan(3000);
   });
+  it('배경 동영상 설정', () => {
+    const r = level({ pathData: 'RRRR', settings: { bgVideo: 'movie.mp4', vidOffset: 1500, loopVideo: 'Enabled' } });
+    const bg = r.level.actions.find((a) => a.type === 'Background');
+    expect(bg).toMatchObject({ video: 'movie.mp4', videoOffset: 1.5, videoLoop: true });
+  });
 });

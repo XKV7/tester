@@ -286,6 +286,10 @@ export function convertAdofai(text: string): AdofaiResult {
       type: 'Background',
       color: settings.bgColor,
       image: img,
+      // 배경 동영상 (원작 vidOffset: 곡 시작 후 몇 ms 뒤에 동영상 시작)
+      ...(str(s.bgVideo).trim()
+        ? { video: str(s.bgVideo).split(/[\\/]/).pop()!, videoOffset: num(s.vidOffset, 0) / 1000, videoLoop: str(s.loopVideo) === 'Enabled' || s.loopVideo === true }
+        : {}),
       ...(img ? { fit: mode === 'Unscaled' ? 'unscaled' : mode === 'Tiled' ? 'tile' : 'cover', opacity: 1, ...(tint && tint !== '#ffffff' ? { tint } : {}) } : {}),
     } as Action);
   }

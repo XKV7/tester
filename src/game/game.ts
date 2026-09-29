@@ -154,9 +154,11 @@ export class Game {
       this.screenFx.weather.destroy({ children: true });
     }
     stage.setScreenFilters([]);
+    stage.setWorldFilters([]);
     stage.camera.shakeX = 0;
     stage.camera.shakeY = 0;
     stage.setBackgroundImage(null);
+    stage.setBackgroundVideo(null);
   }
 
   /** floor에서 시작 (체크포인트 재개면 2박 전부터). */
@@ -451,6 +453,12 @@ export class Game {
     const reduce = settings.reduceEffects;
     stage.setBackground(tl.bgColor);
     stage.setBackgroundImage(tl.bgImage ? fileUrl(this.opts.pkg, tl.bgImage) : null, { fit: tl.bgFit, tint: tl.bgTint, opacity: tl.bgOpacity });
+    stage.setBackgroundVideo(
+      tl.bgVideo ? fileUrl(this.opts.pkg, tl.bgVideo) : null,
+      this.state === 'playing' || this.state === 'cleared' ? tr - tl.bgVideoOffset : null,
+      this.pitch,
+      { loop: tl.bgVideoLoop, opacity: Math.max(tl.bgOpacity, tl.bgImage ? 0 : 1) },
+    );
 
     const tile = ch.tiles[this.cur];
     const pivot = this.track.pos(this.cur);
@@ -482,6 +490,8 @@ export class Game {
     stage.camera.shakeX = reduce ? 0 : tl.shakeX;
     stage.camera.shakeY = reduce ? 0 : -tl.shakeY;
     this.deco.update(stage.camera.x, stage.camera.y, stage.camera.rotation);
+    this.screenFx.screenH = stage.height;
+    stage.setWorldFilters(this.screenFx.worldFilters(tl.bloom, reduce));
     stage.setScreenFilters(this.screenFx.filters(tl.filters, tl.bloom, tr, reduce, motion));
     this.screenFx.drawWeather(tl.filters, stage.width, stage.height, dt, reduce);
     const phase = beatPhaseAt(ch, tr);

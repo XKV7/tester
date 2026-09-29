@@ -13,6 +13,7 @@
     "@breezystack/lamejs": "^1.2.7",
     "fflate": "^0.8.3",
     "firebase": "^12.19.0",
+    "pixi-filters": "^6.1.5",
     "pixi.js": "^8.21.0"
   },
   "devDependencies": {
