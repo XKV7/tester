@@ -141,6 +141,20 @@ describe('.adofai 변환', () => {
     expect(pkg.warnings.join(' ')).toContain('3개');
   });
 
+  it('아주 긴 연출(1000박 넘게)도 그대로, 잘못된 값은 그 이벤트만 빼고 경고', () => {
+    const r = level({
+      angleData: Array(10).fill(0),
+      actions: [
+        { floor: 2, eventType: 'MoveCamera', duration: 5000, zoom: 100 },
+        { floor: 2, eventType: 'Flash', duration: 2400, startColor: 'ffffff' },
+        { floor: 3, eventType: 'RecolorTrack', startTile: [0, 'Start'], endTile: [0, 'End'], trackColor: 'ff00ff', duration: 1e12 },
+      ],
+    });
+    expect(r.level.actions.find((a) => a.type === 'Camera')).toMatchObject({ duration: 5000 });
+    expect(r.level.actions.find((a) => a.type === 'Flash')).toMatchObject({ duration: 2400 });
+    expect(r.level.actions.find((a) => a.type === 'RecolorTrack')).toMatchObject({ duration: 10_000_000 });
+  });
+
   it('깨진 파일은 알아볼 수 있는 오류', () => {
     expect(() => convertAdofai('{ not json')).toThrow('.adofai');
     expect(() => convertAdofai('{"settings":{}}')).toThrow('타일');
