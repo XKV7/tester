@@ -20,11 +20,18 @@ export interface Windows {
 }
 
 /**
- * 판정 창 (ms). window(x) = min(x × 배율, cap), cap = max(beatMs × 0.25, minCapMs).
- * minCapMs: 앞뒤 음표 간격의 절반 — 속도를 올린 구간(보이는 박이 짧음)에서도 창이 지나치게 좁아지지 않게.
+ * 원작처럼 아무리 빠른 구간이어도 '빠름·느림'으로 받아주는 최소 범위 (ms, 보통 난이도).
+ * 판정은 순서대로(다음 타일만) 하므로 음표 간격보다 넓어도 헷갈리지 않는다.
  */
-export function judgeWindows(beatMs: number, mult = 1, minCapMs = 0): Windows {
-  const cap = Math.max(beatMs * 0.25, minCapMs);
+export const MIN_FAR_MS = 65;
+
+/**
+ * 판정 창 (ms). window(x) = min(x × 배율, cap), cap = max(beatMs × 0.25, minCapMs, 최소 범위).
+ * minCapMs: 앞뒤 음표 간격의 절반 — 속도를 올린 구간(보이는 박이 짧음)에서도 창이 지나치게 좁아지지 않게.
+ * minFarMs: 빠른 연타 구간의 최소 '빠름·느림' 범위 (원작 기준 약 65ms). 완벽 범위도 비율로 함께 넓힌다.
+ */
+export function judgeWindows(beatMs: number, mult = 1, minCapMs = 0, minFarMs = 0): Windows {
+  const cap = Math.max(beatMs * 0.25, minCapMs, minFarMs);
   const far = Math.min(BASE_WINDOWS.far * mult, cap);
   return {
     perfect: Math.min(BASE_WINDOWS.perfect * mult, cap),

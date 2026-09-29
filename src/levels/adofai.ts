@@ -654,11 +654,16 @@ export function convertAdofai(text: string): AdofaiResult {
         const a = tileRef(e.startTile, floor, last);
         const b = tileRef(e.endTile, floor, last);
         const mv: Action = { floor, type: 'MoveTrack', from: Math.min(a, b), to: Math.max(a, b), duration: dur(e.duration, 1) };
-        if (Array.isArray(e.positionOffset) && e.positionOffset.some((v) => v !== null))
-          mv.offset = [num(e.positionOffset[0], 0) * TILE_LEN, num(e.positionOffset[1], 0) * TILE_LEN];
+        // 비어 있는(null) 축은 그대로
+        if (Array.isArray(e.positionOffset) && e.positionOffset.some((v) => v !== null)) {
+          const ax = (v: unknown) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v) * TILE_LEN);
+          mv.offset = [ax(e.positionOffset[0]), ax(e.positionOffset[1])];
+        }
         if (e.rotationOffset !== undefined && e.rotationOffset !== null) mv.rotation = num(e.rotationOffset, 0);
         if (e.opacity !== undefined && e.opacity !== null) mv.opacity = Math.max(0, Math.min(1, num(e.opacity, 100) / 100));
-        const sc = Array.isArray(e.scale) ? e.scale[0] : e.scale;
+        // 가로·세로 크기가 따로면 작은 쪽으로 (한쪽이 0이면 납작해져 안 보이는 것과 비슷하게)
+        const scs = Array.isArray(e.scale) ? e.scale.filter((v) => v !== null && Number.isFinite(Number(v))).map(Number) : [];
+        const sc = Array.isArray(e.scale) ? (scs.length ? Math.min(...scs) : undefined) : e.scale;
         if (sc !== undefined && sc !== null) mv.scale = Math.max(0, Math.min(100, num(sc, 100) / 100));
         const ease = mapEase(e.ease);
         if (ease) mv.ease = ease;

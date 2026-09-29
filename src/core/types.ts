@@ -107,7 +107,8 @@ export interface MoveTrackAction extends ActionBase {
   type: 'MoveTrack';
   from: number;
   to: number;
-  offset?: [number, number];
+  /** 원래 위치 기준 이동량. null인 축은 그대로. */
+  offset?: [number | null, number | null];
   rotation?: number;
   opacity?: number;
   /** 타일 크기 배율 (1 = 원래 크기). */

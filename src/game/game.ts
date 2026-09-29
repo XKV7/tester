@@ -1,5 +1,5 @@
 import { beatMs, beatPhaseAt, compileChart, orbiterAngle, resumeTime, type Chart } from '../core/chart';
-import { advances, DIFFICULTY_MULT, JUDGE_COLOR, JUDGE_LABEL, judgeError, judgeWindows, OverloadTracker, type Judgment } from '../core/judge';
+import { advances, DIFFICULTY_MULT, JUDGE_COLOR, JUDGE_LABEL, judgeError, judgeWindows, MIN_FAR_MS, OverloadTracker, type Judgment } from '../core/judge';
 import { TILE_LEN } from '../core/math';
 import { PlayStats } from '../core/stats';
 import { cameraCenter, VisualTimeline } from '../core/timeline';
@@ -317,7 +317,8 @@ export class Game {
     const next = tiles[floor + 1]?.duration ?? 0;
     // 앞뒤 음표 간격의 절반 (실제 ms)
     const gap = Math.min(cur, next > 0 ? next : cur) / this.pitch;
-    return judgeWindows(beatMs(tiles[floor], this.pitch), this.mult, gap * 500);
+    // 빠른 연타 구간도 원작처럼 최소 약 65ms(보통)는 받아준다 — 난이도 배율에 비례
+    return judgeWindows(beatMs(tiles[floor], this.pitch), this.mult, gap * 500, (MIN_FAR_MS * this.mult) / DIFFICULTY_MULT.normal);
   }
 
   /** 입력의 판정용 곡 시각. */
