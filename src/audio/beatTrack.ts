@@ -19,7 +19,10 @@ export function synthBeatTrack(chart: Chart, sampleRate = 44100): Float32Array {
     const b1 = tile.floor === last.floor ? b0 + outroBeats : b0 + tile.beats;
     for (let k = Math.ceil(b0 * 2 - 1e-9); k < b1 * 2 - 1e-9; k++) {
       const b = k / 2;
-      grid.push({ t: tile.time + ((b - b0) * 60) / tile.bpm, beat: b });
+      const t = tile.time + ((b - b0) * 60) / tile.bpm;
+      // 극단적으로 빠른 구간은 소리를 솎는다 (60ms 간격까지) — BPM 수백만 맵에서 멈추지 않게
+      if (grid.length && t - grid[grid.length - 1].t < 0.06) continue;
+      grid.push({ t, beat: b });
     }
   }
 

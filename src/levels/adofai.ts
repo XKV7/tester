@@ -1,6 +1,6 @@
 import { compileChart } from '../core/chart';
 import { TILE_LEN } from '../core/math';
-import { defaultMeta, defaultSettings } from '../core/level';
+import { defaultMeta, defaultSettings, MAX_BPM, MAX_EXTRA_BEATS, MAX_MULTIPLIER } from '../core/level';
 import { EASE_NAMES } from '../core/ease';
 import type { Action, EaseName, LevelData } from '../core/types';
 
@@ -156,7 +156,7 @@ export function convertAdofai(text: string): AdofaiResult {
   // ── 설정
   const s = (typeof r.settings === 'object' && r.settings !== null ? r.settings : {}) as Record<string, unknown>;
   const settings = defaultSettings();
-  settings.bpm = Math.max(1, Math.min(10000, num(s.bpm, 100)));
+  settings.bpm = Math.max(0.001, Math.min(MAX_BPM, num(s.bpm, 100)));
   // 원작 offset = 첫 타일(floor 1)을 누르는 순간. ORBIT offset = 타일 0 시각 → 아래에서 첫 회전만큼 당긴다.
   const firstHit = num(s.offset, 0) / 1000;
   settings.offset = firstHit;
@@ -202,22 +202,24 @@ export function convertAdofai(text: string): AdofaiResult {
         if (num(e.angleOffset, 0) !== 0) bump(approx, 'SetSpeed(각도 지연)');
         if (str(e.speedType) === 'Multiplier') {
           const m = num(e.bpmMultiplier, 1);
-          if (m > 0 && m <= 100) actions.push({ floor, type: 'SetSpeed', multiplier: m });
+          if (m > 0 && m <= MAX_MULTIPLIER) actions.push({ floor, type: 'SetSpeed', multiplier: m });
+          else bump(approx, 'SetSpeed(범위 밖 배율)');
         } else {
           const b = num(e.beatsPerMinute, settings.bpm);
-          if (b > 0 && b <= 10000) actions.push({ floor, type: 'SetSpeed', bpm: b });
+          if (b > 0 && b <= MAX_BPM) actions.push({ floor, type: 'SetSpeed', bpm: b });
+          else bump(approx, 'SetSpeed(범위 밖 BPM)');
         }
         break;
       }
       case 'Pause': {
         const b = num(e.duration, 0);
-        if (b > 0 && floor < last && !midSet.has(floor)) actions.push({ floor, type: 'Pause', beats: Math.min(64, b) });
+        if (b > 0 && floor < last && !midSet.has(floor)) actions.push({ floor, type: 'Pause', beats: Math.min(MAX_EXTRA_BEATS, b) });
         break;
       }
       case 'Hold': {
         // 원작 Hold의 duration = 추가로 도는 바퀴 수 (1바퀴 = 2박)
         const laps = num(e.duration, 0);
-        if (laps > 0 && floor < last && !midSet.has(floor)) actions.push({ floor, type: 'Hold', beats: Math.min(64, laps * 2) });
+        if (laps > 0 && floor < last && !midSet.has(floor)) actions.push({ floor, type: 'Hold', beats: Math.min(MAX_EXTRA_BEATS, laps * 2) });
         else bump(approx, 'Hold(추가 바퀴 0)');
         break;
       }

@@ -3,6 +3,11 @@ import { EASE_NAMES } from './ease';
 import { sameAngle } from './math';
 import type { Action, ActionType, LevelData, LevelMeta, LevelSettings } from './types';
 
+/** 극단적인 BPM 맵(원작의 'Hello (BPM)' 류)도 담을 수 있게 넉넉히. */
+export const MAX_BPM = 10_000_000;
+export const MAX_MULTIPLIER = 100_000;
+export const MAX_EXTRA_BEATS = 10_000;
+
 export const ACTION_TYPES: ActionType[] = [
   'SetSpeed',
   'Twirl',
@@ -110,8 +115,8 @@ export function validateLevel(raw: unknown): ValidateResult {
       if (typeof s.songFile !== 'string') errors.push('settings.songFile은 문자열이어야 합니다.');
       else settings.songFile = s.songFile;
     }
-    if (!isNum(s.bpm) || s.bpm <= 0 || s.bpm > 10000)
-      errors.push('settings.bpm은 0보다 크고 10000 이하인 숫자여야 합니다.');
+    if (!isNum(s.bpm) || s.bpm <= 0 || s.bpm > MAX_BPM)
+      errors.push(`settings.bpm은 0보다 크고 ${MAX_BPM} 이하인 숫자여야 합니다.`);
     else settings.bpm = s.bpm;
     const num = (k: 'offset' | 'pitch' | 'volume' | 'countdownTicks', lo: number, hi: number) => {
       const v = s[k];
@@ -229,8 +234,8 @@ function validateActionParams(a: Record<string, unknown>, type: ActionType, tile
   switch (type) {
     case 'SetSpeed':
       if (a.bpm === undefined && a.multiplier === undefined) return 'bpm 또는 multiplier가 필요합니다.';
-      if (a.bpm !== undefined && (!isNum(a.bpm) || a.bpm <= 0 || a.bpm > 10000)) return 'bpm은 0보다 큰 숫자여야 합니다.';
-      if (a.multiplier !== undefined && (!isNum(a.multiplier) || a.multiplier <= 0 || a.multiplier > 100))
+      if (a.bpm !== undefined && (!isNum(a.bpm) || a.bpm <= 0 || a.bpm > MAX_BPM)) return 'bpm은 0보다 큰 숫자여야 합니다.';
+      if (a.multiplier !== undefined && (!isNum(a.multiplier) || a.multiplier <= 0 || a.multiplier > MAX_MULTIPLIER))
         return 'multiplier는 0보다 큰 숫자여야 합니다.';
       return null;
     case 'Twirl':
@@ -239,7 +244,7 @@ function validateActionParams(a: Record<string, unknown>, type: ActionType, tile
       return null;
     case 'Pause':
     case 'Hold':
-      return isNum(a.beats) && a.beats > 0 && a.beats <= 64 ? null : 'beats는 0보다 크고 64 이하인 숫자여야 합니다.';
+      return isNum(a.beats) && a.beats > 0 && a.beats <= MAX_EXTRA_BEATS ? null : `beats는 0보다 크고 ${MAX_EXTRA_BEATS} 이하인 숫자여야 합니다.`;
     case 'Camera':
       return first(optNum('zoom', 0.05, 20), optNum('rotation'), vec('offset'), optNum('duration', 0, 1000), easeOk());
     case 'Flash':
