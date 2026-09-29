@@ -32,6 +32,9 @@ export const ACTION_LABEL: Record<ActionType, string> = {
   Shake: '화면 흔들림',
   TrackAnim: '타일 등장·퇴장',
   MoveDecorations: '장식 움직이기',
+  Planets: '행성 크기·반지름',
+  Screen: '화면 반복·흐름·잔상',
+  Sound: '소리',
 };
 
 export const SCHEMA: Record<ActionType, Field[]> = {
@@ -126,6 +129,26 @@ export const SCHEMA: Record<ActionType, Field[]> = {
     { k: 'duration', label: '길이(박)', kind: 'num', optional: true, step: 0.5 },
     { k: 'ease', label: '이징', kind: 'ease', optional: true },
   ],
+  Planets: [
+    { k: 'radius', label: '공전 반지름(배)', kind: 'num', optional: true, step: 0.1 },
+    { k: 'size', label: '행성 크기(배)', kind: 'num', optional: true, step: 0.1 },
+    { k: 'duration', label: '길이(박)', kind: 'num', optional: true, step: 0.5 },
+    { k: 'ease', label: '이징', kind: 'ease', optional: true },
+  ],
+  Screen: [
+    { k: 'tile', label: '화면 반복', kind: 'vec', optional: true },
+    { k: 'scroll', label: '흐름(화면/초)', kind: 'vec', optional: true },
+    { k: 'mirrors', label: '잔상', kind: 'bool', optional: true },
+    { k: 'fps', label: '끊김(장면/초, 0=끔)', kind: 'num', optional: true, step: 1 },
+    { k: 'duration', label: '길이(박)', kind: 'num', optional: true, step: 0.5 },
+    { k: 'ease', label: '이징', kind: 'ease', optional: true },
+  ],
+  Sound: [
+    { k: 'hitsound', label: '타격음', kind: 'choice', optional: true, options: ['Kick', 'Hat', 'Snare', 'Clap', 'Sizzle', 'Chuck', 'Hammer', 'Shaker', 'None'] },
+    { k: 'hitVolume', label: '타격음 크기', kind: 'num', optional: true, step: 0.1 },
+    { k: 'play', label: '지금 재생', kind: 'choice', optional: true, options: ['Kick', 'Hat', 'Snare', 'Clap', 'Sizzle', 'Chuck', 'Hammer', 'Shaker'] },
+    { k: 'volume', label: '재생 크기', kind: 'num', optional: true, step: 0.1 },
+  ],
 };
 
 export function defaultAction(type: ActionType, floor: number, finish: number): Action {
@@ -158,6 +181,12 @@ export function defaultAction(type: ActionType, floor: number, finish: number): 
       return { floor, type, appear: 'fade', beatsAhead: 3, disappear: 'fade', beatsBehind: 2 };
     case 'MoveDecorations':
       return { floor, type, tag: '', offset: [0, 0], duration: 1, ease: 'outSine' };
+    case 'Planets':
+      return { floor, type, radius: 1.5, duration: 1, ease: 'outSine' };
+    case 'Screen':
+      return { floor, type, tile: [2, 2], duration: 0 };
+    case 'Sound':
+      return { floor, type, play: 'Clap', volume: 1 };
     default:
       return { floor, type } as Action;
   }

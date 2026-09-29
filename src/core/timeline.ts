@@ -42,6 +42,15 @@ export interface DecoState {
   opacity: number;
   visible: boolean;
   image: string | null;
+  /** 글자 장식의 지금 글자 (null = 처음 글자) */
+  text: string | null;
+  /** 입자: 방출 중인지, 방출 시작 시각 (초) */
+  emitting: boolean;
+  emitSince: number;
+  /** 입자: 아직 뿜지 않은 한 번에 뿜기 수 (렌더러가 가져가며 0으로) */
+  burst: number;
+  /** 입자: 지우기 요청 번호 (바뀌면 렌더러가 모두 지움) */
+  clearSerial: number;
 }
 
 /** 타일 등장·퇴장 설정 (타일마다, 그 타일 이전의 마지막 TrackAnim 기준). */
@@ -96,6 +105,14 @@ export class VisualTimeline {
   /** 켜진 필터 (원작 이름 → 세기). */
   readonly filters = new Map<string, FilterState>();
   bloom: BloomState = { intensity: 0, threshold: 0.5, color: 0xffffff };
+  /** 행성 공전 반지름·크기 배율 (원작 ScaleRadius·ScalePlanets) */
+  planetRadius = 1;
+  planetSize = 1;
+  /** 화면 반복 (가로·세로 횟수, 음수 = 뒤집기)·흐름 (초당 화면 수)·잔상·끊김(초당 장면, 0 = 끔) */
+  screenTile: [number, number] = [1, 1];
+  screenScroll: [number, number] = [0, 0];
+  mirrors = false;
+  fps = 0;
   /** 화면 흔들림 (월드 단위, 매 update에서 계산). */
   shakeX = 0;
   shakeY = 0;
@@ -175,6 +192,11 @@ export class VisualTimeline {
       opacity: 1,
       visible: true,
       image: null,
+      text: null,
+      emitting: false,
+      emitSince: 0,
+      burst: 0,
+      clearSerial: 0,
     }));
     // TrackAnim은 그 타일부터 뒤로 적용 (시간이 아니라 타일 기준 — 미리 계산)
     this.tileAnim = new Array(n).fill(null);
@@ -230,7 +252,18 @@ export class VisualTimeline {
       d.opacity = d.def.opacity ?? 1;
       d.visible = d.def.visible !== false;
       d.image = d.def.image ?? null;
+      d.text = null;
+      d.emitting = !!d.def.particle?.autoPlay;
+      d.emitSince = 0;
+      d.burst = 0;
+      d.clearSerial++;
     }
+    this.planetRadius = 1;
+    this.planetSize = 1;
+    this.screenTile = [1, 1];
+    this.screenScroll = [0, 0];
+    this.mirrors = false;
+    this.fps = 0;
     this.tileColor.fill(this.baseTrack);
     this.tileOffX.fill(0);
     this.tileOffY.fill(0);
@@ -585,6 +618,17 @@ export class VisualTimeline {
         for (const d of targets) {
           if (a.visible !== undefined) d.visible = a.visible;
           if (a.image !== undefined) d.image = a.image || null;
+          if (a.text !== undefined) d.text = a.text;
+          if (a.particle === 'start') {
+            d.emitting = true;
+            d.emitSince = ev.time;
+          } else if (a.particle === 'stop') d.emitting = false;
+          else if (a.particle === 'clear') {
+            d.emitting = false;
+            d.burst = 0;
+            d.clearSerial++;
+          }
+          if (a.emit) d.burst += a.emit;
         }
         return {
           ev,
@@ -604,6 +648,39 @@ export class VisualTimeline {
               if (col !== null) d.color = p >= 1 ? col : lerpColor(f.color, col, p);
               if (a.opacity !== undefined) d.opacity = lerp(f.opacity, a.opacity, k);
             });
+          },
+        };
+      }
+      case 'Planets': {
+        const r0 = this.planetRadius;
+        const s0 = this.planetSize;
+        const chan = 'planets';
+        this.active = this.active.filter((x) => x.chan !== chan);
+        return {
+          ev,
+          chan,
+          apply: (p) => {
+            const k = ease(a.ease as EaseName | undefined, p);
+            if (a.radius !== undefined) this.planetRadius = lerp(r0, a.radius, k);
+            if (a.size !== undefined) this.planetSize = lerp(s0, a.size, k);
+          },
+        };
+      }
+      case 'Screen': {
+        if (a.scroll) this.screenScroll = [a.scroll[0], a.scroll[1]];
+        if (a.mirrors !== undefined) this.mirrors = a.mirrors;
+        if (a.fps !== undefined) this.fps = a.fps;
+        if (!a.tile) return null;
+        const t0: [number, number] = [this.screenTile[0], this.screenTile[1]];
+        const t1 = a.tile;
+        const chan = 'screen.tile';
+        this.active = this.active.filter((x) => x.chan !== chan);
+        return {
+          ev,
+          chan,
+          apply: (p) => {
+            const k = ease(a.ease as EaseName | undefined, p);
+            this.screenTile = [lerp(t0[0], t1[0], k), lerp(t0[1], t1[1], k)];
           },
         };
       }

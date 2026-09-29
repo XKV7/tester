@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Sprite, Texture, TilingSprite, type Filter } from 'pixi.js';
+import { Application, Container, Graphics, RenderTexture, Sprite, Texture, TilingSprite, type Filter } from 'pixi.js';
 import { TILE_LEN } from '../core/math';
 
 interface Mote {
@@ -226,6 +226,40 @@ export class Stage {
     s.position.set((this.width - tex.width * k) / 2, (this.height - tex.height * k) / 2);
   }
 
+  /** 잔상용: 트랙 층을 지우지 않고 계속 겹쳐 그리는 텍스처 (켜져 있을 때만). */
+  private mirrorRT: RenderTexture | null = null;
+  private mirrorSprite: Sprite | null = null;
+
+  /**
+   * 잔상 (원작 HallOfMirrors): 트랙 층(타일·행성·장식)을 지우지 않고 계속 겹쳐 그린다.
+   * WebGL 화면은 매 프레임 지워지므로, 따로 쌓아 두는 텍스처에 그리고 그것을 보여 준다.
+   */
+  setMirrors(on: boolean): void {
+    if (on === !!this.mirrorRT) {
+      if (on && this.mirrorRT && (this.mirrorRT.width !== this.width || this.mirrorRT.height !== this.height)) this.mirrorRT.resize(this.width, this.height);
+      return;
+    }
+    const stage = this.app.stage;
+    if (on) {
+      const rt = RenderTexture.create({ width: this.width, height: this.height, resolution: this.app.renderer.resolution });
+      const sp = new Sprite(rt);
+      const idx = stage.getChildIndex(this.worldWrap);
+      stage.removeChild(this.worldWrap);
+      stage.addChildAt(sp, idx);
+      this.mirrorRT = rt;
+      this.mirrorSprite = sp;
+    } else {
+      const sp = this.mirrorSprite!;
+      const idx = stage.getChildIndex(sp);
+      stage.removeChild(sp);
+      stage.addChildAt(this.worldWrap, idx);
+      sp.destroy();
+      this.mirrorRT!.destroy(true);
+      this.mirrorRT = null;
+      this.mirrorSprite = null;
+    }
+  }
+
   /** 트랙 층 필터 (빛 번짐). */
   setWorldFilters(fs: Filter[]): void {
     const w = this.worldWrap;
@@ -280,6 +314,8 @@ export class Stage {
     if (flashAlpha > 0.001) this.flash.rect(0, 0, w, h).fill({ color: flashColor, alpha: flashAlpha });
     this.bgFlash.clear();
     if (bgFlashAlpha > 0.001) this.bgFlash.rect(0, 0, w, h).fill({ color: bgFlashColor, alpha: bgFlashAlpha });
+    // 잔상: 트랙 층을 지우지 않고 겹쳐 그림
+    if (this.mirrorRT) this.app.renderer.render({ container: this.worldWrap, target: this.mirrorRT, clear: false });
   }
 
   /** 월드에서 보이는 영역 (컬링용, 회전 고려해 원으로 근사). */

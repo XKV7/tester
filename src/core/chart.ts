@@ -66,7 +66,7 @@ export interface Chart {
   lastTime: number;
 }
 
-export const VISUAL_TYPES = new Set(['Camera', 'Flash', 'RecolorTrack', 'MoveTrack', 'Background', 'Filter', 'Bloom', 'Shake', 'TrackAnim', 'MoveDecorations']);
+export const VISUAL_TYPES = new Set(['Camera', 'Flash', 'RecolorTrack', 'MoveTrack', 'Background', 'Filter', 'Bloom', 'Shake', 'TrackAnim', 'MoveDecorations', 'Planets', 'Screen', 'Sound']);
 
 /** 레벨을 컴파일해 모든 타일의 위치·박·시각을 미리 계산한다. */
 export function compileChart(level: LevelData): Chart {

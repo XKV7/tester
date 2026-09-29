@@ -32,11 +32,79 @@ export class Sfx {
     o.stop(t + dur + 0.02);
   }
 
-  /** 타격음. when = ctx 시각 (생략 시 즉시). scheduled면 취소 가능한 버스로. */
-  hit(when?: number, scheduled = false): void {
+  /** 잡음 한 번 (필터 종류·주파수·길이·크기). */
+  private burst(t: number, dest: AudioNode, type: BiquadFilterType, freq: number, dur: number, amp: number, q = 1): void {
+    const ctx = this.eng.ctx;
+    const n = ctx.createBufferSource();
+    n.buffer = this.noiseBuf();
+    const f = ctx.createBiquadFilter();
+    f.type = type;
+    f.frequency.value = freq;
+    f.Q.value = q;
+    const g = ctx.createGain();
+    const s = Math.max(t, ctx.currentTime);
+    g.gain.setValueAtTime(amp, s);
+    g.gain.exponentialRampToValueAtTime(0.0001, s + dur);
+    n.connect(f).connect(g).connect(dest);
+    n.start(s);
+    n.stop(s + dur + 0.02);
+  }
+
+  /**
+   * 타격음. when = ctx 시각 (생략 시 즉시). scheduled면 취소 가능한 버스로.
+   * kind: 원작 타격음 이름 (Kick·Hat·Snare·Clap·Sizzle·Chuck·Hammer·Shaker …, 없으면 기본 소리), volume: 크기 배율.
+   * 원작 소리 파일은 쓰지 않고 비슷한 느낌으로 합성한다.
+   */
+  hit(when?: number, scheduled = false, kind: string | null = null, volume = 1): void {
     const ctx = this.eng.ctx;
     const t = when ?? ctx.currentTime;
-    const dest = scheduled ? this.eng.scheduledBus : this.eng.sfxGain;
+    let dest: AudioNode = scheduled ? this.eng.scheduledBus : this.eng.sfxGain;
+    if (volume !== 1) {
+      const g = ctx.createGain();
+      g.gain.value = Math.max(0, Math.min(4, volume));
+      g.connect(dest);
+      dest = g;
+    }
+    const k = (kind ?? '').toLowerCase();
+    if (k) {
+      if (k.includes('kick')) {
+        this.tone(t, 160, 0.18, 0.7, 'sine', dest, 45);
+        this.burst(t, dest, 'lowpass', 3000, 0.02, 0.2);
+        return;
+      }
+      if (k.includes('hat') || k.includes('shaker')) {
+        this.burst(t, dest, 'highpass', 7000, k.includes('shaker') ? 0.07 : 0.045, 0.35);
+        return;
+      }
+      if (k.includes('snare')) {
+        this.tone(t, 220, 0.09, 0.35, 'triangle', dest, 160);
+        this.burst(t, dest, 'bandpass', 2500, 0.14, 0.5, 0.7);
+        return;
+      }
+      if (k.includes('clap')) {
+        for (const d of [0, 0.011, 0.022]) this.burst(t + d, dest, 'bandpass', 1500, d === 0.022 ? 0.12 : 0.02, 0.5, 1.5);
+        return;
+      }
+      if (k.includes('sizzle')) {
+        this.burst(t, dest, 'highpass', 5000, 0.3, 0.3);
+        return;
+      }
+      if (k.includes('chuck')) {
+        this.tone(t, 300, 0.07, 0.5, 'square', dest, 120);
+        this.burst(t, dest, 'bandpass', 900, 0.05, 0.3, 2);
+        return;
+      }
+      if (k.includes('hammer') || k.includes('bell') || k.includes('vehicle')) {
+        this.tone(t, 1200, 0.12, 0.3, 'square', dest, 1150);
+        this.tone(t, 1810, 0.1, 0.18, 'square', dest, 1790);
+        return;
+      }
+      if (k.includes('squareshot') || k.includes('square')) {
+        this.tone(t, 880, 0.06, 0.3, 'square', dest, 440);
+        return;
+      }
+      // 그 밖의 이름은 기본 소리
+    }
     this.tone(t, 1760, 0.06, 0.35, 'triangle', dest, 880);
     this.tone(t, 440, 0.08, 0.25, 'sine', dest, 220);
     const n = ctx.createBufferSource();

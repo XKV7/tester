@@ -37,6 +37,9 @@ export const ACTION_TYPES: ActionType[] = [
   'Shake',
   'TrackAnim',
   'MoveDecorations',
+  'Planets',
+  'Screen',
+  'Sound',
 ];
 
 /** 게임 진행에 영향을 주는 이벤트 (나머지는 연출). */
@@ -252,12 +255,32 @@ function validateDecoration(d: unknown, tileCount: number): string | null {
   const vec = (k: string) => (d[k] === undefined || (Array.isArray(d[k]) && (d[k] as unknown[]).length === 2 && (d[k] as unknown[]).every(isNum)) ? null : `${k}는 [x, y] 숫자 배열이어야 합니다.`);
   const n = (k: string) => (d[k] === undefined || isNum(d[k]) ? null : `${k}는 숫자여야 합니다.`);
   const str = (k: string) => (d[k] === undefined || typeof d[k] === 'string' ? null : `${k}는 문자열이어야 합니다.`);
-  if (d.image === undefined && d.text === undefined) return 'image 또는 text가 필요합니다.';
+  if (d.image === undefined && d.text === undefined && d.shape === undefined) return 'image, text, shape 중 하나가 필요합니다.';
+  if (d.shape !== undefined && d.shape !== 'planet' && d.shape !== 'tile') return "shape는 'planet' 또는 'tile'이어야 합니다.";
+  if (d.particle !== undefined) {
+    const pe = validateParticle(d.particle);
+    if (pe) return `particle: ${pe}`;
+  }
   if (d.relativeTo !== undefined && !['tile', 'global', 'camera'].includes(d.relativeTo as string)) return "relativeTo는 'tile', 'global', 'camera' 중 하나여야 합니다.";
   if (d.floor !== undefined && (!isNum(d.floor) || !Number.isInteger(d.floor) || d.floor < 0 || d.floor >= tileCount)) return `floor는 0 ~ ${tileCount - 1} 범위의 정수여야 합니다.`;
   if (d.color !== undefined && !isColor(d.color)) return 'color 형식이 잘못되었습니다.';
   if (d.visible !== undefined && typeof d.visible !== 'boolean') return 'visible은 true/false여야 합니다.';
   return [str('tag'), str('image'), str('text'), vec('position'), vec('pivot'), vec('scale'), vec('parallax'), n('rotation'), n('opacity'), n('depth'), n('fontSize')].find((x) => x) ?? null;
+}
+
+function validateParticle(p: unknown): string | null {
+  if (!isObj(p)) return '객체여야 합니다.';
+  const pair = (k: string, need: boolean) => {
+    const v = p[k];
+    if (v === undefined) return need ? `${k}가 필요합니다.` : null;
+    return Array.isArray(v) && v.length === 2 && v.every(isNum) ? null : `${k}는 [a, b] 숫자 배열이어야 합니다.`;
+  };
+  const vel = p.velocity;
+  if (!Array.isArray(vel) || vel.length !== 2 || !vel.every((x) => Array.isArray(x) && x.length === 2 && x.every(isNum))) return 'velocity는 [[x, y], [x, y]]여야 합니다.';
+  if (p.colors !== undefined && (!Array.isArray(p.colors) || p.colors.length !== 2 || !p.colors.every(isColor))) return 'colors는 색 두 개여야 합니다.';
+  if (p.alphaKeys !== undefined && (!Array.isArray(p.alphaKeys) || !p.alphaKeys.every((x) => Array.isArray(x) && x.length === 2 && x.every(isNum)))) return 'alphaKeys 형식이 잘못되었습니다.';
+  for (const k of ['duration', 'max', 'speed']) if (p[k] !== undefined && (!isNum(p[k]) || (p[k] as number) < 0)) return `${k}는 0 이상의 숫자여야 합니다.`;
+  return [pair('rate', true), pair('lifetime', true), pair('size', true), pair('spin', false), pair('area', false)].find((x) => x) ?? null;
 }
 
 function validateActionParams(a: Record<string, unknown>, type: ActionType, tileCount: number): string | null {
@@ -349,7 +372,10 @@ function validateActionParams(a: Record<string, unknown>, type: ActionType, tile
       if (typeof a.tag !== 'string') return 'tag(문자열)가 필요합니다.';
       if (a.visible !== undefined && typeof a.visible !== 'boolean') return 'visible은 true/false여야 합니다.';
       if (a.image !== undefined && typeof a.image !== 'string') return 'image는 파일 이름이어야 합니다.';
+      if (a.text !== undefined && typeof a.text !== 'string') return 'text는 문자열이어야 합니다.';
+      if (a.particle !== undefined && !['start', 'stop', 'clear'].includes(a.particle as string)) return "particle은 'start', 'stop', 'clear' 중 하나여야 합니다.";
       return first(
+        optNum('emit', 0, 100000),
         vec('offset'),
         vec('scale'),
         optNum('rotation'),
@@ -358,6 +384,15 @@ function validateActionParams(a: Record<string, unknown>, type: ActionType, tile
         optNum('duration', 0, MAX_EFFECT_BEATS),
         easeOk(),
       );
+    case 'Planets':
+      return first(optNum('radius', 0, 100), optNum('size', 0, 100), optNum('duration', 0, MAX_EFFECT_BEATS), easeOk());
+    case 'Screen':
+      if (a.mirrors !== undefined && typeof a.mirrors !== 'boolean') return 'mirrors는 true/false여야 합니다.';
+      return first(vec('tile'), vec('scroll'), optNum('fps', 0, 1000), optNum('duration', 0, MAX_EFFECT_BEATS), easeOk());
+    case 'Sound':
+      if (a.hitsound !== undefined && typeof a.hitsound !== 'string') return 'hitsound는 문자열이어야 합니다.';
+      if (a.play !== undefined && typeof a.play !== 'string') return 'play는 문자열이어야 합니다.';
+      return first(optNum('hitVolume', 0, 10), optNum('volume', 0, 10));
   }
 }
 
