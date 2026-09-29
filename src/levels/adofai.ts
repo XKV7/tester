@@ -1,6 +1,6 @@
 import { compileChart } from '../core/chart';
 import { TILE_LEN } from '../core/math';
-import { defaultMeta, defaultSettings, MAX_BPM, MAX_EXTRA_BEATS, MAX_MULTIPLIER } from '../core/level';
+import { defaultMeta, defaultSettings, MAX_BPM, MAX_EFFECT_BEATS, MAX_EXTRA_BEATS, MAX_MULTIPLIER, validateLevel } from '../core/level';
 import { EASE_NAMES } from '../core/ease';
 import type { Action, EaseName, LevelData } from '../core/types';
 
@@ -66,6 +66,8 @@ export function parseLenientJson(text: string): unknown {
 
 const num = (v: unknown, d: number): number => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : d);
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+/** 연출 지속 시간 (박): 0 ~ 한계. */
+const dur = (v: unknown, d: number): number => Math.max(0, Math.min(MAX_EFFECT_BEATS, num(v, d)));
 const onOff = (v: unknown): boolean => v === true || v === 'Enabled' || v === 'enabled';
 
 /** <color=#fff>…</color> 같은 서식 태그 제거. */
@@ -236,11 +238,11 @@ export function convertAdofai(text: string): AdofaiResult {
         if (!c) break;
         const a = tileRef(e.startTile, floor, last);
         const b = tileRef(e.endTile, floor, last);
-        actions.push({ floor, type: 'RecolorTrack', from: Math.min(a, b), to: Math.max(a, b), color: c, duration: Math.max(0, num(e.duration, 0)) });
+        actions.push({ floor, type: 'RecolorTrack', from: Math.min(a, b), to: Math.max(a, b), color: c, duration: dur(e.duration, 0) });
         break;
       }
       case 'MoveCamera': {
-        const cam: Action = { floor, type: 'Camera', duration: Math.max(0, num(e.duration, 1)) };
+        const cam: Action = { floor, type: 'Camera', duration: dur(e.duration, 1) };
         if (e.zoom !== undefined && e.zoom !== null) cam.zoom = Math.max(0.05, Math.min(20, 100 / Math.max(1, num(e.zoom, 100))));
         if (e.rotation !== undefined && e.rotation !== null) cam.rotation = num(e.rotation, 0);
         if (Array.isArray(e.position) && e.position.some((v) => v !== null)) cam.offset = [num(e.position[0], 0) * TILE_LEN, num(e.position[1], 0) * TILE_LEN];
@@ -252,13 +254,13 @@ export function convertAdofai(text: string): AdofaiResult {
       }
       case 'Flash': {
         const color = adofaiColor(e.startColor) ?? '#ffffff';
-        actions.push({ floor, type: 'Flash', color, opacity: Math.max(0, Math.min(1, num(e.startOpacity, 100) / 100)), duration: Math.max(0, num(e.duration, 1)) });
+        actions.push({ floor, type: 'Flash', color, opacity: Math.max(0, Math.min(1, num(e.startOpacity, 100) / 100)), duration: dur(e.duration, 1) });
         break;
       }
       case 'MoveTrack': {
         const a = tileRef(e.startTile, floor, last);
         const b = tileRef(e.endTile, floor, last);
-        const mv: Action = { floor, type: 'MoveTrack', from: Math.min(a, b), to: Math.max(a, b), duration: Math.max(0, num(e.duration, 1)) };
+        const mv: Action = { floor, type: 'MoveTrack', from: Math.min(a, b), to: Math.max(a, b), duration: dur(e.duration, 1) };
         if (Array.isArray(e.positionOffset) && e.positionOffset.some((v) => v !== null))
           mv.offset = [num(e.positionOffset[0], 0) * TILE_LEN, num(e.positionOffset[1], 0) * TILE_LEN];
         if (e.rotationOffset !== undefined && e.rotationOffset !== null) mv.rotation = num(e.rotationOffset, 0);
@@ -325,7 +327,20 @@ export function convertAdofai(text: string): AdofaiResult {
       `ORBIT에 없는 연출은 뺐습니다: ${[...skipped].map(([k, n]) => `${k} ${n}개`).join(', ')}${ignoredDecor ? `${skipped.size ? ', ' : ''}장식 ${ignoredDecor}개` : ''}.`,
     );
 
-  const level: LevelData = { version: 1, meta, settings, path, actions };
+  let level: LevelData = { version: 1, meta, settings, path, actions };
+  // 안전망: 그래도 검증을 못 넘는 이벤트가 있으면 그 이벤트만 빼고 알린다 (레벨 전체를 거부하지 않게)
+  for (let pass = 0; pass < 3; pass++) {
+    const v = validateLevel(level);
+    if (v.ok) break;
+    const bad = new Set<number>();
+    for (const err of v.errors) {
+      const m = /^actions\[(\d+)\]/.exec(err);
+      if (m) bad.add(Number(m[1]));
+    }
+    if (!bad.size) throw new Error(`변환한 레벨이 올바르지 않습니다: ${v.errors.slice(0, 3).join(' / ')}`);
+    warnings.push(`옮길 수 없는 이벤트 ${bad.size}개를 뺐습니다 (예: ${v.errors[0]}).`);
+    level = { ...level, actions: level.actions.filter((_, i) => !bad.has(i)) };
+  }
   // 첫 회전(타일 0 → 1) 시간만큼 앞당겨, 타일 1이 원작 offset 시각에 오게 한다
   const first = compileChart(level).tiles[0].duration;
   settings.offset = Math.max(-60, Math.min(3600, Math.round((firstHit - first) * 10000) / 10000));

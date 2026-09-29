@@ -7,6 +7,8 @@ import type { Action, ActionType, LevelData, LevelMeta, LevelSettings } from './
 export const MAX_BPM = 10_000_000;
 export const MAX_MULTIPLIER = 100_000;
 export const MAX_EXTRA_BEATS = 10_000;
+/** 연출 이벤트(카메라·번쩍임·트랙 색/이동) 지속 시간 한계 (박). */
+export const MAX_EFFECT_BEATS = 10_000_000;
 
 export const ACTION_TYPES: ActionType[] = [
   'SetSpeed',
@@ -246,17 +248,17 @@ function validateActionParams(a: Record<string, unknown>, type: ActionType, tile
     case 'Hold':
       return isNum(a.beats) && a.beats > 0 && a.beats <= MAX_EXTRA_BEATS ? null : `beats는 0보다 크고 ${MAX_EXTRA_BEATS} 이하인 숫자여야 합니다.`;
     case 'Camera':
-      return first(optNum('zoom', 0.05, 20), optNum('rotation'), vec('offset'), optNum('duration', 0, 1000), easeOk());
+      return first(optNum('zoom', 0.05, 20), optNum('rotation'), vec('offset'), optNum('duration', 0, MAX_EFFECT_BEATS), easeOk());
     case 'Flash':
       return first(
         a.color !== undefined && !isColor(a.color) ? 'color 형식이 잘못되었습니다.' : null,
         optNum('opacity', 0, 1),
-        optNum('duration', 0, 1000),
+        optNum('duration', 0, MAX_EFFECT_BEATS),
       );
     case 'RecolorTrack':
-      return first(range(), isColor(a.color) ? null : 'color가 필요합니다.', optNum('duration', 0, 1000));
+      return first(range(), isColor(a.color) ? null : 'color가 필요합니다.', optNum('duration', 0, MAX_EFFECT_BEATS));
     case 'MoveTrack':
-      return first(range(), vec('offset'), optNum('rotation'), optNum('opacity', 0, 1), optNum('duration', 0, 1000), easeOk());
+      return first(range(), vec('offset'), optNum('rotation'), optNum('opacity', 0, 1), optNum('duration', 0, MAX_EFFECT_BEATS), easeOk());
     case 'Background':
       if (a.color === undefined && a.image === undefined) return 'color 또는 image가 필요합니다.';
       if (a.color !== undefined && !isColor(a.color)) return 'color 형식이 잘못되었습니다.';
