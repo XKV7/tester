@@ -1,8 +1,8 @@
 import { compileChart } from '../core/chart';
 import { TILE_LEN } from '../core/math';
-import { defaultMeta, defaultSettings, MAX_BPM, MAX_EFFECT_BEATS, MAX_EXTRA_BEATS, MAX_MULTIPLIER, validateLevel } from '../core/level';
+import { defaultMeta, defaultSettings, FILTER_NAMES, MAX_BPM, MAX_EFFECT_BEATS, MAX_EXTRA_BEATS, MAX_MULTIPLIER, validateLevel } from '../core/level';
 import { EASE_NAMES } from '../core/ease';
-import type { Action, EaseName, LevelData } from '../core/types';
+import type { Action, Decoration, EaseName, LevelData, TrackAppear, TrackDisappear } from '../core/types';
 
 /**
  * 얼음과 불의 춤(.adofai) 레벨 → ORBIT 레벨 변환. 순수 함수.
@@ -125,6 +125,42 @@ function tileRef(ref: unknown, floor: number, last: number): number {
   return Math.max(0, Math.min(last, base + n));
 }
 
+/** 원작 AddDecoration / AddText → 장식. 위치 단위: 타일 (× TILE_LEN). */
+function decoFrom(e: Record<string, unknown>, floor: number, isText: boolean): Decoration | null {
+  const image = str(e.decorationImage).split(/[\\/]/).pop() ?? '';
+  const text = isText ? str(e.decText) : '';
+  if (!isText && !image) return null;
+  const rel = str(e.relativeTo);
+  const vec = (v: unknown, d: number): [number, number] => (Array.isArray(v) ? [num(v[0], d), num(v[1], d)] : [d, d]);
+  const pos = vec(e.position, 0);
+  const d: Decoration = {
+    relativeTo: rel === 'Global' ? 'global' : rel === 'Camera' || rel === 'CameraAspect' ? 'camera' : 'tile',
+    floor,
+    position: [pos[0] * TILE_LEN, pos[1] * TILE_LEN],
+  };
+  if (isText) {
+    d.text = text;
+    d.fontSize = 40;
+  } else d.image = image;
+  const tag = str(e.tag).trim();
+  if (tag) d.tag = tag;
+  const piv = vec(e.pivotOffset, 0);
+  if (piv[0] || piv[1]) d.pivot = [piv[0] * TILE_LEN, piv[1] * TILE_LEN];
+  const rot = num(e.rotation, 0);
+  if (rot) d.rotation = rot;
+  const sc = Array.isArray(e.scale) ? vec(e.scale, 100) : [num(e.scale, 100), num(e.scale, 100)];
+  if (sc[0] !== 100 || sc[1] !== 100) d.scale = [sc[0] / 100, sc[1] / 100];
+  const c = adofaiColor(e.color);
+  if (c && c !== '#ffffff') d.color = c;
+  const op = num(e.opacity, 100) / 100;
+  if (op !== 1) d.opacity = Math.max(0, Math.min(1, op));
+  d.depth = num(e.depth, -1);
+  const par = vec(e.parallax, 0);
+  if (par[0] || par[1]) d.parallax = [par[0] / 100, par[1] / 100];
+  if (e.hideIcon === undefined && (e.visible === false || e.visible === 'Disabled')) d.visible = false;
+  return d;
+}
+
 export function convertAdofai(text: string): AdofaiResult {
   let raw: unknown;
   try {
@@ -188,14 +224,23 @@ export function convertAdofai(text: string): AdofaiResult {
   /** PositionTrack: 해당 타일부터 뒤로 계속 밀리는 정적 위치 (타일 단위). */
   const shift: { floor: number; x: number; y: number }[] = [];
 
-  const list = Array.isArray(r.actions) ? r.actions : [];
+  const decorations: Decoration[] = [];
+  const filterSet = new Set(FILTER_NAMES);
+  // 장식은 새 버전은 "decorations" 배열, 옛 버전은 actions 안의 AddDecoration/AddText
+  const list = [...(Array.isArray(r.actions) ? r.actions : []), ...(Array.isArray(r.decorations) ? r.decorations : [])];
   for (const ev of list) {
     if (typeof ev !== 'object' || ev === null) continue;
     const e = ev as Record<string, unknown>;
     const type = str(e.eventType);
-    const floor = Math.round(num(e.floor, -1));
+    const floor = Math.round(num(e.floor, type === 'AddDecoration' || type === 'AddText' ? 0 : -1));
     if (floor < 0 || floor > last) continue;
     if (e.active === false) continue;
+    // 원작 angleOffset: 타일을 친 뒤 그 각도만큼 돈 다음 (180° = 1박)
+    const delay = Math.max(0, num(e.angleOffset, 0)) / 180;
+    const vis = (a: Action) => {
+      if (delay > 0) a.delay = Math.min(MAX_EFFECT_BEATS, delay);
+      actions.push(a);
+    };
     switch (type) {
       case 'Twirl':
         actions.push({ floor, type: 'Twirl' });
@@ -230,7 +275,7 @@ export function convertAdofai(text: string): AdofaiResult {
         break;
       case 'ColorTrack': {
         const c = adofaiColor(e.trackColor);
-        if (c) actions.push({ floor, type: 'RecolorTrack', from: floor, to: last, color: c });
+        if (c) vis({ floor, type: 'RecolorTrack', from: floor, to: last, color: c });
         break;
       }
       case 'RecolorTrack': {
@@ -238,7 +283,7 @@ export function convertAdofai(text: string): AdofaiResult {
         if (!c) break;
         const a = tileRef(e.startTile, floor, last);
         const b = tileRef(e.endTile, floor, last);
-        actions.push({ floor, type: 'RecolorTrack', from: Math.min(a, b), to: Math.max(a, b), color: c, duration: dur(e.duration, 0) });
+        vis({ floor, type: 'RecolorTrack', from: Math.min(a, b), to: Math.max(a, b), color: c, duration: dur(e.duration, 0) });
         break;
       }
       case 'MoveCamera': {
@@ -248,13 +293,19 @@ export function convertAdofai(text: string): AdofaiResult {
         if (Array.isArray(e.position) && e.position.some((v) => v !== null)) cam.offset = [num(e.position[0], 0) * TILE_LEN, num(e.position[1], 0) * TILE_LEN];
         const ease = mapEase(e.ease);
         if (ease) cam.ease = ease;
-        if (e.relativeTo !== undefined && e.relativeTo !== 'Player') bump(approx, `MoveCamera(${str(e.relativeTo)} 기준 → 플레이어 기준)`);
-        actions.push(cam);
+        const rel = str(e.relativeTo);
+        if (rel === 'Player') cam.relativeTo = 'player';
+        else if (rel === 'Tile') {
+          cam.relativeTo = 'tile';
+          cam.tile = floor;
+        } else if (rel === 'Global') cam.relativeTo = 'global';
+        else if (rel.startsWith('LastPosition')) cam.relativeTo = 'last';
+        vis(cam);
         break;
       }
       case 'Flash': {
         const color = adofaiColor(e.startColor) ?? '#ffffff';
-        actions.push({ floor, type: 'Flash', color, opacity: Math.max(0, Math.min(1, num(e.startOpacity, 100) / 100)), duration: dur(e.duration, 1) });
+        vis({ floor, type: 'Flash', color, opacity: Math.max(0, Math.min(1, num(e.startOpacity, 100) / 100)), duration: dur(e.duration, 1) });
         break;
       }
       case 'MoveTrack': {
@@ -265,9 +316,11 @@ export function convertAdofai(text: string): AdofaiResult {
           mv.offset = [num(e.positionOffset[0], 0) * TILE_LEN, num(e.positionOffset[1], 0) * TILE_LEN];
         if (e.rotationOffset !== undefined && e.rotationOffset !== null) mv.rotation = num(e.rotationOffset, 0);
         if (e.opacity !== undefined && e.opacity !== null) mv.opacity = Math.max(0, Math.min(1, num(e.opacity, 100) / 100));
+        const sc = Array.isArray(e.scale) ? e.scale[0] : e.scale;
+        if (sc !== undefined && sc !== null) mv.scale = Math.max(0, Math.min(100, num(sc, 100) / 100));
         const ease = mapEase(e.ease);
         if (ease) mv.ease = ease;
-        actions.push(mv);
+        vis(mv);
         break;
       }
       case 'PositionTrack': {
@@ -281,7 +334,95 @@ export function convertAdofai(text: string): AdofaiResult {
       case 'CustomBackground': {
         const c = adofaiColor(e.color);
         const img = str(e.bgImage).split(/[\\/]/).pop() ?? '';
-        if (c || img) actions.push({ floor, type: 'Background', ...(c ? { color: c } : {}), ...(img ? { image: img } : {}) });
+        const mode = str(e.bgDisplayMode);
+        const fit = mode === 'Unscaled' ? 'unscaled' : mode === 'Tiled' ? 'tile' : 'cover';
+        const tint = adofaiColor(e.imageColor);
+        vis({
+          floor,
+          type: 'Background',
+          ...(c ? { color: c } : {}),
+          image: img,
+          ...(img ? { fit, opacity: 1, ...(tint && tint !== '#ffffff' ? { tint } : {}) } : {}),
+        });
+        break;
+      }
+      case 'SetFilter': {
+        const name = str(e.filter);
+        if (!name) break;
+        if (!filterSet.has(name)) bump(skipped, `필터 ${name}`);
+        const on = onOff(e.enabled);
+        vis({
+          floor,
+          type: 'Filter',
+          filter: name,
+          enabled: on,
+          intensity: Math.max(0, Math.min(100, num(e.intensity, 100) / 100)),
+          ...(onOff(e.disableOthers) ? { exclusive: true } : {}),
+          ...(num(e.duration, 0) > 0 ? { duration: dur(e.duration, 0) } : {}),
+        });
+        break;
+      }
+      case 'Bloom':
+        vis({
+          floor,
+          type: 'Bloom',
+          enabled: onOff(e.enabled),
+          intensity: Math.max(0, Math.min(100, num(e.intensity, 100) / 100)),
+          threshold: Math.max(0, Math.min(1, num(e.threshold, 50) / 100)),
+          ...(adofaiColor(e.color) ? { color: adofaiColor(e.color)! } : {}),
+        });
+        break;
+      case 'ShakeScreen':
+        vis({
+          floor,
+          type: 'Shake',
+          duration: dur(e.duration, 1),
+          strength: Math.max(0, Math.min(100, num(e.strength, 100) / 100)),
+          frequency: Math.max(0, Math.min(1000, (num(e.intensity, 100) / 100) * 15)),
+          fadeOut: e.fadeOut === undefined ? true : onOff(e.fadeOut),
+        });
+        break;
+      case 'AnimateTrack': {
+        const ap: Record<string, TrackAppear> = {
+          None: 'none', Fade: 'fade', Grow: 'grow', Grow_Spin: 'spin', Extend: 'extend', Drop: 'drop', Rise: 'rise',
+          Assemble: 'scatter', Assemble_Far: 'scatter', Assemble_Scatter: 'scatter', Scatter: 'scatter', Scatter_Far: 'scatter',
+        };
+        const dp: Record<string, TrackDisappear> = {
+          None: 'none', Fade: 'fade', Shrink: 'shrink', Shrink_Spin: 'spin', Scatter: 'scatter', Scatter_Far: 'scatter', Retract: 'retract', Rise: 'fade', Drop: 'fade',
+        };
+        const a: Action = { floor, type: 'TrackAnim' };
+        if (e.trackAnimation !== undefined) a.appear = ap[str(e.trackAnimation)] ?? 'fade';
+        if (e.beatsAhead !== undefined) a.beatsAhead = Math.max(0, Math.min(MAX_EFFECT_BEATS, num(e.beatsAhead, 3)));
+        if (e.trackDisappearAnimation !== undefined) a.disappear = dp[str(e.trackDisappearAnimation)] ?? 'fade';
+        if (e.beatsBehind !== undefined) a.beatsBehind = Math.max(0, Math.min(MAX_EFFECT_BEATS, num(e.beatsBehind, 4)));
+        actions.push(a);
+        break;
+      }
+      case 'AddDecoration':
+      case 'AddText': {
+        const d = decoFrom(e, floor, type === 'AddText');
+        if (d) decorations.push(d);
+        break;
+      }
+      case 'MoveDecorations': {
+        const tag = str(e.tag).trim();
+        if (!tag) break;
+        const a: Action = { floor, type: 'MoveDecorations', tag, duration: dur(e.duration, 1) };
+        if (Array.isArray(e.positionOffset) && e.positionOffset.some((v) => v !== null))
+          a.offset = [num(e.positionOffset[0], 0) * TILE_LEN, num(e.positionOffset[1], 0) * TILE_LEN];
+        if (e.rotationOffset !== undefined && e.rotationOffset !== null) a.rotation = num(e.rotationOffset, 0);
+        if (e.scale !== undefined && e.scale !== null) {
+          const sc = Array.isArray(e.scale) ? e.scale : [e.scale, e.scale];
+          a.scale = [num(sc[0], 100) / 100, num(sc[1] ?? sc[0], 100) / 100];
+        }
+        const c = adofaiColor(e.color);
+        if (c) a.color = c;
+        if (e.opacity !== undefined && e.opacity !== null) a.opacity = Math.max(0, Math.min(1, num(e.opacity, 100) / 100));
+        if (e.visible !== undefined) a.visible = onOff(e.visible);
+        if (str(e.decorationImage)) a.image = str(e.decorationImage).split(/[\\/]/).pop();
+        const ease = mapEase(e.ease);
+        if (ease) a.ease = ease;
+        vis(a);
         break;
       }
       case 'MultiPlanet':
@@ -316,7 +457,7 @@ export function convertAdofai(text: string): AdofaiResult {
 
   actions.sort((a, b) => a.floor - b.floor);
 
-  const ignoredDecor = Array.isArray(r.decorations) ? r.decorations.length : 0;
+  const ignoredDecor = 0;
   if (approx.size)
     warnings.push(
       `원작과 다르게 동작할 수 있는 이벤트: ${[...approx].map(([k, n]) => `${k} ${n}개`).join(', ')}. ` +
@@ -327,7 +468,7 @@ export function convertAdofai(text: string): AdofaiResult {
       `ORBIT에 없는 연출은 뺐습니다: ${[...skipped].map(([k, n]) => `${k} ${n}개`).join(', ')}${ignoredDecor ? `${skipped.size ? ', ' : ''}장식 ${ignoredDecor}개` : ''}.`,
     );
 
-  let level: LevelData = { version: 1, meta, settings, path, actions };
+  let level: LevelData = { version: 1, meta, settings, path, actions, ...(decorations.length ? { decorations } : {}) };
   // 안전망: 그래도 검증을 못 넘는 이벤트가 있으면 그 이벤트만 빼고 알린다 (레벨 전체를 거부하지 않게)
   for (let pass = 0; pass < 3; pass++) {
     const v = validateLevel(level);

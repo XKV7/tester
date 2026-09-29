@@ -1208,6 +1208,31 @@ export class EditorScreen implements Screen {
         s.value = typeof value === 'string' ? value : '';
         return s;
       }
+      case 'bool': {
+        if (f.optional) {
+          const sel = h(
+            'select',
+            { onchange: () => set(sel.value === '' ? undefined : sel.value === 'true') },
+            h('option', { value: '' }, '(유지)'),
+            h('option', { value: 'true' }, '예'),
+            h('option', { value: 'false' }, '아니오'),
+          );
+          sel.value = value === undefined ? '' : String(!!value);
+          return sel;
+        }
+        const cb = h('input', { type: 'checkbox', checked: !!value, onchange: () => set(cb.checked) });
+        return cb;
+      }
+      case 'choice': {
+        const sel = h(
+          'select',
+          { onchange: () => set(sel.value === '' ? undefined : sel.value) },
+          f.optional ? h('option', { value: '' }, '(유지)') : null,
+          ...(f.options ?? []).map((o) => h('option', { value: o }, o)),
+        );
+        sel.value = typeof value === 'string' ? value : '';
+        return sel;
+      }
       case 'text': {
         const inp = h('input', {
           type: 'text',

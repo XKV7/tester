@@ -1,5 +1,5 @@
 import { BitmapText, Container, Graphics, Text } from 'pixi.js';
-import type { Chart } from '../core/chart';
+import { VISUAL_TYPES, type Chart } from '../core/chart';
 import { scaleColor } from '../core/color';
 import { degToRad, TILE_LEN } from '../core/math';
 import type { VisualTimeline } from '../core/timeline';
@@ -32,6 +32,8 @@ export interface TrackUpdate {
   selected?: number;
   /** 에디터: 박 수 표시. */
   showBeats?: boolean;
+  /** 곡 시각 (초) — 타일 등장·퇴장 애니메이션용. 없으면 애니메이션 없이 모두 보임. */
+  time?: number;
 }
 
 /**
@@ -63,7 +65,7 @@ export class TrackView {
     this.iconKinds = Array.from({ length: chart.tiles.length }, () => []);
     this.editorFloors = new Set(
       chart.level.actions
-        .filter((a) => ['Camera', 'Flash', 'RecolorTrack', 'MoveTrack', 'Background'].includes(a.type))
+        .filter((a) => VISUAL_TYPES.has(a.type))
         .map((a) => a.floor),
     );
     this.buildIcons();
@@ -75,8 +77,13 @@ export class TrackView {
       const kinds = this.iconKinds[t.floor];
       if (t.twirl) twirled = true;
       if (t.twirl) kinds.push('twirl');
-      if (t.speed === 'up') kinds.push('speedUp');
-      if (t.speed === 'down') kinds.push('speedDown');
+      // 원작처럼: 빨라지면 토끼, 느려지면 달팽이 (2배 이상 바뀌면 두 마리)
+      if (t.speed) {
+        const prev = this.chart.tiles[Math.max(0, t.floor - 1)].bpm;
+        const ratio = t.bpm / prev;
+        if (t.speed === 'up') kinds.push(ratio >= 2 - 1e-9 ? 'speedUp2' : 'speedUp');
+        else kinds.push(ratio <= 0.5 + 1e-9 ? 'speedDown2' : 'speedDown');
+      }
       if (t.checkpoint) kinds.push('checkpoint');
       if (t.midspin) kinds.push('midspin');
       if (t.pauseBeats > 0) kinds.push('pause');
@@ -161,13 +168,15 @@ export class TrackView {
       const y = this.py(i);
       const dx = x - u.view.cx;
       const dy = y - u.view.cy;
-      const alpha = tl ? tl.tileAlpha[i] : 1;
-      if (dx * dx + dy * dy > r2 || alpha <= 0.001) continue;
+      if (dx * dx + dy * dy > r2) continue;
+      const anim = tl && u.time !== undefined ? tl.tileAnimAt(i, u.time) : null;
+      const alpha = (tl ? tl.tileAlpha[i] : 1) * (anim ? anim.alpha : 1);
+      if (alpha <= 0.001) continue;
       nowVisible.add(i);
       const o = this.objs[i] ?? this.make(i);
       this.setVisible(o, true, !!u.showBeats);
-      o.root.position.set(x, y);
-      o.root.rotation = tl ? -degToRad(tl.tileRot[i]) : 0;
+      o.root.position.set(x + (anim ? anim.dx : 0), y - (anim ? anim.dy : 0));
+      o.root.rotation = (tl ? -degToRad(tl.tileRot[i]) : 0) - (anim ? degToRad(anim.rot) : 0);
       o.root.alpha = alpha;
       const base = tl ? tl.tileColor[i] : 0x3a3f55;
       const passed = i < u.passed;
@@ -179,7 +188,7 @@ export class TrackView {
         if (k >= 1) this.pulses.delete(i);
         else s = 1 + 0.15 * Math.sin(Math.PI * k);
       }
-      o.root.scale.set(s);
+      o.root.scale.set(s * (tl ? tl.tileScale[i] : 1) * (anim ? anim.scale : 1));
       if (o.label) o.label.position.set(x + 22, y + 22);
       for (const ic of o.icons) {
         ic.g.position.set(x + ic.dx, y + ic.dy);

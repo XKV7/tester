@@ -66,7 +66,7 @@ describe('.adofai 변환', () => {
         { floor: 5, eventType: 'Checkpoint' },
         { floor: 6, eventType: 'RecolorTrack', startTile: [0, 'ThisTile'], endTile: [2, 'ThisTile'], trackColor: 'ff0000ff', duration: 1 },
         { floor: 2, eventType: 'MoveCamera', duration: 2, relativeTo: 'Player', position: [1, 2], rotation: 30, zoom: 200, ease: 'InOutCubic' },
-        { floor: 3, eventType: 'AddDecoration' },
+        { floor: 3, eventType: 'EditorComment', comment: 'x' },
         { floor: 3, eventType: 'SetFilter' },
         { floor: 1, eventType: 'Twirl', active: false },
       ],
@@ -82,7 +82,7 @@ describe('.adofai 변환', () => {
     expect(byType('Checkpoint')).toHaveLength(1);
     expect(byType('RecolorTrack')).toEqual([{ floor: 6, type: 'RecolorTrack', from: 6, to: 8, color: '#ff0000', duration: 1 }]);
     expect(byType('Camera')[0]).toMatchObject({ zoom: 0.5, rotation: 30, offset: [TILE_LEN, 2 * TILE_LEN], ease: 'inOutQuad', duration: 2 });
-    expect(r.warnings.join(' ')).toContain('AddDecoration 1개');
+    expect(r.warnings.join(' ')).toContain('EditorComment 1개');
     const c = compileChart(r.level);
     expect(c.tiles[1].bpm).toBe(200);
     expect(c.tiles[2].bpm).toBe(100);
@@ -108,7 +108,7 @@ describe('.adofai 변환', () => {
 
   it('배경: 색과 이미지 파일', () => {
     const r = level({ angleData: [0, 0], actions: [{ floor: 1, eventType: 'CustomBackground', color: '000000', bgImage: 'BG1.jpg' }] });
-    expect(r.level.actions).toContainEqual({ floor: 1, type: 'Background', color: '#000000', image: 'BG1.jpg' });
+    expect(r.level.actions).toContainEqual({ floor: 1, type: 'Background', color: '#000000', image: 'BG1.jpg', fit: 'cover', opacity: 1 });
   });
 
   it('행성 3개처럼 박이 달라지는 이벤트는 경고', () => {
@@ -158,6 +158,64 @@ describe('.adofai 변환', () => {
   it('깨진 파일은 알아볼 수 있는 오류', () => {
     expect(() => convertAdofai('{ not json')).toThrow('.adofai');
     expect(() => convertAdofai('{"settings":{}}')).toThrow('타일');
+  });
+});
+
+describe('원작 연출 옮기기', () => {
+  const conv = (actions: unknown[], extra: Record<string, unknown> = {}) => {
+    const r = convertAdofai(JSON.stringify({ angleData: Array(20).fill(0), settings: { bpm: 120, offset: 0 }, actions, ...extra }));
+    const v = validateLevel(r.level);
+    expect(v.ok, v.ok ? '' : v.errors.join('\n')).toBe(true);
+    return r;
+  };
+
+  it('카메라 기준(Tile·Global·LastPosition)과 angleOffset → delay', () => {
+    const r = conv([
+      { floor: 3, eventType: 'MoveCamera', relativeTo: 'Tile', position: [1, 0], duration: 1, angleOffset: 90 },
+      { floor: 4, eventType: 'MoveCamera', relativeTo: 'Global', duration: 0 },
+      { floor: 5, eventType: 'MoveCamera', relativeTo: 'LastPosition', position: [0, 2], duration: 1 },
+    ]);
+    const cams = r.level.actions.filter((a) => a.type === 'Camera');
+    expect(cams[0]).toMatchObject({ relativeTo: 'tile', tile: 3, offset: [TILE_LEN, 0], delay: 0.5 });
+    expect(cams[1]).toMatchObject({ relativeTo: 'global' });
+    expect(cams[2]).toMatchObject({ relativeTo: 'last', offset: [0, 2 * TILE_LEN] });
+    // delay는 시각에 반영 (120BPM, 0.5박 = 0.25초)
+    const c = compileChart(r.level);
+    const ev = c.visual.find((v) => v.action === cams[0])!;
+    expect(ev.time).toBeCloseTo(c.tiles[3].time + 0.25);
+  });
+
+  it('필터·빛 번짐·흔들림·타일 등장', () => {
+    const r = conv([
+      { floor: 1, eventType: 'SetFilter', filter: 'Aberration', enabled: 'Enabled', intensity: 50, disableOthers: 'Disabled' },
+      { floor: 2, eventType: 'SetFilter', filter: 'Weird3D', enabled: 'Enabled', intensity: 100 },
+      { floor: 1, eventType: 'Bloom', enabled: 'Enabled', threshold: 20, intensity: 120, color: '85dbfc' },
+      { floor: 3, eventType: 'ShakeScreen', duration: 4, strength: 110, intensity: 100, fadeOut: 'Enabled' },
+      { floor: 1, eventType: 'AnimateTrack', trackAnimation: 'Fade', beatsAhead: 3, trackDisappearAnimation: 'Scatter_Far', beatsBehind: 4 },
+    ]);
+    const by = (t: string) => r.level.actions.filter((a) => a.type === t);
+    expect(by('Filter')[0]).toMatchObject({ filter: 'Aberration', enabled: true, intensity: 0.5 });
+    expect(by('Bloom')[0]).toMatchObject({ enabled: true, intensity: 1.2, threshold: 0.2, color: '#85dbfc' });
+    expect(by('Shake')[0]).toMatchObject({ duration: 4, strength: 1.1, fadeOut: true });
+    expect(by('TrackAnim')[0]).toMatchObject({ appear: 'fade', beatsAhead: 3, disappear: 'scatter', beatsBehind: 4 });
+    expect(r.warnings.join(' ')).toContain('필터 Weird3D');
+  });
+
+  it('장식과 장식 움직이기', () => {
+    const r = conv(
+      [{ floor: 4, eventType: 'MoveDecorations', tag: 'M1', positionOffset: [0, 20], rotationOffset: 45, scale: [200, 50], opacity: 50, duration: 2 }],
+      {
+        decorations: [
+          { floor: 2, eventType: 'AddDecoration', decorationImage: 'star.png', position: [1, 2], relativeTo: 'Tile', scale: [50, 50], depth: 5, parallax: [100, 100], tag: 'M1 other', opacity: 80 },
+          { floor: 0, eventType: 'AddText', decText: '안녕', position: [0, 0], relativeTo: 'Camera' },
+        ],
+      },
+    );
+    expect(r.level.decorations).toEqual([
+      { relativeTo: 'tile', floor: 2, position: [TILE_LEN, 2 * TILE_LEN], image: 'star.png', tag: 'M1 other', scale: [0.5, 0.5], opacity: 0.8, depth: 5, parallax: [1, 1] },
+      { relativeTo: 'camera', floor: 0, position: [0, 0], text: '안녕', fontSize: 40, depth: -1 },
+    ]);
+    expect(r.level.actions.find((a) => a.type === 'MoveDecorations')).toMatchObject({ tag: 'M1', offset: [0, 20 * TILE_LEN], rotation: 45, scale: [2, 0.5], opacity: 0.5, duration: 2 });
   });
 });
 

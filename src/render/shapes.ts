@@ -42,7 +42,9 @@ export function bandContext(angleIn: number | null, angleOut: number | null, mid
 export type IconKind =
   | 'twirl'
   | 'speedUp'
+  | 'speedUp2'
   | 'speedDown'
+  | 'speedDown2'
   | 'checkpoint'
   | 'midspin'
   | 'pause'
@@ -71,13 +73,18 @@ export function iconContext(kind: IconKind): GraphicsContext {
       break;
     }
     case 'speedUp':
-      // 겹화살표
-      for (const dx of [-6, 3]) c.poly([dx - 4, -8, dx + 5, 0, dx - 4, 8, dx - 1, 0]).fill({ color: 0xff5a5a });
+      rabbit(c, 0, 0.95);
+      break;
+    case 'speedUp2':
+      rabbit(c, -6, 0.8);
+      rabbit(c, 6, 0.8);
       break;
     case 'speedDown':
-      // 느린 화살표: 얇은 화살 하나 + 꼬리
-      c.moveTo(-9, 0).lineTo(4, 0).stroke({ width: 2.5, color: 0x5aa8ff, cap: 'round' });
-      c.poly([2, -6, 9, 0, 2, 6]).fill({ color: 0x5aa8ff });
+      snail(c, 0, 0.95);
+      break;
+    case 'speedDown2':
+      snail(c, -10, 0.7);
+      snail(c, 10, 0.7);
       break;
     case 'checkpoint':
       c.moveTo(-5, 10).lineTo(-5, -11).stroke({ width: 2.4, color: 0xffffff, cap: 'round' });
@@ -117,6 +124,39 @@ export function iconContext(kind: IconKind): GraphicsContext {
   }
   iconCache.set(kind, c);
   return c;
+}
+
+/** 토끼 (빨라짐): 두 귀 + 머리 + 눈. 직접 그린 단순한 모양. */
+function rabbit(c: GraphicsContext, dx: number, k: number): void {
+  const col = 0xff6b6b;
+  c.ellipse(dx - 4 * k, -9 * k, 2.6 * k, 7 * k).fill({ color: col });
+  c.ellipse(dx + 4 * k, -9 * k, 2.6 * k, 7 * k).fill({ color: col });
+  c.ellipse(dx - 4 * k, -9 * k, 1.1 * k, 4.8 * k).fill({ color: 0xffd0d0 });
+  c.ellipse(dx + 4 * k, -9 * k, 1.1 * k, 4.8 * k).fill({ color: 0xffd0d0 });
+  c.circle(dx, 3 * k, 8 * k).fill({ color: col });
+  c.circle(dx - 3 * k, 2 * k, 1.4 * k).fill({ color: 0x3a1010 });
+  c.circle(dx + 3 * k, 2 * k, 1.4 * k).fill({ color: 0x3a1010 });
+  c.circle(dx, 5.5 * k, 1.3 * k).fill({ color: 0xffd0d0 });
+}
+
+/** 달팽이 (느려짐): 소용돌이 껍데기 + 몸 + 더듬이. 직접 그린 단순한 모양. */
+function snail(c: GraphicsContext, dx: number, k: number): void {
+  const col = 0x5aa8ff;
+  // 몸
+  c.roundRect(dx - 11 * k, 4 * k, 22 * k, 6 * k, 3 * k).fill({ color: 0x9fd0ff });
+  c.moveTo(dx + 7 * k, 5 * k).lineTo(dx + 10 * k, -4 * k).stroke({ width: 1.4 * k, color: 0x9fd0ff, cap: 'round' });
+  c.moveTo(dx + 9 * k, 5 * k).lineTo(dx + 13 * k, -2 * k).stroke({ width: 1.4 * k, color: 0x9fd0ff, cap: 'round' });
+  c.circle(dx + 10 * k, -4 * k, 1.5 * k).fill({ color: 0x9fd0ff });
+  c.circle(dx + 13 * k, -2 * k, 1.5 * k).fill({ color: 0x9fd0ff });
+  // 껍데기
+  c.circle(dx - 2 * k, 0, 8.5 * k).fill({ color: col });
+  const pts: number[] = [];
+  for (let i = 0; i <= 30; i++) {
+    const a = (i / 30) * Math.PI * 3.4;
+    const r = 7 * k - i * 0.21 * k;
+    pts.push(dx - 2 * k + Math.cos(a) * r, Math.sin(a) * r);
+  }
+  c.poly(pts, false).stroke({ width: 1.5 * k, color: 0x1f4f8a, cap: 'round' });
 }
 
 const planetCache = new Map<number, GraphicsContext>();

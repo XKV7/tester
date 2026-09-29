@@ -125,3 +125,114 @@ describe('에디터 조작', () => {
     expect(c.tiles[1].beats).toBe(1);
   });
 });
+
+describe('원작 연출 타임라인', () => {
+  // 60BPM, 1박 = 1초, 타일 i 시각 = i초 (곧은 길)
+  function lv(actions: import('../src/core/types').Action[], decorations?: import('../src/core/types').Decoration[]) {
+    const l = emptyLevel();
+    l.settings.bpm = 60;
+    l.settings.offset = 0;
+    l.path = Array(12).fill(0);
+    l.actions = actions;
+    if (decorations) l.decorations = decorations;
+    const v = validateLevel(l);
+    expect(v.ok, v.ok ? '' : v.errors.join('\n')).toBe(true);
+    return new VisualTimeline(compileChart(l));
+  }
+  const player = { x: 500, y: 0 };
+
+  it('카메라 기준: 타일로 옮겨 가며 섞고, 끝나면 그 타일 + 오프셋', async () => {
+    const { cameraCenter } = await import('../src/core/timeline');
+    const tl = lv([{ floor: 2, type: 'Camera', relativeTo: 'tile', tile: 8, offset: [0, 50], duration: 2 }]);
+    tl.update(1);
+    expect(cameraCenter(tl.camera, player)).toEqual({ x: 500, y: 0 });
+    tl.update(3); // 절반
+    const mid = cameraCenter(tl.camera, player);
+    expect(mid.x).toBeCloseTo(650); // 500 → 800
+    tl.update(10);
+    expect(cameraCenter(tl.camera, player)).toEqual({ x: 800, y: 50 });
+  });
+
+  it('직전 위치 기준: 지금 카메라 자리에 고정하고 오프셋만 더함', async () => {
+    const { cameraCenter } = await import('../src/core/timeline');
+    const tl = lv([{ floor: 2, type: 'Camera', relativeTo: 'last', offset: [100, 0], duration: 0 }]);
+    tl.playerPos = () => ({ x: 300, y: 40 });
+    tl.update(5);
+    expect(cameraCenter(tl.camera, player)).toEqual({ x: 400, y: 40 });
+  });
+
+  it('같은 타일: 타일로 순간 이동 → 직전 위치 기준이면 그 타일에 머문다', async () => {
+    const { cameraCenter } = await import('../src/core/timeline');
+    const tl = lv([
+      { floor: 3, type: 'Camera', relativeTo: 'tile', tile: 3, duration: 0 },
+      { floor: 3, type: 'Camera', relativeTo: 'last', offset: [0, 0], zoom: 0.9, duration: 1 },
+    ]);
+    tl.playerPos = () => ({ x: 900, y: 0 });
+    tl.update(3.5);
+    expect(cameraCenter(tl.camera, { x: 900, y: 0 })).toEqual({ x: 300, y: 0 });
+  });
+
+  it('delay: 타일을 친 뒤 늦게 시작', () => {
+    const tl = lv([{ floor: 2, type: 'Flash', color: '#ffffff', opacity: 1, duration: 1, delay: 0.5 }]);
+    tl.update(2.25);
+    expect(tl.flashAlpha).toBe(0);
+    tl.update(2.5);
+    expect(tl.flashAlpha).toBeCloseTo(1);
+  });
+
+  it('필터: 세기 보간, 끄면 사라짐, exclusive는 다른 필터 끔', () => {
+    const tl = lv([
+      { floor: 1, type: 'Filter', filter: 'Grayscale', enabled: true, intensity: 1, duration: 2 },
+      { floor: 2, type: 'Filter', filter: 'Sepia', enabled: true, intensity: 0.5 },
+      { floor: 5, type: 'Filter', filter: 'Grayscale', enabled: false },
+      { floor: 7, type: 'Filter', filter: 'Invert', enabled: true, exclusive: true },
+    ]);
+    tl.update(2);
+    expect(tl.filters.get('Grayscale')!.intensity).toBeCloseTo(0.5);
+    expect(tl.filters.get('Sepia')!.intensity).toBeCloseTo(0.5);
+    tl.update(6);
+    expect(tl.filters.has('Grayscale')).toBe(false);
+    tl.update(8);
+    expect([...tl.filters.keys()]).toEqual(['Invert']);
+  });
+
+  it('흔들림: 기간 동안만, 되감아도 같은 값', () => {
+    const tl = lv([{ floor: 2, type: 'Shake', duration: 2, strength: 1, fadeOut: true }]);
+    tl.update(1);
+    expect(tl.shakeX).toBe(0);
+    tl.update(2.37);
+    const a = [tl.shakeX, tl.shakeY];
+    expect(Math.hypot(a[0], a[1])).toBeGreaterThan(0);
+    tl.update(5);
+    expect(tl.shakeX).toBe(0);
+    tl.update(2.37);
+    expect([tl.shakeX, tl.shakeY]).toEqual(a);
+  });
+
+  it('타일 등장·퇴장: 3박 전 페이드 인, 4박 뒤 사라짐', () => {
+    const tl = lv([{ floor: 0, type: 'TrackAnim', appear: 'fade', beatsAhead: 3, disappear: 'shrink', beatsBehind: 4 }]);
+    // 타일 8 (8초): 5초 전에는 안 보임, 5.2초에는 나타나는 중, 6초에는 다 보임, 12.5초 이후 사라짐
+    expect(tl.tileAnimAt(8, 4.9)!.alpha).toBe(0);
+    const a = tl.tileAnimAt(8, 5.15)!.alpha;
+    expect(a).toBeGreaterThan(0);
+    expect(a).toBeLessThan(1);
+    expect(tl.tileAnimAt(8, 6)!.alpha).toBe(1);
+    expect(tl.tileAnimAt(8, 12.1)!.scale).toBeLessThan(1);
+    expect(tl.tileAnimAt(8, 13)!.alpha).toBe(0);
+  });
+
+  it('장식 움직이기: 태그가 맞는 장식만, 원래 값에서 보간', () => {
+    const tl = lv(
+      [{ floor: 2, type: 'MoveDecorations', tag: 'a', offset: [100, 0], opacity: 0, duration: 2 }],
+      [
+        { image: 'x.png', tag: 'a b', floor: 1 },
+        { image: 'y.png', tag: 'c', floor: 1, opacity: 0.5 },
+      ],
+    );
+    tl.update(3);
+    expect(tl.decos[0].ox).toBeCloseTo(50);
+    expect(tl.decos[0].opacity).toBeCloseTo(0.5);
+    expect(tl.decos[1].ox).toBe(0);
+    expect(tl.decos[1].opacity).toBe(0.5);
+  });
+});

@@ -66,7 +66,7 @@ export interface Chart {
   lastTime: number;
 }
 
-const VISUAL_TYPES = new Set(['Camera', 'Flash', 'RecolorTrack', 'MoveTrack', 'Background']);
+export const VISUAL_TYPES = new Set(['Camera', 'Flash', 'RecolorTrack', 'MoveTrack', 'Background', 'Filter', 'Bloom', 'Shake', 'TrackAnim', 'MoveDecorations']);
 
 /** 레벨을 컴파일해 모든 타일의 위치·박·시각을 미리 계산한다. */
 export function compileChart(level: LevelData): Chart {
@@ -166,7 +166,8 @@ export function compileChart(level: LevelData): Chart {
     if (!VISUAL_TYPES.has(a.type) || a.floor >= n) continue;
     const t = tiles[a.floor];
     const beats = 'duration' in a && typeof a.duration === 'number' ? a.duration : 0;
-    visual.push({ action: a, time: t.time, duration: (beats * 60) / t.bpm });
+    // delay: 타일을 친 뒤 몇 박 늦게 (그 타일의 BPM 기준 — 원작 angleOffset)
+    visual.push({ action: a, time: t.time + ((a.delay ?? 0) * 60) / t.bpm, duration: (beats * 60) / t.bpm });
   }
   visual.sort((a, b) => a.time - b.time);
 
