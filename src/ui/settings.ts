@@ -110,7 +110,7 @@ export class SettingsScreen implements Screen {
               h('button', { class: 'btn small cool', onclick: () => show(new CalibrateScreen(() => new SettingsScreen(this.back))) }, '보정 시작'),
             ),
             h('label', null, '자동 타격음'),
-            h('label', { class: 'row' }, toggle('autoHitSound'), h('span', { class: 'dim' }, '목표 박자에 미리 예약해 재생')),
+            h('label', { class: 'row' }, toggle('autoHitSound'), h('span', { class: 'dim' }, '켜면 노래 박자에 딱 맞춰 재생 (끄면 누른 순간 재생 — 휴대폰 소리 지연만큼 어긋날 수 있음). 원작 맵은 항상 켜짐')),
             h('label', null, '판정 텍스트 표시'),
             toggle('showJudgeText'),
             h('label', null, '비트 펄스'),

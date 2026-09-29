@@ -137,6 +137,11 @@ export class Game {
       .sort((a, b) => a.time - b.time);
   }
 
+  /** 타격음을 박자에 맞춰 미리 예약하는지 (원작에서 불러온 맵은 원작처럼 항상). */
+  private get scheduledHits(): boolean {
+    return settings.autoHitSound || this.opts.pkg.imported === 'adofai';
+  }
+
   /** 타일 i의 타격음 (when = ctx 시각). */
   private hitSound(i: number, when?: number, scheduled = false): void {
     const k = this.hitKind[i] ?? null;
@@ -366,7 +371,7 @@ export class Game {
     this.cur++;
     this.stats.recordHit(this.cur, j);
     this.showJudge(this.cur, j);
-    if (!settings.autoHitSound) this.hitSound(this.cur);
+    if (!this.scheduledHits) this.hitSound(this.cur);
     this.onArrive();
   }
 
@@ -511,7 +516,7 @@ export class Game {
         if (tj > ch.times[this.cur + 1] + ((w.grace ?? w.far) / 1000) * this.pitch) this.fail('miss');
       }
       // 자동 타격음 예약
-      if (settings.autoHitSound && this.state === 'playing') {
+      if (this.scheduledHits && this.state === 'playing') {
         while (this.schedIdx <= ch.finish && ch.times[this.schedIdx] < t + 0.35) {
           const i = this.schedIdx++;
           if (i > 0 && ch.times[i] === ch.times[i - 1] && i - 1 > this.beginFloor) continue;
