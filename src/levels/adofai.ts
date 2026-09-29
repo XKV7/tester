@@ -187,6 +187,177 @@ function decoFrom(e: Record<string, unknown>, floor: number, isText: boolean): D
   return d;
 }
 
+/** 확장 필터 속성 문자열 ('"filter_Size": 72, "filter_Smooth": 1') → 이름(소문자, 앞 filter_ 제거) → 값 */
+export function parseFilterProps(v: unknown): Map<string, unknown> {
+  const out = new Map<string, unknown>();
+  if (typeof v === 'object' && v !== null) {
+    for (const [k, x] of Object.entries(v)) out.set(k.replace(/^filter_+/i, '').toLowerCase(), x);
+    return out;
+  }
+  const s = str(v).trim();
+  if (!s) return out;
+  try {
+    const o = JSON.parse(s.startsWith('{') ? s : `{${s}}`) as Record<string, unknown>;
+    for (const [k, x] of Object.entries(o)) out.set(k.replace(/^filter_+/i, '').toLowerCase(), x);
+  } catch {
+    // 형식이 다르면 속성 없이 기본값
+  }
+  return out;
+}
+
+interface AdvancedConv {
+  filters: [string, number][];
+  bloom?: { intensity: number; threshold: number; color?: string };
+}
+
+/**
+ * 원작 CameraFilterPack 필터 → ORBIT 필터(이름, 세기). 없으면 null.
+ * 원작 속성 값은 100 = 1 기준. 똑같지는 않고 느낌이 비슷한 쪽으로.
+ */
+export function advancedFilter(name: string, p: Map<string, unknown>): AdvancedConv | null {
+  const n = name.replace(/^CameraFilterPack_/, '');
+  const v = (k: string, d: number) => num(p.get(k.replace(/^_+/, '').toLowerCase()), d);
+  const one = (f: string, x: number): AdvancedConv => ({ filters: [[f, x]] });
+  switch (n) {
+    case 'Colors_Brightness':
+      return one('Brightness', v('_Brightness', 100) / 100);
+    case 'TV_WideScreenHorizontal':
+      return one('LetterboxH', Math.max(0, 1 - v('Size', 55) / 100));
+    case 'TV_WideScreenVertical':
+      return one('LetterboxV', Math.max(0, 1 - v('Size', 55) / 100));
+    case 'TV_WideScreenCircle':
+    case 'Vision_Tunnel':
+      return one('Vignette', 1);
+    case 'Color_GrayScale':
+      return one('Grayscale', v('_Fade', 100) / 100);
+    case 'TV_PlanetMars':
+      return one('Sepia', 1);
+    case 'Blur_Noise':
+    case 'Blur_Movie':
+    case 'Blur_Radial':
+    case 'Blur_Radial_Fast':
+    case 'Blur_BlurHole':
+    case 'Blur_DitherOffset':
+    case 'Blur_Focus':
+    case 'Blur_GaussianBlur':
+      return one('Blur', 0.5);
+    case 'FX_Glitch1':
+    case 'FX_Glitch2':
+    case 'FX_Glitch3':
+    case 'TV_Distorted':
+    case 'Distortion_Dissipation':
+    case 'VHS_Tracking':
+      return one('Glitch', 1);
+    case 'TV_VHS':
+    case 'TV_VHS_Rewind':
+    case 'Real_VHS':
+    case 'TV_Vcr':
+      return one('VHS', 1);
+    case 'TV_Artefact':
+    case 'TV_CompressionFX':
+      return one('Compression', 1);
+    case 'TV_Chromatical':
+    case 'TV_Chromatical2':
+      return one('Aberration', Math.max(0.3, v('Aberration', 50) / 100));
+    case 'Color_Chromatic_Aberration':
+      return one('Aberration', 0.5);
+    case 'Glitch_Mozaic':
+      return one('Pixelate', Math.max(0.1, v('Intensity', 50) / 100));
+    case 'Pixel_Pixelisation':
+    case 'Pixelisation_OilPaintHQ':
+      return one('Pixelate', 0.5);
+    case 'Color_Noise':
+    case 'Noise_TV':
+    case 'TV_Noise':
+      return one('Static', 0.6);
+    case 'Edge_Edge_filter':
+      return one('EdgeBlackLine', 1);
+    case 'TV_Old_Movie_2':
+    case 'TV_Vintage':
+    case 'TV_Old_Movie':
+      return one('FiftiesTV', 1);
+    case 'Atmosphere_Rain_Pro':
+    case 'Atmosphere_Rain':
+      return one('Rain', Math.max(0, v('Intensity', 100) / 100));
+    case 'Colors_HUE_Rotate':
+    case 'Light_Rainbow2':
+    case 'Light_Rainbow':
+      return one('Funk', 1);
+    case 'FX_EarthQuake':
+      return one('Quake', Math.max(0.3, Math.min(3, (Math.abs(v('X', 5)) + Math.abs(v('Y', 5))) / 10)));
+    case 'FX_Drunk2':
+    case 'FX_Drunk':
+      return one('Waves', 1);
+    case 'Glow_Glow':
+    case 'Glow_Glow_Color': {
+      const col = adofaiColor(p.get('glowcolor'));
+      return {
+        filters: [],
+        bloom: { intensity: Math.max(0.3, v('Intensity', 50) / 50), threshold: Math.max(0, Math.min(1, v('Threshold', 25) / 100)), ...(col ? { color: col } : {}) },
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+/** 반복 대상이 아닌 이벤트 (게임 진행을 바꾸는 것) */
+const NO_REPEAT = new Set(['Twirl', 'SetSpeed', 'Pause', 'Hold', 'MultiPlanet', 'FreeRoam', 'AutoPlayTiles', 'Checkpoint', 'RepeatEvents', 'AddDecoration', 'AddText', 'AddObject', 'AddParticle']);
+/** 반복 횟수 상한 (이벤트 하나당) */
+const MAX_REPEATS = 2000;
+
+/**
+ * 원작 RepeatEvents를 펼친다: 같은 타일에서 태그가 겹치는 연출 이벤트를
+ * Beat — interval 박마다 (angleOffset을 늘려서), Floor — floorCount 타일마다 repetitions 번 더 실행.
+ * Floor 방식에서 executeOnCurrentFloor가 꺼져 있으면 원래 타일에서는 실행하지 않는다.
+ */
+export function expandRepeats(list: unknown[], last: number): unknown[] {
+  const reps = new Map<number, Record<string, unknown>[]>();
+  for (const ev of list) {
+    if (typeof ev !== 'object' || ev === null) continue;
+    const e = ev as Record<string, unknown>;
+    if (str(e.eventType) !== 'RepeatEvents' || e.active === false) continue;
+    const f = Math.round(num(e.floor, -1));
+    if (!reps.has(f)) reps.set(f, []);
+    reps.get(f)!.push(e);
+  }
+  if (reps.size === 0) return list;
+  const tagsOf = (v: unknown) => str(v).split(/\s+/).filter(Boolean);
+  const out: unknown[] = [];
+  for (const ev of list) {
+    if (typeof ev !== 'object' || ev === null) {
+      out.push(ev);
+      continue;
+    }
+    const e = ev as Record<string, unknown>;
+    const type = str(e.eventType);
+    if (type === 'RepeatEvents') continue;
+    const floor = Math.round(num(e.floor, -1));
+    const rs = reps.get(floor);
+    const tags = rs && !NO_REPEAT.has(type) ? tagsOf(e.eventTag) : [];
+    const matched = tags.length ? rs!.filter((r) => tagsOf(r.tag).some((t) => tags.includes(t))) : [];
+    if (matched.length === 0) {
+      out.push(e);
+      continue;
+    }
+    let keepOriginal = true;
+    for (const r of matched) {
+      const n = Math.max(0, Math.min(MAX_REPEATS, Math.round(num(r.repetitions, 1))));
+      if (str(r.repeatType) === 'Floor') {
+        const step = Math.max(1, Math.round(num(r.floorCount, 1)));
+        if (r.executeOnCurrentFloor === false) keepOriginal = false;
+        for (let k = 1; k <= n && floor + k * step <= last; k++) out.push({ ...e, floor: floor + k * step });
+      } else {
+        const iv = Math.max(0, num(r.interval, 1));
+        const a0 = num(e.angleOffset, 0);
+        for (let k = 1; k <= n; k++) out.push({ ...e, angleOffset: a0 + k * iv * 180 });
+      }
+    }
+    if (keepOriginal) out.push(e);
+  }
+  return out;
+}
+
 export function convertAdofai(text: string): AdofaiResult {
   let raw: unknown;
   try {
@@ -294,7 +465,7 @@ export function convertAdofai(text: string): AdofaiResult {
     } as Action);
   }
   // 장식은 새 버전은 "decorations" 배열, 옛 버전은 actions 안의 AddDecoration/AddText
-  const list = [...(Array.isArray(r.actions) ? r.actions : []), ...(Array.isArray(r.decorations) ? r.decorations : [])];
+  const list = expandRepeats([...(Array.isArray(r.actions) ? r.actions : []), ...(Array.isArray(r.decorations) ? r.decorations : [])], last);
   for (const ev of list) {
     if (typeof ev !== 'object' || ev === null) continue;
     const e = ev as Record<string, unknown>;
@@ -440,6 +611,33 @@ export function convertAdofai(text: string): AdofaiResult {
           ...(onOff(e.disableOthers) ? { exclusive: true } : {}),
           ...(num(e.duration, 0) > 0 ? { duration: dur(e.duration, 0) } : {}),
         });
+        break;
+      }
+      case 'SetFilterAdvanced': {
+        // 원작 확장 필터(CameraFilterPack)를 비슷한 ORBIT 필터로 옮긴다
+        const props = parseFilterProps(e.filterProperties);
+        const on = onOff(e.enabled);
+        const conv = advancedFilter(str(e.filter), props);
+        if (!conv) {
+          bump(skipped, `확장 필터 ${str(e.filter).replace(/^CameraFilterPack_/, '')}`);
+          break;
+        }
+        const d = num(e.duration, 0) > 0 ? { duration: dur(e.duration, 0) } : {};
+        if (conv.bloom) {
+          vis({ floor, type: 'Bloom', enabled: on, ...conv.bloom });
+          break;
+        }
+        for (const [name, v] of conv.filters) {
+          vis({
+            floor,
+            type: 'Filter',
+            filter: name,
+            enabled: on,
+            intensity: Math.max(0, Math.min(100, v)),
+            ...(onOff(e.disableOthers) ? { exclusive: true } : {}),
+            ...d,
+          });
+        }
         break;
       }
       case 'Bloom':

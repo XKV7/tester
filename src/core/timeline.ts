@@ -551,14 +551,16 @@ export class VisualTimeline {
         if (a.exclusive) for (const k of [...this.filters.keys()]) if (k !== a.filter) this.filters.delete(k);
         const chan = 'filter:' + a.filter;
         this.active = this.active.filter((x) => x.chan !== chan);
-        const cur = this.filters.get(a.filter)?.intensity ?? 0;
-        const target = a.enabled ? (a.intensity ?? 1) : 0;
+        // 밝기는 1이 '변화 없음'
+        const neutral = a.filter === 'Brightness' ? 1 : 0;
+        const cur = this.filters.get(a.filter)?.intensity ?? neutral;
+        const target = a.enabled ? (a.intensity ?? 1) : neutral;
         return {
           ev,
           chan,
           apply: (p) => {
             const v = lerp(cur, target, p);
-            if (p >= 1 && target <= 0) this.filters.delete(a.filter);
+            if (p >= 1 && target === neutral) this.filters.delete(a.filter);
             else this.filters.set(a.filter, { intensity: v });
           },
         };

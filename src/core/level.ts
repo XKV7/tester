@@ -15,6 +15,7 @@ export const FILTER_NAMES = [
   'Grayscale', 'Sepia', 'Invert', 'Blur', 'GaussianBlur', 'BlurFocus', 'MotionBlur', 'Pixelate', 'Compression',
   'Aberration', 'Contrast', 'Posterize', 'NightVision', 'Grain', 'Static', 'VHS', 'EightiesTV', 'FiftiesTV', 'Arcade',
   'LED', 'Rain', 'Blizzard', 'PixelSnow', 'Drawing', 'Neon', 'Fisheye', 'Funk', 'Sharpen', 'EdgeBlackLine',
+  'Waves', 'Glitch', 'Brightness', 'Vignette', 'LetterboxH', 'LetterboxV', 'Quake',
 ];
 
 
