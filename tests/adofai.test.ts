@@ -1,5 +1,6 @@
 import { strToU8 } from 'fflate';
 import { describe, expect, it } from 'vitest';
+import { synthBeatTrack } from '../src/audio/beatTrack';
 import { compileChart } from '../src/core/chart';
 import { validateLevel } from '../src/core/level';
 import { TILE_LEN } from '../src/core/math';
@@ -129,8 +130,47 @@ describe('.adofai 변환', () => {
     expect(pkg.warnings.some((w) => w.includes('합성 비트'))).toBe(false);
   });
 
+  it('zip 안에 .adofai가 여러 개면 가장 큰 본 레벨을 연다', () => {
+    const files = new Map<string, Uint8Array>([
+      ['a.adofai', strToU8('{"angleData":[0],"settings":{"bpm":2026}}')],
+      ['Hello BPM 2026.adofai', strToU8(JSON.stringify({ angleData: Array(300).fill(0), settings: { bpm: 2026 } }))],
+      ['backup_big.adofai', strToU8(JSON.stringify({ angleData: Array(900).fill(0), settings: { bpm: 1 } }))],
+    ]);
+    const pkg = packageFromFiles(files, 't');
+    expect(pkg.level.path.length).toBe(300);
+    expect(pkg.warnings.join(' ')).toContain('3개');
+  });
+
   it('깨진 파일은 알아볼 수 있는 오류', () => {
     expect(() => convertAdofai('{ not json')).toThrow('.adofai');
     expect(() => convertAdofai('{"settings":{}}')).toThrow('타일');
+  });
+});
+
+describe('극단적인 BPM (Hello (BPM) 류)', () => {
+  it('BPM 수백만·배율 수천·긴 일시 공전도 그대로 옮기고 검증 통과', () => {
+    const r = convertAdofai(
+      JSON.stringify({
+        angleData: Array(40).fill(0),
+        settings: { bpm: 150, offset: 0 },
+        actions: [
+          { floor: 5, eventType: 'SetSpeed', speedType: 'Bpm', beatsPerMinute: 2_026_000 },
+          { floor: 10, eventType: 'SetSpeed', speedType: 'Multiplier', bpmMultiplier: 5000 },
+          { floor: 12, eventType: 'Pause', duration: 500 },
+        ],
+      }),
+    );
+    const v = validateLevel(r.level);
+    expect(v.ok, v.ok ? '' : v.errors.join('\n')).toBe(true);
+    const c = compileChart(r.level);
+    expect(c.tiles[5].bpm).toBe(2_026_000);
+    expect(c.tiles[10].bpm).toBe(2_026_000 * 5000);
+    expect(c.tiles[12].beats).toBeCloseTo(501);
+    expect(r.warnings.join(' ')).not.toContain('범위 밖');
+    // 음원이 없을 때 합성 비트도 금방 만든다 (소리 간격 60ms 이상으로 솎음)
+    const t0 = Date.now();
+    const pcm = synthBeatTrack(c, 8000);
+    expect(pcm.length).toBeGreaterThan(0);
+    expect(Date.now() - t0).toBeLessThan(3000);
   });
 });
