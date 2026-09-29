@@ -2,7 +2,7 @@ import type { Chart, TimedAction } from './chart';
 import { lerpColor, parseColor } from './color';
 import { ease } from './ease';
 import { lerp } from './math';
-import type { Decoration, EaseName, TrackAppear, TrackDisappear } from './types';
+import type { Decoration, EaseName, TrackAppear, TrackDisappear, TrackStyle } from './types';
 
 /** 카메라 기준점 (월드 좌표, y 위쪽). player = 현재 행성 타일을 따라감. */
 export type CameraAnchor = { kind: 'player' } | { kind: 'fixed'; x: number; y: number };
@@ -63,6 +63,9 @@ export interface TileAnimResult {
 
 const PLAYER: CameraAnchor = { kind: 'player' };
 
+/** 타일 모양 번호 ↔ 이름. */
+export const TRACK_STYLES: TrackStyle[] = ['orbit', 'standard', 'neon', 'basic'];
+
 interface ActiveAnim {
   ev: TimedAction;
   apply: (p: number) => void;
@@ -79,6 +82,9 @@ export class VisualTimeline {
   camera: CameraState = { zoom: 1, rotation: 0, ox: 0, oy: 0, anchor: PLAYER, prevAnchor: PLAYER, mix: 1 };
   flashColor = 0xffffff;
   flashAlpha = 0;
+  /** 배경 쪽 플래시 (트랙 뒤) */
+  bgFlashColor = 0x000000;
+  bgFlashAlpha = 0;
   bgColor: number;
   bgImage: string | null = null;
   bgFit: 'cover' | 'contain' | 'unscaled' | 'tile' = 'cover';
@@ -101,6 +107,12 @@ export class VisualTimeline {
     return this.playerPos ? cameraCenter(this.camera, this.playerPos()) : null;
   }
   readonly tileScale: Float32Array;
+  /** 타일 모양 (TRACK_STYLES 번호). */
+  readonly tileStyle: Uint8Array;
+  /** 물결(원작 Glow) 두 번째 색 — 0xff000000 비트가 있으면 없음. */
+  readonly tileColor2: Float64Array;
+  readonly tileGlowDur: Float32Array;
+  readonly tilePulseLen: Float32Array;
   /** 타일별 등장·퇴장 설정 (없으면 null = 항상 보임). */
   readonly tileAnim: (TileAnimCfg | null)[];
   readonly tileColor: Uint32Array;
@@ -128,6 +140,10 @@ export class VisualTimeline {
     this.tileRot = new Float32Array(n);
     this.tileAlpha = new Float32Array(n);
     this.tileScale = new Float32Array(n);
+    this.tileStyle = new Uint8Array(n);
+    this.tileColor2 = new Float64Array(n);
+    this.tileGlowDur = new Float32Array(n);
+    this.tilePulseLen = new Float32Array(n);
     this.decos = (chart.level.decorations ?? []).map((def) => ({
       def,
       tags: (def.tag ?? '').split(/\s+/).filter(Boolean),
@@ -166,6 +182,7 @@ export class VisualTimeline {
   reset(): void {
     this.camera = { zoom: 1, rotation: 0, ox: 0, oy: 0, anchor: PLAYER, prevAnchor: PLAYER, mix: 1 };
     this.flashAlpha = 0;
+    this.bgFlashAlpha = 0;
     this.bgColor = this.baseBg;
     this.bgImage = null;
     this.bgFit = 'cover';
@@ -177,6 +194,10 @@ export class VisualTimeline {
     this.shakeX = 0;
     this.shakeY = 0;
     this.tileScale.fill(1);
+    this.tileStyle.fill(0);
+    this.tileColor2.fill(-1);
+    this.tileGlowDur.fill(0);
+    this.tilePulseLen.fill(0);
     for (const d of this.decos) {
       d.ox = 0;
       d.oy = 0;
@@ -280,7 +301,8 @@ export class VisualTimeline {
     }
     if (cfg.disappear !== 'none') {
       const t1 = tile.time + cfg.behind * beat;
-      const p = (t - t1) / len;
+      // 흩어지기는 원작처럼 천천히 멀리 떠다니다 사라진다
+      const p = (t - t1) / (cfg.disappear === 'scatter' ? 1.8 : len);
       if (p >= 1) return { ...out, alpha: 0 };
       if (p > 0) {
         const k = ease('inSine', p);
@@ -296,11 +318,14 @@ export class VisualTimeline {
             out.scale *= 1 - k;
             out.rot += k * 180;
             break;
-          case 'scatter':
-            out.dx += k * rx * 400;
-            out.dy += k * ry * 400;
-            out.alpha *= 1 - k;
+          case 'scatter': {
+            const q = ease('outSine', p);
+            out.dx += q * rx * 700;
+            out.dy += q * ry * 700;
+            out.rot += q * rx * 120;
+            out.alpha *= 1 - p * p;
             break;
+          }
         }
       }
     }
@@ -397,13 +422,27 @@ export class VisualTimeline {
         return null;
       }
       case 'Flash': {
-        const color = parseColor(a.color, 0xffffff);
-        const op = a.opacity ?? 0.6;
-        this.flashColor = color;
+        const c0 = parseColor(a.color, 0xffffff);
+        const c1 = parseColor(a.endColor, c0);
+        const op0 = a.opacity ?? 0.6;
+        const op1 = a.endOpacity ?? 0;
+        const bg = a.plane === 'bg';
+        // 같은 면의 이전 플래시는 멈춘다
+        const chan = bg ? 'flash:bg' : 'flash:fg';
+        this.active = this.active.filter((x) => x.chan !== chan);
         return {
           ev: ev.duration > 0 ? ev : { ...ev, duration: 0.25 },
+          chan,
           apply: (p) => {
-            if (this.flashColor === color) this.flashAlpha = op * (1 - p);
+            const col = p >= 1 ? c1 : lerpColor(c0, c1, p);
+            const al = lerp(op0, op1, Math.min(1, p));
+            if (bg) {
+              this.bgFlashColor = col;
+              this.bgFlashAlpha = al;
+            } else {
+              this.flashColor = col;
+              this.flashAlpha = al;
+            }
           },
         };
       }
@@ -411,7 +450,9 @@ export class VisualTimeline {
         if (a.color) this.bgColor = parseColor(a.color, this.bgColor);
         if (a.image !== undefined) this.bgImage = a.image || null;
         if (a.fit) this.bgFit = a.fit;
+        // 이미지를 새로 지정하면 색조도 함께 정해진다 (생략 = 흰색)
         if (a.tint) this.bgTint = parseColor(a.tint, 0xffffff);
+        else if (a.image) this.bgTint = 0xffffff;
         if (a.opacity !== undefined) this.bgOpacity = a.opacity;
         this.version++;
         return null;
@@ -422,6 +463,13 @@ export class VisualTimeline {
         if (hi < lo) return null;
         const target = parseColor(a.color, this.baseTrack);
         const from = this.tileColor.slice(lo, hi + 1);
+        // 모양·물결은 바로 바뀐다
+        if (a.style !== undefined) this.tileStyle.fill(TRACK_STYLES.indexOf(a.style), lo, hi + 1);
+        if (a.color2 !== undefined || a.style !== undefined) {
+          this.tileColor2.fill(a.color2 !== undefined ? parseColor(a.color2, target) : -1, lo, hi + 1);
+          this.tileGlowDur.fill(a.glowDuration ?? 2, lo, hi + 1);
+          this.tilePulseLen.fill(a.pulseLength ?? 0, lo, hi + 1);
+        }
         return {
           ev,
           apply: (p) => {

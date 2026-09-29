@@ -42,6 +42,8 @@ export class Stage {
   readonly world = new Container();
   readonly overlay = new Container();
   private readonly flash = new Graphics();
+  /** 배경 면 플래시 (배경 이미지 위, 트랙 아래) */
+  private readonly bgFlash = new Graphics();
   private bgSprite: Sprite | TilingSprite | null = null;
   private bgImageUrl: string | null = null;
   private bgFit: 'cover' | 'contain' | 'unscaled' | 'tile' = 'cover';
@@ -66,7 +68,7 @@ export class Stage {
       preference: 'webgl',
     });
     host.appendChild(this.app.canvas);
-    this.bg.addChild(this.moteGfx);
+    this.bg.addChild(this.moteGfx, this.bgFlash);
     this.app.stage.addChild(this.bg, this.world, this.overlay);
     this.overlay.addChild(this.screenLayer, this.flash);
     for (let i = 0; i < 70; i++) {
@@ -168,7 +170,7 @@ export class Stage {
   }
 
   /** 매 프레임: 카메라 적용, 배경 입자, 플래시. tick() 뒤에 호출. */
-  frame(flashColor: number, flashAlpha: number): void {
+  frame(flashColor: number, flashAlpha: number, bgFlashColor = 0, bgFlashAlpha = 0): void {
     const dt = this.dt;
     const w = this.width;
     const h = this.height;
@@ -189,6 +191,8 @@ export class Stage {
 
     this.flash.clear();
     if (flashAlpha > 0.001) this.flash.rect(0, 0, w, h).fill({ color: flashColor, alpha: flashAlpha });
+    this.bgFlash.clear();
+    if (bgFlashAlpha > 0.001) this.bgFlash.rect(0, 0, w, h).fill({ color: bgFlashColor, alpha: bgFlashAlpha });
   }
 
   /** 월드에서 보이는 영역 (컬링용, 회전 고려해 원으로 근사). */

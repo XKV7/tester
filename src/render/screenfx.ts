@@ -80,12 +80,17 @@ uniform float uScan;
 uniform float uFish;
 uniform float uPoster;
 uniform float uTime;
+uniform float uVig;
+uniform float uBloom;
+uniform float uBloomThr;
+uniform vec3 uBloomCol;
 
 vec2 toTex(vec2 s) { return s * uOutputFrame.zw * uInputSize.zw; }
 vec4 samp(vec2 s) { return texture(uTexture, clamp(toTex(s), uInputClamp.xy, uInputClamp.zw)); }
 
 void main() {
   vec2 s = vTextureCoord * uInputSize.xy / uOutputFrame.zw; // 화면 0~1
+  vec2 s0 = s;
   if (uFish > 0.0) {
     vec2 d = s - 0.5;
     float r2 = dot(d, d);
@@ -103,11 +108,33 @@ void main() {
   } else {
     c = samp(s);
   }
+  // 빛 번짐: 주변의 밝은 부분을 모아 더한다 (원작 Bloom 근사)
+  if (uBloom > 0.0) {
+    vec3 acc = vec3(0.0);
+    vec2 px = 1.0 / uOutputFrame.zw;
+    for (int i = 0; i < 8; i++) {
+      float a = float(i) * 0.785398;
+      vec2 dir = vec2(cos(a), sin(a));
+      for (int j = 1; j <= 3; j++) {
+        float r = float(j * j) * 7.0;
+        vec3 b = samp(s + dir * r * px).rgb;
+        acc += max(b - vec3(uBloomThr), 0.0) / float(j);
+      }
+    }
+    c.rgb += acc * (uBloom / 8.0) * uBloomCol;
+  }
   if (uPoster > 1.0) c.rgb = floor(c.rgb * uPoster + 0.5) / uPoster;
   if (uScan > 0.0) {
     float line = 0.5 + 0.5 * sin(s.y * uOutputFrame.w * 1.6 + uTime * 6.0);
     c.rgb *= 1.0 - uScan * 0.35 * line;
   }
+  // 옛 TV(원작 Arcade·Fisheye): 둥근 모서리 쪽이 어두워지고, 휘어진 화면 밖은 검게
+  if (uVig > 0.0) {
+    vec2 d = abs(s0 - 0.5) * 2.0;
+    float edge = pow(d.x, 6.0) + pow(d.y, 6.0);
+    c.rgb *= 1.0 - uVig * smoothstep(0.35, 1.0, edge);
+  }
+  if (uFish > 0.0 && (s.x < 0.0 || s.y < 0.0 || s.x > 1.0 || s.y > 1.0)) c = vec4(0.0, 0.0, 0.0, 1.0);
   finalColor = c;
 }`;
 
@@ -141,12 +168,16 @@ class DistortFilter extends Filter {
           uFish: { value: 0, type: 'f32' },
           uPoster: { value: 0, type: 'f32' },
           uTime: { value: 0, type: 'f32' },
+          uVig: { value: 0, type: 'f32' },
+          uBloom: { value: 0, type: 'f32' },
+          uBloomThr: { value: 0.5, type: 'f32' },
+          uBloomCol: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
         }),
       },
     });
   }
-  get u(): Record<string, number> {
-    return (this.resources.fx as { uniforms: Record<string, number> }).uniforms;
+  get u(): Record<string, number> & { uBloomCol: Float32Array } {
+    return (this.resources.fx as { uniforms: Record<string, number> & { uBloomCol: Float32Array } }).uniforms;
   }
 }
 
@@ -210,7 +241,8 @@ export class ScreenFx {
     if (neon > 0) m = mul(m, saturation(1 + 0.8 * Math.min(2, neon)));
     const funk = k('Funk');
     if (funk > 0) m = mul(m, hue(((timeSec * 120) % 360) * Math.min(1, funk)));
-    if (bloom.intensity > 0) {
+    if (bloom.intensity > 0 && (reduce || !this.distort)) {
+      // 셰이더를 못 쓰면 밝기로 흉내
       const b = Math.min(2, bloom.intensity) * (reduce ? 0.3 : 1);
       m = mul(m, brightness(1 + 0.18 * b, bloom.color, 0.06 * b));
     }
@@ -226,16 +258,16 @@ export class ScreenFx {
     const bl = any('Blur', 'GaussianBlur', 'BlurFocus');
     // 모션 블러: 카메라가 움직인 방향으로만, 속도에 비례 (가만히 있으면 없음)
     const mb = Math.min(3, k('MotionBlur'));
-    const mx = Math.min(8, (Math.abs(motion.x) / 1500) * mb * 3);
-    const my = Math.min(8, (Math.abs(motion.y) / 1500) * mb * 3);
-    if (bl > 0 || mx > 0.5 || my > 0.5) {
-      this.blur.strengthX = 8 * Math.min(3, bl) + (mx > 0.5 ? mx : 0);
-      this.blur.strengthY = 8 * Math.min(3, bl) + (my > 0.5 ? my : 0);
+    const mx = Math.min(4, (Math.abs(motion.x) / 3000) * mb * 2);
+    const my = Math.min(4, (Math.abs(motion.y) / 3000) * mb * 2);
+    if (bl > 0 || mx > 1 || my > 1) {
+      this.blur.strengthX = 8 * Math.min(3, bl) + (mx > 1 ? mx : 0);
+      this.blur.strengthY = 8 * Math.min(3, bl) + (my > 1 ? my : 0);
       out.push(this.blur);
     }
 
     // 잡음
-    const nz = any('Grain', 'Static', 'VHS', 'EightiesTV', 'FiftiesTV', 'Compression');
+    const nz = any('Grain', 'Static', 'VHS', 'EightiesTV', 'FiftiesTV') + 0.3 * k('Compression');
     if (nz > 0) {
       this.noise.noise = Math.min(0.6, 0.18 * nz);
       this.noise.seed = (timeSec * 7.31) % 1;
@@ -245,14 +277,20 @@ export class ScreenFx {
     // 왜곡
     if (this.distort) {
       const u = this.distort.u;
-      const px = any('Pixelate', 'Compression', 'LED', 'PixelSnow') > 0 ? Math.max(k('Pixelate'), k('Compression') * 0.6, k('LED') * 0.8) : 0;
+      const px = any('Pixelate', 'Compression', 'LED', 'PixelSnow') > 0 ? Math.max(k('Pixelate'), k('Compression') * 0.25, k('LED') * 0.8) : 0;
       u.uPixel = px > 0 ? 2 + 5 * Math.min(3, px) : 0;
       u.uAberr = Math.min(40, 6 * any('Aberration', 'VHS', 'EightiesTV', 'Handheld') + (k('Aberration') > 0 ? 2 : 0));
       u.uScan = Math.min(1, 0.6 * any('Arcade', 'VHS', 'EightiesTV', 'FiftiesTV', 'LED'));
       u.uFish = Math.min(1.5, k('Fisheye'));
       u.uPoster = k('Posterize') > 0 ? Math.max(2, 10 - 6 * Math.min(1, k('Posterize'))) : 0;
       u.uTime = timeSec;
-      if (u.uPixel > 0 || u.uAberr > 0 || u.uScan > 0 || u.uFish > 0 || u.uPoster > 0) out.push(this.distort);
+      u.uVig = Math.min(1, Math.max(k('Arcade'), k('Fisheye'), k('VHS'), k('EightiesTV'), k('FiftiesTV')) * 0.9);
+      u.uBloom = Math.min(3, bloom.intensity);
+      u.uBloomThr = bloom.threshold;
+      u.uBloomCol[0] = ((bloom.color >> 16) & 255) / 255;
+      u.uBloomCol[1] = ((bloom.color >> 8) & 255) / 255;
+      u.uBloomCol[2] = (bloom.color & 255) / 255;
+      if (u.uPixel > 0 || u.uAberr > 0 || u.uScan > 0 || u.uFish > 0 || u.uPoster > 0 || u.uVig > 0 || u.uBloom > 0) out.push(this.distort);
     }
     return out;
   }

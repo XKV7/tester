@@ -1,13 +1,16 @@
 import { BitmapText, Container, Graphics, Text } from 'pixi.js';
 import { VISUAL_TYPES, type Chart } from '../core/chart';
-import { scaleColor } from '../core/color';
+import { lerpColor, scaleColor } from '../core/color';
 import { degToRad, TILE_LEN } from '../core/math';
 import type { VisualTimeline } from '../core/timeline';
-import { BAND_W, bandContext, iconContext, sv, type IconKind } from './shapes';
+import { BAND_W, bandContext, blockContexts, iconContext, sv, type IconKind } from './shapes';
 
 interface TileObj {
   root: Container;
   band: Graphics;
+  /** 블록 모양의 안쪽 (orbit 모양이면 없음). */
+  inner?: Graphics;
+  style: number;
   hold?: Graphics;
   label?: BitmapText;
   icons: { kind: IconKind; g: Graphics; dx: number; dy: number }[];
@@ -113,9 +116,19 @@ export class TrackView {
   private make(i: number): TileObj {
     const t = this.chart.tiles[i];
     const root = new Container();
-    const band = new Graphics(bandContext(t.angleIn, t.angleOut, t.midspin));
-    root.addChild(band);
-    const o: TileObj = { root, band, icons: [] };
+    const style = this.timeline ? this.timeline.tileStyle[i] : 0;
+    let band: Graphics;
+    let inner: Graphics | undefined;
+    if (style === 0) {
+      band = new Graphics(bandContext(t.angleIn, t.angleOut, t.midspin));
+      root.addChild(band);
+    } else {
+      const bc = blockContexts(t.angleIn, t.angleOut, t.midspin);
+      band = new Graphics(bc.outer);
+      inner = new Graphics(bc.inner);
+      root.addChild(band, inner);
+    }
+    const o: TileObj = { root, band, inner, style, icons: [] };
     const kinds = this.iconKinds[i];
     kinds.forEach((k, j) => {
       const g = new Graphics(iconContext(k));
@@ -173,20 +186,57 @@ export class TrackView {
       const alpha = (tl ? tl.tileAlpha[i] : 1) * (anim ? anim.alpha : 1);
       if (alpha <= 0.001) continue;
       nowVisible.add(i);
-      const o = this.objs[i] ?? this.make(i);
+      let o = this.objs[i] ?? this.make(i);
+      // 모양이 바뀌었으면 다시 만든다 (RecolorTrack style)
+      if (tl && o.style !== tl.tileStyle[i]) {
+        this.dispose(o);
+        o = this.make(i);
+      }
       this.setVisible(o, true, !!u.showBeats);
       o.root.position.set(x + (anim ? anim.dx : 0), y - (anim ? anim.dy : 0));
       o.root.rotation = (tl ? -degToRad(tl.tileRot[i]) : 0) - (anim ? degToRad(anim.rot) : 0);
       o.root.alpha = alpha;
-      const base = tl ? tl.tileColor[i] : 0x3a3f55;
+      let base = tl ? tl.tileColor[i] : 0x3a3f55;
+      // 물결 (원작 Glow): 두 색 사이를 오간다, 트랙을 따라 퍼지는 모양
+      if (tl && tl.tileColor2[i] >= 0) {
+        const tt = u.time ?? u.now / 1000;
+        const len = tl.tilePulseLen[i];
+        const ph = tt / Math.max(0.05, tl.tileGlowDur[i]) - (len > 0 ? i / len : 0);
+        base = lerpColor(base, tl.tileColor2[i], 0.5 - 0.5 * Math.cos(ph * Math.PI * 2));
+      }
       const passed = i < u.passed;
-      o.band.tint = scaleColor(base, passed ? 0.55 : 1.25 * bright);
       const ps = this.pulses.get(i);
       let s = 1;
+      let flash = 0; // 막 친 타일은 잠깐 하얗게
       if (ps !== undefined) {
-        const k = (u.now - ps) / 200;
+        const k = (u.now - ps) / 250;
         if (k >= 1) this.pulses.delete(i);
-        else s = 1 + 0.15 * Math.sin(Math.PI * k);
+        else {
+          s = 1 + 0.12 * Math.sin(Math.PI * k);
+          flash = 1 - k;
+        }
+      }
+      const W = 0xffffff;
+      switch (o.style) {
+        case 1: // standard: 채움 + 어두운 테두리
+          o.band.tint = lerpColor(scaleColor(base, 0.55), W, flash * 0.8);
+          o.inner!.tint = lerpColor(scaleColor(base, bright), W, flash * 0.85);
+          break;
+        case 2: // neon: 어두운 속 + 밝은 테두리, 밟은 타일은 환하게 남는다
+          if (passed || flash > 0) {
+            o.band.tint = W;
+            o.inner!.tint = lerpColor(base, W, 0.8);
+          } else {
+            o.band.tint = scaleColor(base, bright);
+            o.inner!.tint = scaleColor(base, 0.12);
+          }
+          break;
+        case 3: // basic: 단색
+          o.band.tint = lerpColor(base, W, flash * 0.8);
+          o.inner!.tint = lerpColor(base, W, flash * 0.8);
+          break;
+        default: // orbit: 지나간 타일은 어둡게, 막 친 타일은 하얗게 번쩍
+          o.band.tint = lerpColor(scaleColor(base, passed ? 0.55 : 1.25 * bright), W, flash * 0.75);
       }
       o.root.scale.set(s * (tl ? tl.tileScale[i] : 1) * (anim ? anim.scale : 1));
       if (o.label) o.label.position.set(x + 22, y + 22);
@@ -214,6 +264,13 @@ export class TrackView {
       const p = this.pos(u.selected);
       this.selGfx.circle(p.x, p.y, BAND_W * 0.9).stroke({ width: 3, color: 0x7ad1ff, alpha: 0.95 });
     }
+  }
+
+  private dispose(o: TileObj): void {
+    o.root.destroy({ children: true });
+    for (const ic of o.icons) ic.g.destroy();
+    o.label?.destroy();
+    o.text?.destroy();
   }
 
   private setVisible(o: TileObj, v: boolean, label: boolean): void {
