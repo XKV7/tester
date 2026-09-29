@@ -278,4 +278,38 @@ describe('극단적인 BPM (Hello (BPM) 류)', () => {
     const bg = r.level.actions.find((a) => a.type === 'Background');
     expect(bg).toMatchObject({ video: 'movie.mp4', videoOffset: 1.5, videoLoop: true });
   });
+  it('RepeatEvents: 박 간격·타일 간격으로 태그 이벤트 반복', () => {
+    const r = level({
+      pathData: 'R'.repeat(20),
+      actions: [
+        { floor: 2, eventType: 'RepeatEvents', repeatType: 'Beat', repetitions: 2, interval: 0.5, tag: 'a' },
+        { floor: 2, eventType: 'Flash', duration: 1, startColor: 'ffffff', startOpacity: 100, endOpacity: 0, eventTag: 'a b', angleOffset: 0 },
+        { floor: 2, eventType: 'Flash', duration: 1, startColor: 'ff0000', startOpacity: 100, endOpacity: 0, eventTag: 'x' },
+        { floor: 3, eventType: 'RepeatEvents', repeatType: 'Floor', repetitions: 3, floorCount: 5, executeOnCurrentFloor: true, tag: 'c' },
+        { floor: 3, eventType: 'Flash', duration: 1, startColor: '00ff00', startOpacity: 100, eventTag: 'c' },
+      ],
+    });
+    const fl = r.level.actions.filter((a) => a.type === 'Flash');
+    const white = fl.filter((a) => a.type === 'Flash' && a.color === '#ffffff').map((a) => a.delay ?? 0).sort();
+    expect(white).toEqual([0, 0.5, 1]);
+    expect(fl.filter((a) => a.type === 'Flash' && a.color === '#ff0000')).toHaveLength(1);
+    expect(fl.filter((a) => a.type === 'Flash' && a.color === '#00ff00').map((a) => a.floor).sort((x, y) => x - y)).toEqual([3, 8, 13, 18]);
+    expect(r.warnings.join()).not.toContain('RepeatEvents');
+  });
+  it('확장 필터(SetFilterAdvanced)를 비슷한 필터로', () => {
+    const r = level({
+      pathData: 'RRRRRR',
+      actions: [
+        { floor: 1, eventType: 'SetFilterAdvanced', filter: 'CameraFilterPack_TV_WideScreenHorizontal', enabled: true, duration: 0, filterProperties: '"filter_Size": 72, "filter_Smooth": 1' },
+        { floor: 1, eventType: 'SetFilterAdvanced', filter: 'CameraFilterPack_Colors_Brightness', enabled: true, duration: 2, filterProperties: '"filter__Brightness": 80' },
+        { floor: 2, eventType: 'SetFilterAdvanced', filter: 'CameraFilterPack_Glow_Glow_Color', enabled: true, filterProperties: '"filter_Threshold": 25, "filter_Intensity": 50, "filter_GlowColor": "ff3600"' },
+        { floor: 2, eventType: 'SetFilterAdvanced', filter: 'CameraFilterPack_AAA_SuperHexagon', enabled: true, filterProperties: '' },
+      ],
+    });
+    const f = r.level.actions.filter((a) => a.type === 'Filter');
+    expect(f.find((a) => a.type === 'Filter' && a.filter === 'LetterboxH')).toMatchObject({ enabled: true, intensity: expect.closeTo(0.28, 5) });
+    expect(f.find((a) => a.type === 'Filter' && a.filter === 'Brightness')).toMatchObject({ intensity: 0.8, duration: 2 });
+    expect(r.level.actions.find((a) => a.type === 'Bloom')).toMatchObject({ enabled: true, threshold: 0.25, color: '#ff3600' });
+    expect(r.warnings.join()).toContain('SuperHexagon');
+  });
 });

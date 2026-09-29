@@ -180,6 +180,19 @@ describe('원작 연출 타임라인', () => {
     expect(tl.flashAlpha).toBeCloseTo(1);
   });
 
+  it('밝기 필터는 1이 변화 없음: 켤 때 1에서, 끌 때 1로', () => {
+    const tl = lv([
+      { floor: 1, type: 'Filter', filter: 'Brightness', enabled: true, intensity: 0.5, duration: 2 },
+      { floor: 5, type: 'Filter', filter: 'Brightness', enabled: false, duration: 2 },
+    ]);
+    tl.update(2);
+    expect(tl.filters.get('Brightness')!.intensity).toBeCloseTo(0.75);
+    tl.update(6);
+    expect(tl.filters.get('Brightness')!.intensity).toBeCloseTo(0.75);
+    tl.update(8);
+    expect(tl.filters.has('Brightness')).toBe(false);
+  });
+
   it('플래시: 끝 상태가 남고, 배경 면은 따로', () => {
     const tl = lv([
       { floor: 1, type: 'Flash', color: '#000000', opacity: 1, endOpacity: 0.5, plane: 'bg', duration: 2 },

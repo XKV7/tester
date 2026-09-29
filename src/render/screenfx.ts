@@ -99,6 +99,8 @@ uniform float uVig;
 uniform float uBloom;
 uniform float uBloomThr;
 uniform vec3 uBloomCol;
+uniform float uWave;
+uniform float uGlitch;
 
 vec2 toTex(vec2 s) { return s * uOutputFrame.zw * uInputSize.zw; }
 vec4 samp(vec2 s) { return texture(uTexture, clamp(toTex(s), uInputClamp.xy, uInputClamp.zw)); }
@@ -110,6 +112,14 @@ void main() {
     vec2 d = s - 0.5;
     float r2 = dot(d, d);
     s = 0.5 + d * (1.0 - uFish * 0.9 * (0.5 - r2));
+  }
+  // 물결 (원작 Waves): 가로로 출렁
+  if (uWave > 0.0) s.x += sin(s.y * 24.0 + uTime * 5.0) * 0.008 * uWave;
+  // 글리치: 가로 띠 몇 줄이 순간적으로 옆으로 밀린다
+  if (uGlitch > 0.0) {
+    float row = floor(s.y * 28.0);
+    float r = fract(sin(row * 12.9898 + floor(uTime * 14.0) * 78.233) * 43758.5453);
+    if (r > 1.0 - 0.3 * min(1.0, uGlitch)) s.x += (r - 0.85) * 0.25 * uGlitch;
   }
   if (uPixel > 1.0) {
     vec2 px = uOutputFrame.zw;
@@ -187,6 +197,8 @@ class DistortFilter extends Filter {
           uBloom: { value: 0, type: 'f32' },
           uBloomThr: { value: 0.5, type: 'f32' },
           uBloomCol: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
+          uWave: { value: 0, type: 'f32' },
+          uGlitch: { value: 0, type: 'f32' },
         }),
       },
     });
@@ -302,6 +314,7 @@ export class ScreenFx {
   /** 날씨 입자 (화면 좌표). */
   readonly weather = new Container();
   private readonly weatherGfx = new Graphics();
+  private readonly barsGfx = new Graphics();
   private flakes: Flake[] = [];
   private lastKey = '';
   /** 화면 높이 (px) — 흐림 반경을 화면 크기에 맞춘다 */
@@ -322,7 +335,7 @@ export class ScreenFx {
       console.warn('[ORBIT] 빛 번짐 필터를 만들 수 없습니다', e);
     }
     this.glow = g;
-    this.weather.addChild(this.weatherGfx);
+    this.weather.addChild(this.weatherGfx, this.barsGfx);
   }
 
   /**
@@ -356,6 +369,9 @@ export class ScreenFx {
     if (neon > 0) m = mul(m, saturation(1 + 0.8 * Math.min(2, neon)));
     const funk = k('Funk');
     if (funk > 0) m = mul(m, hue(((timeSec * 120) % 360) * Math.min(1, funk)));
+    // 밝기 (원작 확장 필터 Brightness): 세기 = 배율 (1 = 그대로)
+    const br = fs.get('Brightness');
+    if (br && Math.abs(br.intensity - 1) > 0.005) m = mul(m, brightness(Math.max(0, Math.min(3, br.intensity)), 0, 0));
     if (bloom.intensity > 0 && (reduce || !this.glow)) {
       // 셰이더를 못 쓰면 밝기로 흉내
       const b = Math.min(2, bloom.intensity) * (reduce ? 0.3 : 1);
@@ -382,7 +398,7 @@ export class ScreenFx {
     }
 
     // 잡음
-    const nz = any('Grain', 'Static', 'VHS', 'EightiesTV', 'FiftiesTV') + 0.3 * k('Compression');
+    const nz = any('Grain', 'Static', 'VHS', 'EightiesTV', 'FiftiesTV') + 0.3 * k('Compression') + 0.5 * k('Glitch');
     if (nz > 0) {
       this.noise.noise = Math.min(0.6, 0.18 * nz);
       this.noise.seed = (timeSec * 7.31) % 1;
@@ -394,18 +410,20 @@ export class ScreenFx {
       const u = this.distort.u;
       const px = any('Pixelate', 'Compression', 'LED', 'PixelSnow') > 0 ? Math.max(k('Pixelate'), k('Compression') * 0.25, k('LED') * 0.8) : 0;
       u.uPixel = px > 0 ? 2 + 5 * Math.min(3, px) : 0;
-      u.uAberr = Math.min(40, 6 * any('Aberration', 'VHS', 'EightiesTV', 'Handheld') + (k('Aberration') > 0 ? 2 : 0));
+      u.uAberr = Math.min(40, 6 * any('Aberration', 'VHS', 'EightiesTV', 'Handheld', 'Glitch') + (k('Aberration') > 0 ? 2 : 0));
       u.uScan = Math.min(1, 0.6 * any('Arcade', 'VHS', 'EightiesTV', 'FiftiesTV', 'LED'));
       u.uFish = Math.min(1.5, k('Fisheye'));
       u.uPoster = k('Posterize') > 0 ? Math.max(2, 10 - 6 * Math.min(1, k('Posterize'))) : 0;
       u.uTime = timeSec;
-      u.uVig = Math.min(1, Math.max(k('Arcade'), k('Fisheye'), k('VHS'), k('EightiesTV'), k('FiftiesTV')) * 0.9);
+      u.uVig = Math.min(1, Math.max(k('Arcade'), k('Fisheye'), k('VHS'), k('EightiesTV'), k('FiftiesTV'), k('Vignette')) * 0.9);
+      u.uWave = Math.min(3, k('Waves'));
+      u.uGlitch = Math.min(2, k('Glitch'));
       u.uBloom = 0; // 빛 번짐은 GlowFilter가 맡는다
       u.uBloomThr = bloom.threshold;
       u.uBloomCol[0] = ((bloom.color >> 16) & 255) / 255;
       u.uBloomCol[1] = ((bloom.color >> 8) & 255) / 255;
       u.uBloomCol[2] = (bloom.color & 255) / 255;
-      if (u.uPixel > 0 || u.uAberr > 0 || u.uScan > 0 || u.uFish > 0 || u.uPoster > 0 || u.uVig > 0 || u.uBloom > 0) out.push(this.distort);
+      if (u.uPixel > 0 || u.uAberr > 0 || u.uScan > 0 || u.uFish > 0 || u.uPoster > 0 || u.uVig > 0 || u.uBloom > 0 || u.uWave > 0 || u.uGlitch > 0) out.push(this.distort);
     }
     return out;
   }
@@ -427,6 +445,19 @@ export class ScreenFx {
 
   /** 날씨 입자 그리기 (화면 크기 w×h, dt 초). */
   drawWeather(fs: ReadonlyMap<string, FilterState>, w: number, h: number, dt: number, reduce: boolean): void {
+    // 와이드스크린 (원작 확장 필터 WideScreen): 세기 = 검은 띠가 가리는 비율 (위아래·좌우 합)
+    const bars = this.barsGfx;
+    bars.clear();
+    const lh = fs.get('LetterboxH')?.intensity ?? 0;
+    const lv = fs.get('LetterboxV')?.intensity ?? 0;
+    if (lh > 0) {
+      const bh = (h * Math.min(1, lh)) / 2;
+      bars.rect(0, 0, w, bh).rect(0, h - bh, w, bh).fill({ color: 0x000000 });
+    }
+    if (lv > 0) {
+      const bw = (w * Math.min(1, lv)) / 2;
+      bars.rect(0, 0, bw, h).rect(w - bw, 0, bw, h).fill({ color: 0x000000 });
+    }
     const g = this.weatherGfx;
     g.clear();
     const rain = fs.get('Rain')?.intensity ?? 0;

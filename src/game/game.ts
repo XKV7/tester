@@ -501,6 +501,12 @@ export class Game {
     const motion = dt > 0 ? { x: ((stage.camera.x - px0) * sc) / dt, y: ((stage.camera.y - py0) * sc) / dt } : { x: 0, y: 0 };
     stage.camera.shakeX = reduce ? 0 : tl.shakeX;
     stage.camera.shakeY = reduce ? 0 : -tl.shakeY;
+    // 지진 (원작 확장 필터 EarthQuake): 켜져 있는 동안 계속 흔들림
+    const quake = tl.filters.get('Quake')?.intensity ?? 0;
+    if (quake > 0 && !reduce) {
+      stage.camera.shakeX += (Math.random() - 0.5) * 24 * quake;
+      stage.camera.shakeY += (Math.random() - 0.5) * 24 * quake;
+    }
     this.deco.update(stage.camera.x, stage.camera.y, stage.camera.rotation);
     this.screenFx.screenH = stage.height;
     stage.setWorldFilters(this.screenFx.worldFilters(tl.bloom, reduce));
