@@ -87,6 +87,9 @@ export class VisualTimeline {
   bgFlashAlpha = 0;
   bgColor: number;
   bgImage: string | null = null;
+  bgVideo: string | null = null;
+  bgVideoOffset = 0;
+  bgVideoLoop = false;
   bgFit: 'cover' | 'contain' | 'unscaled' | 'tile' = 'cover';
   bgTint = 0xffffff;
   bgOpacity = 0.55;
@@ -185,6 +188,9 @@ export class VisualTimeline {
     this.bgFlashAlpha = 0;
     this.bgColor = this.baseBg;
     this.bgImage = null;
+    this.bgVideo = null;
+    this.bgVideoOffset = 0;
+    this.bgVideoLoop = false;
     this.bgFit = 'cover';
     this.bgTint = 0xffffff;
     this.bgOpacity = 0.55;
@@ -449,6 +455,9 @@ export class VisualTimeline {
       case 'Background': {
         if (a.color) this.bgColor = parseColor(a.color, this.bgColor);
         if (a.image !== undefined) this.bgImage = a.image || null;
+        if (a.video !== undefined) this.bgVideo = a.video || null;
+        if (a.videoOffset !== undefined) this.bgVideoOffset = a.videoOffset;
+        if (a.videoLoop !== undefined) this.bgVideoLoop = a.videoLoop;
         if (a.fit) this.bgFit = a.fit;
         // 이미지를 새로 지정하면 색조도 함께 정해진다 (생략 = 흰색)
         if (a.tint) this.bgTint = parseColor(a.tint, 0xffffff);

@@ -1,4 +1,4 @@
-import { findFile, loadPackageAudio, type LevelPackage } from '../levels/package';
+import { findSong, loadPackageAudio, type LevelPackage } from '../levels/package';
 import {
   cleanName,
   currentProfile,
@@ -252,7 +252,7 @@ export async function uploadSelected(pkg: LevelPackage): Promise<void> {
   }
   if (!(await ensureSignedIn('레벨을 올리려면 로그인해야 합니다.'))) return;
   let files = referencedFiles(pkg);
-  const hasSong = !!pkg.level.settings.songFile && !!findFile(pkg.files, pkg.level.settings.songFile);
+  const hasSong = !!pkg.level.settings.songFile && !!findSong(pkg.files, pkg.level.settings.songFile);
   const ok = await confirmBox(
     '온라인에 올리기',
     `'${pkg.level.meta.title}'을(를) ${hasSong ? '음원과 함께 ' : ''}올립니다. 로그인한 사람 누구나 받아서 플레이할 수 있어요.` +

@@ -35,6 +35,29 @@ export function newPackageId(prefix = 'user'): string {
 
 const lower = (s: string) => s.toLowerCase();
 const baseName = (p: string) => p.split('/').pop() ?? p;
+/** 이름 비교용: 유니코드 정규화(맥 NFD ↔ NFC) + 앞뒤 공백 + 대소문자 무시 */
+const norm = (s: string) => lower(s.normalize('NFC').trim());
+const stem = (s: string) => s.replace(/\.[^.]*$/, '');
+
+/**
+ * zip 안 파일 이름 복원. UTF-8 표시가 없는 zip(윈도우 한국어·일본어 등)은 fflate가 latin1로 읽어
+ * 이름이 깨진다 → 원래 바이트로 되돌려 UTF-8·EUC-KR·Shift_JIS·GBK로 다시 읽은 후보를 모두 돌려준다.
+ */
+export function zipNameCandidates(name: string): string[] {
+  if (![...name].some((c) => c.charCodeAt(0) >= 0x80) || [...name].some((c) => c.charCodeAt(0) > 0xff)) return [name];
+  const bytes = Uint8Array.from([...name].map((c) => c.charCodeAt(0)));
+  const out: string[] = [];
+  for (const enc of ['utf-8', 'euc-kr', 'shift_jis', 'gbk']) {
+    try {
+      const s = new TextDecoder(enc, { fatal: true }).decode(bytes);
+      if (!out.includes(s)) out.push(s);
+    } catch {
+      // 이 인코딩은 아님
+    }
+  }
+  if (!out.includes(name)) out.push(name);
+  return out;
+}
 
 /** 파일 맵에서 레벨 JSON을 찾아 패키지 생성. */
 export function packageFromFiles(files: Map<string, Uint8Array>, id = newPackageId()): LevelPackage {
@@ -42,9 +65,17 @@ export function packageFromFiles(files: Map<string, Uint8Array>, id = newPackage
   const flat = new Map<string, Uint8Array>();
   for (const [k, v] of files) {
     if (k.endsWith('/') || k.includes('__MACOSX')) continue;
-    flat.set(baseName(k), v);
+    // 깨진 이름이면 가능한 원래 이름들로 모두 등록 (같은 데이터)
+    for (const n of zipNameCandidates(baseName(k))) if (!flat.has(n)) flat.set(n, v);
   }
-  const names = [...flat.keys()];
+  // 같은 파일의 다른 이름(별칭)은 목록에서 한 번만
+  const seen = new Set<Uint8Array>();
+  const names = [...flat.keys()].filter((n) => {
+    const d = flat.get(n)!;
+    if (seen.has(d)) return false;
+    seen.add(d);
+    return true;
+  });
   const orbitJson = names.find((n) => lower(n) === 'level.orbit.json') ?? names.find((n) => lower(n).endsWith('.orbit.json'));
   // 얼음과 불의 춤 레벨: ORBIT 레벨이 없고 .adofai가 있으면 변환 (backup 파일은 뒤로)
   // 여러 개면 backup이 아닌 것 중 가장 큰 파일 (타일이 가장 많은 본 레벨)
@@ -65,7 +96,7 @@ export function packageFromFiles(files: Map<string, Uint8Array>, id = newPackage
   if (!r.ok) throw new PackageError([`${jsonName}:`, ...r.errors]);
   const warnings = [...r.warnings];
   const song = r.level.settings.songFile;
-  if (song && !findFile(flat, song)) warnings.push(`음원 파일 '${song}'을(를) 찾지 못해 합성 비트로 대체합니다.`);
+  if (song && !findSong(flat, song)) warnings.push(`음원 파일 '${song}'을(를) 찾지 못해 합성 비트로 대체합니다.`);
   return { id, level: r.level, files: flat, builtin: false, warnings };
 }
 
@@ -78,7 +109,7 @@ function packageFromAdofai(flat: Map<string, Uint8Array>, name: string, id: stri
   }
   const warnings = ['얼음과 불의 춤 레벨을 변환했습니다. 개인 플레이용으로만 쓰고, 원작 음원·맵은 공개로 올리지 마세요.', ...conv.warnings];
   const song = conv.level.settings.songFile;
-  if (song && !findFile(flat, song)) warnings.push(`음원 파일 '${song}'이(가) 없어 합성 비트로 대체합니다. 레벨 파일과 음원을 함께 zip으로 묶어 불러오세요.`);
+  if (song && !findSong(flat, song)) warnings.push(`음원 파일 '${song}'이(가) 없어 합성 비트로 대체합니다. 레벨 파일과 음원을 함께 zip으로 묶어 불러오세요.`);
   if (!song) warnings.push('원작 레벨에 음원 파일 정보가 없어 합성 비트로 재생합니다.');
   if (conv.level.path.length < 2) warnings.push(`'${name}'에 타일이 ${conv.level.path.length + 1}개뿐입니다. 레벨 파일이 맞는지 확인하세요.`);
   return { id, level: conv.level, files: flat, builtin: false, warnings, imported: 'adofai' };
@@ -151,10 +182,25 @@ export async function songFromZip(file: File): Promise<File | null> {
 
 export function findFile(files: Map<string, Uint8Array>, name: string): Uint8Array | undefined {
   if (!name) return undefined;
-  const b = baseName(name);
+  const b = baseName(name.replace(/\\/g, '/'));
   if (files.has(b)) return files.get(b);
-  for (const [k, v] of files) if (lower(k) === lower(b)) return v;
+  const nb = norm(b);
+  for (const [k, v] of files) if (norm(k) === nb) return v;
+  // 확장자만 다른 파일 (예: 레벨엔 .ogg, 실제는 .mp3)
+  const sb = stem(nb);
+  if (sb) for (const [k, v] of files) if (stem(norm(k)) === sb && SONG_EXT.test(k) === SONG_EXT.test(b) && IMAGE_EXT.test(k) === IMAGE_EXT.test(b)) return v;
   return undefined;
+}
+
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
+
+/** 음원을 이름으로 못 찾을 때: 패키지에 음원 파일이 딱 하나면 그것. */
+export function findSong(files: Map<string, Uint8Array>, name: string): Uint8Array | undefined {
+  const d = findFile(files, name);
+  if (d) return d;
+  const songs = new Set<Uint8Array>();
+  for (const [k, v] of files) if (SONG_EXT.test(k) && !VIDEO_EXT.test(k)) songs.add(v);
+  return songs.size === 1 ? [...songs][0] : undefined;
 }
 
 /** 사용자가 고른 File 목록(zip, json, 폴더 내용) → 패키지. */
@@ -184,7 +230,7 @@ export async function packageFromFileList(list: FileList | File[]): Promise<Leve
 export async function loadPackageAudio(pkg: LevelPackage): Promise<AudioBuffer> {
   if (pkg.buffer) return pkg.buffer;
   const eng = audio();
-  const data = findFile(pkg.files, pkg.level.settings.songFile);
+  const data = findSong(pkg.files, pkg.level.settings.songFile);
   if (data) {
     try {
       pkg.buffer = await eng.decode(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer);
@@ -208,12 +254,16 @@ export function invalidateSynth(pkg: LevelPackage): void {
 export function exportZip(pkg: LevelPackage): Uint8Array {
   const entries: Record<string, Uint8Array> = { 'level.orbit.json': strToU8(serializeLevel(pkg.level)) };
   const song = pkg.level.settings.songFile;
-  const songData = findFile(pkg.files, song);
+  const songData = findSong(pkg.files, song);
   if (song && songData) entries[baseName(song)] = songData;
+  const add = (n: string | undefined) => {
+    const d = n ? findFile(pkg.files, n) : undefined;
+    if (n && d) entries[baseName(n)] = d;
+  };
   for (const a of pkg.level.actions) {
-    if (a.type === 'Background' && a.image) {
-      const d = findFile(pkg.files, a.image);
-      if (d) entries[baseName(a.image)] = d;
+    if (a.type === 'Background') {
+      add(a.image);
+      add(a.video);
     }
   }
   return zipSync(entries, { level: 6 });
@@ -283,7 +333,15 @@ export function fileUrl(pkg: LevelPackage, name: string): string | null {
   let u = urlCache.get(d);
   if (!u) {
     const ext = lower(name).split('.').pop() ?? '';
-    const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : ext === 'gif' ? 'image/gif' : 'image/jpeg';
+    const mime =
+      ext === 'png' ? 'image/png'
+      : ext === 'webp' ? 'image/webp'
+      : ext === 'gif' ? 'image/gif'
+      : ext === 'mp4' || ext === 'm4v' ? 'video/mp4'
+      : ext === 'webm' ? 'video/webm'
+      : ext === 'mov' ? 'video/quicktime'
+      : ext === 'mkv' ? 'video/x-matroska'
+      : 'image/jpeg';
     u = URL.createObjectURL(new Blob([d as Uint8Array<ArrayBuffer>], { type: mime }));
     urlCache.set(d, u);
   }

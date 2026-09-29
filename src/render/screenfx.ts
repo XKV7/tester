@@ -1,4 +1,19 @@
-import { BlurFilter, ColorMatrixFilter, Container, Filter, GlProgram, Graphics, NoiseFilter, UniformGroup, type ColorMatrix } from 'pixi.js';
+import { KawaseBlurFilter } from 'pixi-filters/kawase-blur';
+import {
+  BlurFilter,
+  ColorMatrixFilter,
+  Container,
+  Filter,
+  GlProgram,
+  Graphics,
+  NoiseFilter,
+  Texture,
+  TexturePool,
+  UniformGroup,
+  type ColorMatrix,
+  type FilterSystem,
+  type RenderSurface,
+} from 'pixi.js';
 import type { BloomState, FilterState } from '../core/timeline';
 
 /**
@@ -181,6 +196,96 @@ class DistortFilter extends Filter {
   }
 }
 
+const EXTRACT_FRAG = `
+in vec2 vTextureCoord;
+out vec4 finalColor;
+uniform sampler2D uTexture;
+uniform float uThr;
+void main() {
+  vec4 c = texture(uTexture, vTextureCoord);
+  float l = max(c.r, max(c.g, c.b));
+  // 문턱을 넘은 만큼 부드럽게
+  finalColor = vec4(c.rgb * smoothstep(uThr, min(1.0, uThr + 0.25), l), 1.0);
+}`;
+
+/** 밝은 부분만 남기기 */
+class ExtractFilter extends Filter {
+  constructor() {
+    super({
+      glProgram: GlProgram.from({ vertex: VERT, fragment: EXTRACT_FRAG, name: 'orbit-extract', preferredVertexPrecision: 'highp', preferredFragmentPrecision: 'highp' }),
+      resources: { exU: new UniformGroup({ uThr: { value: 0.5, type: 'f32' } }) },
+    });
+  }
+  set threshold(v: number) {
+    (this.resources.exU as { uniforms: { uThr: number } }).uniforms.uThr = v;
+  }
+}
+
+const GLOW_FRAG = `
+in vec2 vTextureCoord;
+out vec4 finalColor;
+uniform sampler2D uTexture;
+uniform sampler2D uMapTexture;
+uniform sampler2D uMap2Texture;
+uniform float uScale;
+uniform vec3 uColor;
+void main() {
+  vec4 c = texture(uTexture, vTextureCoord);
+  // 좁은 빛(가장자리 광채) + 넓은 빛(빛무리)
+  vec3 g = texture(uMapTexture, vTextureCoord).rgb * 0.7 + texture(uMap2Texture, vTextureCoord).rgb * 1.3;
+  finalColor = vec4(c.rgb + g * uScale * uColor, c.a);
+}`;
+
+/**
+ * 빛 번짐 (원작 Bloom): 밝은 부분만 뽑아 넓게 흐린 뒤 색을 입혀 더한다.
+ * 흰 타일 둘레로 크고 부드러운 빛무리가 생긴다.
+ */
+class GlowFilter extends Filter {
+  private readonly extract = new ExtractFilter();
+  private readonly kawase = new KawaseBlurFilter({ strength: 8, quality: 3 });
+  private readonly kawase2 = new KawaseBlurFilter({ strength: 20, quality: 5 });
+  constructor() {
+    super({
+      glProgram: GlProgram.from({ vertex: VERT, fragment: GLOW_FRAG, name: 'orbit-glow', preferredVertexPrecision: 'highp', preferredFragmentPrecision: 'highp' }),
+      resources: {
+        glowU: new UniformGroup({
+          uScale: { value: 1, type: 'f32' },
+          uColor: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
+        }),
+        uMapTexture: Texture.WHITE.source,
+        uMap2Texture: Texture.WHITE.source,
+      },
+    });
+  }
+  get u(): { uScale: number; uColor: Float32Array } {
+    return (this.resources.glowU as { uniforms: { uScale: number; uColor: Float32Array } }).uniforms;
+  }
+  set(threshold: number, scale: number, color: number, blurPx: number): void {
+    this.extract.threshold = Math.max(0, Math.min(0.99, threshold));
+    this.kawase.strength = blurPx * 0.3;
+    this.kawase2.strength = blurPx;
+    const u = this.u;
+    u.uScale = scale;
+    u.uColor[0] = ((color >> 16) & 255) / 255;
+    u.uColor[1] = ((color >> 8) & 255) / 255;
+    u.uColor[2] = (color & 255) / 255;
+  }
+  override apply(fm: FilterSystem, input: Texture, output: RenderSurface, clear: boolean): void {
+    const bright = TexturePool.getSameSizeTexture(input);
+    this.extract.apply(fm, input, bright, true);
+    const blurred = TexturePool.getSameSizeTexture(input);
+    this.kawase.apply(fm, bright, blurred, true);
+    const wide = TexturePool.getSameSizeTexture(input);
+    this.kawase2.apply(fm, blurred, wide, true);
+    this.resources.uMapTexture = blurred.source;
+    this.resources.uMap2Texture = wide.source;
+    fm.applyFilter(this, input, output, clear);
+    TexturePool.returnTexture(wide);
+    TexturePool.returnTexture(blurred);
+    TexturePool.returnTexture(bright);
+  }
+}
+
 interface Flake {
   x: number;
   y: number;
@@ -193,11 +298,14 @@ export class ScreenFx {
   private readonly blur = new BlurFilter({ strength: 0, quality: 2 });
   private readonly noise = new NoiseFilter({ noise: 0 });
   private readonly distort: DistortFilter | null;
+  private readonly glow: GlowFilter | null;
   /** 날씨 입자 (화면 좌표). */
   readonly weather = new Container();
   private readonly weatherGfx = new Graphics();
   private flakes: Flake[] = [];
   private lastKey = '';
+  /** 화면 높이 (px) — 흐림 반경을 화면 크기에 맞춘다 */
+  screenH = 720;
 
   constructor() {
     let d: DistortFilter | null = null;
@@ -207,6 +315,13 @@ export class ScreenFx {
       console.warn('[ORBIT] 화면 왜곡 필터를 만들 수 없습니다', e);
     }
     this.distort = d;
+    let g: GlowFilter | null = null;
+    try {
+      g = new GlowFilter();
+    } catch (e) {
+      console.warn('[ORBIT] 빛 번짐 필터를 만들 수 없습니다', e);
+    }
+    this.glow = g;
     this.weather.addChild(this.weatherGfx);
   }
 
@@ -241,7 +356,7 @@ export class ScreenFx {
     if (neon > 0) m = mul(m, saturation(1 + 0.8 * Math.min(2, neon)));
     const funk = k('Funk');
     if (funk > 0) m = mul(m, hue(((timeSec * 120) % 360) * Math.min(1, funk)));
-    if (bloom.intensity > 0 && (reduce || !this.distort)) {
+    if (bloom.intensity > 0 && (reduce || !this.glow)) {
       // 셰이더를 못 쓰면 밝기로 흉내
       const b = Math.min(2, bloom.intensity) * (reduce ? 0.3 : 1);
       m = mul(m, brightness(1 + 0.18 * b, bloom.color, 0.06 * b));
@@ -285,7 +400,7 @@ export class ScreenFx {
       u.uPoster = k('Posterize') > 0 ? Math.max(2, 10 - 6 * Math.min(1, k('Posterize'))) : 0;
       u.uTime = timeSec;
       u.uVig = Math.min(1, Math.max(k('Arcade'), k('Fisheye'), k('VHS'), k('EightiesTV'), k('FiftiesTV')) * 0.9);
-      u.uBloom = Math.min(3, bloom.intensity);
+      u.uBloom = 0; // 빛 번짐은 GlowFilter가 맡는다
       u.uBloomThr = bloom.threshold;
       u.uBloomCol[0] = ((bloom.color >> 16) & 255) / 255;
       u.uBloomCol[1] = ((bloom.color >> 8) & 255) / 255;
@@ -293,6 +408,21 @@ export class ScreenFx {
       if (u.uPixel > 0 || u.uAberr > 0 || u.uScan > 0 || u.uFish > 0 || u.uPoster > 0 || u.uVig > 0 || u.uBloom > 0) out.push(this.distort);
     }
     return out;
+  }
+
+  /**
+   * 트랙 층(타일·행성)에만 거는 빛 번짐. 배경까지 번지면 화면이 뿌옇게 떠서 트랙만.
+   * 화면 높이에 비례한 넓은 흐림 (720px 기준 약 25~45px).
+   */
+  worldFilters(bloom: BloomState, reduce: boolean): Filter[] {
+    if (reduce || !this.glow || bloom.intensity <= 0) return [];
+    const b = Math.min(3, bloom.intensity);
+    // 빛 색은 흰색과 원작 색의 중간 (원작 빛무리는 거의 흰색)
+    const c = bloom.color;
+    const half = (sh: number) => Math.round(127.5 + ((c >> sh) & 255) / 2);
+    const col = (half(16) << 16) | (half(8) << 8) | half(0);
+    this.glow.set(Math.max(0.35, bloom.threshold), 1.1 + 0.5 * b, col, (26 + 10 * Math.min(2, b)) * (this.screenH / 720));
+    return [this.glow];
   }
 
   /** 날씨 입자 그리기 (화면 크기 w×h, dt 초). */

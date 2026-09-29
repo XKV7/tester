@@ -137,6 +137,7 @@ export class EditorScreen implements Screen {
   enter(root: HTMLElement): void {
     stage.clearWorld();
     stage.setBackgroundImage(null);
+    stage.setBackgroundVideo(null);
     this.rebuild(false);
     this.buildDom(root);
     this.bindInput();

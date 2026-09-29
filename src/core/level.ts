@@ -313,7 +313,10 @@ function validateActionParams(a: Record<string, unknown>, type: ActionType, tile
     case 'MoveTrack':
       return first(range(), vec('offset'), optNum('rotation'), optNum('opacity', 0, 1), optNum('scale', 0, 100), optNum('duration', 0, MAX_EFFECT_BEATS), easeOk());
     case 'Background':
-      if (a.color === undefined && a.image === undefined) return 'color 또는 image가 필요합니다.';
+      if (a.color === undefined && a.image === undefined && a.video === undefined) return 'color, image, video 중 하나가 필요합니다.';
+      if (a.video !== undefined && typeof a.video !== 'string') return 'video는 파일 이름 문자열이어야 합니다.';
+      if (a.videoLoop !== undefined && typeof a.videoLoop !== 'boolean') return 'videoLoop는 true/false여야 합니다.';
+      if (a.videoOffset !== undefined && (typeof a.videoOffset !== 'number' || !Number.isFinite(a.videoOffset))) return 'videoOffset은 숫자여야 합니다.';
       if (a.color !== undefined && !isColor(a.color)) return 'color 형식이 잘못되었습니다.';
       if (a.image !== undefined && typeof a.image !== 'string') return 'image는 파일 이름 문자열이어야 합니다.';
       if (a.fit !== undefined && !['cover', 'contain', 'unscaled', 'tile'].includes(a.fit as string)) return "fit은 'cover', 'contain', 'unscaled', 'tile' 중 하나여야 합니다.";

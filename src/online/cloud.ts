@@ -2,7 +2,7 @@ import type { FirebaseApp } from 'firebase/app';
 import type { Auth, User } from 'firebase/auth';
 import type { Firestore } from 'firebase/firestore';
 import { parseLevelJson, serializeLevel } from '../core/level';
-import { findFile, type LevelPackage } from '../levels/package';
+import { findFile, findSong, type LevelPackage } from '../levels/package';
 import { firebaseConfig, onlineAvailable } from './config';
 
 /**
@@ -190,7 +190,7 @@ export function referencedFiles(pkg: LevelPackage): { name: string; data: Uint8A
   const out: { name: string; data: Uint8Array }[] = [];
   for (const n of names) {
     if (!n || out.some((o) => o.name === n)) continue;
-    const d = findFile(pkg.files, n);
+    const d = n === pkg.level.settings.songFile ? findSong(pkg.files, n) : findFile(pkg.files, n);
     if (d) out.push({ name: n, data: d });
   }
   return out;

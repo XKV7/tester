@@ -40,6 +40,8 @@ export class Stage {
   app!: Application;
   readonly bg = new Container();
   readonly world = new Container();
+  /** world를 감싸는 변환 없는 층 — 화면 좌표 필터(빛 번짐)를 여기에 건다 */
+  private readonly worldWrap = new Container();
   readonly overlay = new Container();
   private readonly flash = new Graphics();
   /** 배경 면 플래시 (배경 이미지 위, 트랙 아래) */
@@ -48,6 +50,9 @@ export class Stage {
   private bgImageUrl: string | null = null;
   private bgFit: 'cover' | 'contain' | 'unscaled' | 'tile' = 'cover';
   private bgTex: Texture | null = null;
+  private bgVideoEl: HTMLVideoElement | null = null;
+  private bgVideoSprite: Sprite | null = null;
+  private bgVideoUrl: string | null = null;
   /** 날씨 입자 등 화면 좌표 오버레이 (플래시 아래). */
   readonly screenLayer = new Container();
   private motes: Mote[] = [];
@@ -69,7 +74,8 @@ export class Stage {
     });
     host.appendChild(this.app.canvas);
     this.bg.addChild(this.moteGfx, this.bgFlash);
-    this.app.stage.addChild(this.bg, this.world, this.overlay);
+    this.worldWrap.addChild(this.world);
+    this.app.stage.addChild(this.bg, this.worldWrap, this.overlay);
     this.overlay.addChild(this.screenLayer, this.flash);
     for (let i = 0; i < 70; i++) {
       this.motes.push({
@@ -135,6 +141,76 @@ export class Stage {
     }
   }
 
+  /**
+   * 배경 동영상 (소리 없음). time: 동영상에서 보여줄 시각(초), null이면 멈춤. rate: 재생 속도.
+   * 조금씩 어긋나면 그대로 두고, 0.25초 넘게 어긋나면 맞춘다.
+   */
+  setBackgroundVideo(url: string | null, time: number | null = null, rate = 1, opts: { loop?: boolean; tint?: number; opacity?: number } = {}): void {
+    if (url !== this.bgVideoUrl) {
+      this.bgVideoUrl = url;
+      if (this.bgVideoSprite) {
+        this.bgVideoSprite.destroy({ texture: true, textureSource: true });
+        this.bgVideoSprite = null;
+      }
+      if (this.bgVideoEl) {
+        this.bgVideoEl.pause();
+        this.bgVideoEl.removeAttribute('src');
+        this.bgVideoEl.load();
+        this.bgVideoEl = null;
+      }
+      if (url) {
+        const v = document.createElement('video');
+        v.muted = true;
+        v.playsInline = true;
+        v.preload = 'auto';
+        v.crossOrigin = 'anonymous';
+        v.src = url;
+        this.bgVideoEl = v;
+        v.addEventListener(
+          'loadeddata',
+          () => {
+            if (this.bgVideoEl !== v) return;
+            const s = new Sprite(Texture.from(v));
+            this.bgVideoSprite = s;
+            this.bg.addChildAt(s, this.bgSprite ? 1 : 0);
+            this.layoutVideo();
+          },
+          { once: true },
+        );
+      }
+    }
+    const v = this.bgVideoEl;
+    if (!v) return;
+    v.loop = !!opts.loop;
+    const dur = Number.isFinite(v.duration) ? v.duration : Infinity;
+    let want = time;
+    if (want !== null && opts.loop && dur < Infinity && dur > 0) want = ((want % dur) + dur) % dur;
+    const visible = want !== null && want >= 0 && want < dur;
+    if (this.bgVideoSprite) {
+      this.bgVideoSprite.visible = want === null ? v.currentTime > 0 : visible;
+      this.bgVideoSprite.alpha = opts.opacity ?? 1;
+      this.bgVideoSprite.tint = opts.tint ?? 0xffffff;
+      this.layoutVideo();
+    }
+    if (want === null || !visible) {
+      if (!v.paused) v.pause();
+      if (want !== null && want < 0 && v.currentTime !== 0 && v.readyState >= 1) v.currentTime = 0;
+      return;
+    }
+    if (Math.abs(v.playbackRate - rate) > 0.001) v.playbackRate = rate;
+    if (v.readyState >= 1 && Math.abs(v.currentTime - want) > 0.25) v.currentTime = want;
+    if (v.paused) void v.play().catch(() => {});
+  }
+
+  private layoutVideo(): void {
+    const s = this.bgVideoSprite;
+    const v = this.bgVideoEl;
+    if (!s || !v || !v.videoWidth) return;
+    const k = Math.max(this.width / v.videoWidth, this.height / v.videoHeight);
+    s.scale.set((k * v.videoWidth) / s.texture.width, (k * v.videoHeight) / s.texture.height);
+    s.position.set((this.width - v.videoWidth * k) / 2, (this.height - v.videoHeight * k) / 2);
+  }
+
   private layoutBg(): void {
     const s = this.bgSprite;
     const tex = this.bgTex;
@@ -148,6 +224,17 @@ export class Stage {
       this.bgFit === 'unscaled' ? 1 : this.bgFit === 'contain' ? Math.min(this.width / tex.width, this.height / tex.height) : Math.max(this.width / tex.width, this.height / tex.height);
     s.scale.set(k);
     s.position.set((this.width - tex.width * k) / 2, (this.height - tex.height * k) / 2);
+  }
+
+  /** 트랙 층 필터 (빛 번짐). */
+  setWorldFilters(fs: Filter[]): void {
+    const w = this.worldWrap;
+    if (fs.length === 0) {
+      if (w.filters && (w.filters as Filter[]).length) w.filters = [];
+      return;
+    }
+    w.filterArea = this.app.screen;
+    w.filters = fs;
   }
 
   /** 화면 전체 필터 (없으면 빈 배열). */
