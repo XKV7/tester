@@ -139,6 +139,8 @@ export class VisualTimeline {
   /** 물결(원작 Glow) 두 번째 색 — 0xff000000 비트가 있으면 없음. */
   readonly tileColor2: Float64Array;
   readonly tileGlowDur: Float32Array;
+  /** 지나간 타일이 하얗게 빛나는 정도 (0~1) */
+  readonly tileLit: Float32Array;
   readonly tilePulseLen: Float32Array;
   /** 타일별 등장·퇴장 설정 (없으면 null = 항상 보임). */
   readonly tileAnim: (TileAnimCfg | null)[];
@@ -186,6 +188,7 @@ export class VisualTimeline {
     this.tileStyle = new Uint8Array(n);
     this.tileColor2 = new Float64Array(n);
     this.tileGlowDur = new Float32Array(n);
+    this.tileLit = new Float32Array(n);
     this.tilePulseLen = new Float32Array(n);
     this.decos = (chart.level.decorations ?? []).map((def) => ({
       def,
@@ -253,6 +256,7 @@ export class VisualTimeline {
     this.tileStyle.fill(0);
     this.tileColor2.fill(-1);
     this.tileGlowDur.fill(0);
+    this.tileLit.fill(1);
     this.tilePulseLen.fill(0);
     for (const d of this.decos) {
       d.ox = 0;
@@ -549,6 +553,7 @@ export class VisualTimeline {
         const from = this.tileColor.slice(lo, hi + 1);
         // 모양·물결은 바로 바뀐다
         if (a.style !== undefined) this.tileStyle.fill(TRACK_STYLES.indexOf(a.style), lo, hi + 1);
+        if (a.lit !== undefined) this.tileLit.fill(a.lit, lo, hi + 1);
         if (a.color2 !== undefined || a.style !== undefined) {
           this.tileColor2.fill(a.color2 !== undefined ? parseColor(a.color2, target) : -1, lo, hi + 1);
           this.tileGlowDur.fill(a.glowDuration ?? 2, lo, hi + 1);

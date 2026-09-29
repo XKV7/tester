@@ -16,6 +16,7 @@ export function toHex(c: number): string {
 }
 
 export function lerpColor(a: number, b: number, t: number): number {
+  t = t > 1 ? 1 : t > 0 ? t : 0; // 범위를 넘으면 색이 깨진다
   const ar = (a >> 16) & 255,
     ag = (a >> 8) & 255,
     ab = a & 255;
