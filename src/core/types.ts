@@ -181,8 +181,44 @@ export interface MoveDecorationsAction extends ActionBase {
   opacity?: number;
   visible?: boolean;
   image?: string;
+  /** 글자 장식의 글자 바꾸기 (원작 SetText) */
+  text?: string;
+  /** 입자 장식: 방출 시작·멈춤·모두 지우기 (원작 SetParticle) */
+  particle?: 'start' | 'stop' | 'clear';
+  /** 입자 장식: 한 번에 이만큼 뿜기 (원작 EmitParticle) */
+  emit?: number;
   duration?: number;
   ease?: EaseName;
+}
+/** 행성 크기·공전 반지름 (원작 ScalePlanets·ScaleRadius). 1 = 기본. */
+export interface PlanetsAction extends ActionBase {
+  type: 'Planets';
+  radius?: number;
+  size?: number;
+  duration?: number;
+  ease?: EaseName;
+}
+/**
+ * 화면 전체 효과 (원작 ScreenTile·ScreenScroll·HallOfMirrors·SetFrameRate).
+ * tile: 화면을 가로·세로 몇 번 반복 (음수 = 뒤집기), scroll: 초당 화면 몇 개만큼 흐르기,
+ * mirrors: 화면을 지우지 않아 잔상이 남음, fps: 화면을 이 초당 장면 수로 끊기 (0 = 끔).
+ */
+export interface ScreenAction extends ActionBase {
+  type: 'Screen';
+  tile?: [number, number];
+  scroll?: [number, number];
+  mirrors?: boolean;
+  fps?: number;
+  duration?: number;
+  ease?: EaseName;
+}
+/** 소리 (원작 SetHitsound·PlaySound). hitsound: 이후 타격음 종류 ('None' = 없음), play: 이 순간 소리 하나. */
+export interface SoundAction extends ActionBase {
+  type: 'Sound';
+  hitsound?: string;
+  hitVolume?: number;
+  play?: string;
+  volume?: number;
 }
 /** 명세 확장: 튜토리얼 안내 문구. */
 export interface TextAction extends ActionBase {
@@ -207,7 +243,10 @@ export type Action =
   | BloomAction
   | ShakeAction
   | TrackAnimAction
-  | MoveDecorationsAction;
+  | MoveDecorationsAction
+  | PlanetsAction
+  | ScreenAction
+  | SoundAction;
 
 export type ActionType = Action['type'];
 
@@ -235,6 +274,39 @@ export interface Decoration {
   visible?: boolean;
   /** 글자 크기 (월드 단위). */
   fontSize?: number;
+  /** 도형 장식 (원작 AddObject): 행성 또는 타일 모양. 크기는 scale 1 = 실제 행성·타일 크기. */
+  shape?: 'planet' | 'tile';
+  /** 입자 장식 (원작 AddParticle). image가 입자 그림. */
+  particle?: ParticleDef;
+}
+
+/** 입자 방출 설정. 길이는 월드 단위(TILE_LEN), 시간은 초. */
+export interface ParticleDef {
+  /** 초당 방출 수 [최소, 최대] */
+  rate: [number, number];
+  /** 입자 수명 (초) [최소, 최대] */
+  lifetime: [number, number];
+  /** 입자 크기 (그림 원래 크기 배율) [최소, 최대] */
+  size: [number, number];
+  /** 속도 (월드 단위/초) — 최소 벡터, 최대 벡터 */
+  velocity: [[number, number], [number, number]];
+  /** 초당 회전 (도) [최소, 최대] */
+  spin?: [number, number];
+  /** 방출 영역 (월드 단위, 가로·세로 전체 크기). 0이면 한 점. */
+  area?: [number, number];
+  /** 수명 동안 색 [시작, 끝] (#rrggbb) */
+  colors?: [string, string];
+  /** 수명 동안 불투명도: [시각 0~1, 값 0~1] 목록 */
+  alphaKeys?: [number, number][];
+  /** 레벨 시작부터 방출 */
+  autoPlay?: boolean;
+  /** 방출 시간 (초, 반복 아니면 이만큼 뒤 멈춤) */
+  duration?: number;
+  loop?: boolean;
+  /** 동시에 있을 수 있는 최대 입자 수 */
+  max?: number;
+  /** 시간 배율 (1 = 보통) */
+  speed?: number;
 }
 
 export interface LevelData {

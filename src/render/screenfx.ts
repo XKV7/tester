@@ -101,6 +101,8 @@ uniform float uBloomThr;
 uniform vec3 uBloomCol;
 uniform float uWave;
 uniform float uGlitch;
+uniform vec2 uTile;
+uniform vec2 uScroll;
 
 vec2 toTex(vec2 s) { return s * uOutputFrame.zw * uInputSize.zw; }
 vec4 samp(vec2 s) { return texture(uTexture, clamp(toTex(s), uInputClamp.xy, uInputClamp.zw)); }
@@ -108,6 +110,10 @@ vec4 samp(vec2 s) { return texture(uTexture, clamp(toTex(s), uInputClamp.xy, uIn
 void main() {
   vec2 s = vTextureCoord * uInputSize.xy / uOutputFrame.zw; // 화면 0~1
   vec2 s0 = s;
+  // 화면 반복·흐름 (원작 ScreenTile·ScreenScroll): 음수 반복은 뒤집기
+  if (uTile.x != 1.0 || uTile.y != 1.0 || uScroll.x != 0.0 || uScroll.y != 0.0) {
+    s = fract((s - 0.5) * uTile + 0.5 + uScroll);
+  }
   if (uFish > 0.0) {
     vec2 d = s - 0.5;
     float r2 = dot(d, d);
@@ -198,13 +204,15 @@ class DistortFilter extends Filter {
           uBloomThr: { value: 0.5, type: 'f32' },
           uBloomCol: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
           uWave: { value: 0, type: 'f32' },
+          uTile: { value: new Float32Array([1, 1]), type: 'vec2<f32>' },
+          uScroll: { value: new Float32Array([0, 0]), type: 'vec2<f32>' },
           uGlitch: { value: 0, type: 'f32' },
         }),
       },
     });
   }
-  get u(): Record<string, number> & { uBloomCol: Float32Array } {
-    return (this.resources.fx as { uniforms: Record<string, number> & { uBloomCol: Float32Array } }).uniforms;
+  get u(): Record<string, number> & { uBloomCol: Float32Array; uTile: Float32Array; uScroll: Float32Array } {
+    return (this.resources.fx as { uniforms: Record<string, number> & { uBloomCol: Float32Array; uTile: Float32Array; uScroll: Float32Array } }).uniforms;
   }
 }
 
@@ -349,6 +357,8 @@ export class ScreenFx {
     reduce: boolean,
     /** 카메라 이동 속도 (화면 px/초) — 모션 블러는 카메라가 움직일 때만. */
     motion: { x: number; y: number } = { x: 0, y: 0 },
+    /** 화면 반복 (가로·세로)·흐름 오프셋 (화면 단위) */
+    screen: { tile: [number, number]; scroll: [number, number] } = { tile: [1, 1], scroll: [0, 0] },
   ): Filter[] {
     const out: Filter[] = [];
     const k = (name: string) => Math.max(0, fs.get(name)?.intensity ?? 0);
@@ -418,12 +428,19 @@ export class ScreenFx {
       u.uVig = Math.min(1, Math.max(k('Arcade'), k('Fisheye'), k('VHS'), k('EightiesTV'), k('FiftiesTV'), k('Vignette')) * 0.9);
       u.uWave = Math.min(3, k('Waves'));
       u.uGlitch = Math.min(2, k('Glitch'));
+      // 0에 가까운 반복 횟수는 화면이 한 점으로 모이므로 막는다
+      const tl = (v: number) => (Math.abs(v) < 0.05 ? (v < 0 ? -0.05 : 0.05) : v);
+      u.uTile[0] = tl(screen.tile[0]);
+      u.uTile[1] = tl(screen.tile[1]);
+      u.uScroll[0] = screen.scroll[0] % 1;
+      u.uScroll[1] = screen.scroll[1] % 1;
+      const tiled = u.uTile[0] !== 1 || u.uTile[1] !== 1 || u.uScroll[0] !== 0 || u.uScroll[1] !== 0;
       u.uBloom = 0; // 빛 번짐은 GlowFilter가 맡는다
       u.uBloomThr = bloom.threshold;
       u.uBloomCol[0] = ((bloom.color >> 16) & 255) / 255;
       u.uBloomCol[1] = ((bloom.color >> 8) & 255) / 255;
       u.uBloomCol[2] = (bloom.color & 255) / 255;
-      if (u.uPixel > 0 || u.uAberr > 0 || u.uScan > 0 || u.uFish > 0 || u.uPoster > 0 || u.uVig > 0 || u.uBloom > 0 || u.uWave > 0 || u.uGlitch > 0) out.push(this.distort);
+      if (u.uPixel > 0 || u.uAberr > 0 || u.uScan > 0 || u.uFish > 0 || u.uPoster > 0 || u.uVig > 0 || u.uBloom > 0 || u.uWave > 0 || u.uGlitch > 0 || tiled) out.push(this.distort);
     }
     return out;
   }

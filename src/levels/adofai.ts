@@ -2,7 +2,7 @@ import { compileChart } from '../core/chart';
 import { TILE_LEN } from '../core/math';
 import { defaultMeta, defaultSettings, FILTER_NAMES, MAX_BPM, MAX_EFFECT_BEATS, MAX_EXTRA_BEATS, MAX_MULTIPLIER, validateLevel } from '../core/level';
 import { EASE_NAMES } from '../core/ease';
-import type { Action, Decoration, EaseName, LevelData, RecolorTrackAction, TrackAppear, TrackDisappear, TrackStyle } from '../core/types';
+import type { Action, Decoration, EaseName, LevelData, ParticleDef, RecolorTrackAction, TrackAppear, TrackDisappear, TrackStyle } from '../core/types';
 
 /**
  * 얼음과 불의 춤(.adofai) 레벨 → ORBIT 레벨 변환. 순수 함수.
@@ -79,6 +79,81 @@ export function stripRichText(s: string): string {
 export function adofaiColor(v: unknown): string | null {
   const m = /^#?([0-9a-fA-F]{6})([0-9a-fA-F]{2})?$/.exec(str(v).trim());
   return m ? `#${m[1].toLowerCase()}` : null;
+}
+
+/** 원작 8자리 색(RRGGBBAA)의 불투명도 (0~1). 6자리면 1. */
+export function adofaiAlpha(v: unknown): number {
+  const m = /^#?[0-9a-fA-F]{6}([0-9a-fA-F]{2})$/.exec(str(v).trim());
+  return m ? parseInt(m[1], 16) / 255 : 1;
+}
+
+/** 원작 AddParticle → 입자 설정. */
+function particleFrom(e: Record<string, unknown>): ParticleDef {
+  const pair = (v: unknown, d: [number, number]): [number, number] => (Array.isArray(v) ? [num(v[0], d[0]), num(v[1], d[1])] : [num(v, d[0]), num(v, d[1])]);
+  const sorted = (x: [number, number]): [number, number] => (x[0] <= x[1] ? x : [x[1], x[0]]);
+  const vel = Array.isArray(e.velocity) ? e.velocity : [];
+  const v0 = pair(vel[0], [0, 0]);
+  const v1 = pair(vel[1], v0);
+  const p: ParticleDef = {
+    rate: sorted(pair(e.emissionRate, [10, 10])),
+    lifetime: sorted(pair(e.particleLifetime, [1, 1])),
+    size: sorted(pair(e.particleSize, [100, 100]).map((x) => Math.max(0, x / 100)) as [number, number]),
+    velocity: [
+      [v0[0] * TILE_LEN, v0[1] * TILE_LEN],
+      [v1[0] * TILE_LEN, v1[1] * TILE_LEN],
+    ],
+  };
+  const spin = pair(e.rotationOverTime, [0, 0]);
+  if (spin[0] || spin[1]) p.spin = sorted([(spin[0] * 180) / Math.PI, (spin[1] * 180) / Math.PI]);
+  // 방출 영역: 원작 모양 크기 (사각형 = scale, 원 = 반지름 × scale)
+  const sc = pair(e.scale, [100, 100]).map((x) => Math.abs(x) / 100);
+  const shape = str(e.shapeType);
+  const rad = num(e.shapeRadius, 1);
+  const area: [number, number] = shape === 'Rectangle' || shape === 'Box' ? [sc[0] * TILE_LEN, sc[1] * TILE_LEN] : [2 * rad * sc[0] * TILE_LEN, 2 * rad * sc[1] * TILE_LEN];
+  if (area[0] > 0 || area[1] > 0) p.area = area;
+  const col = e.colorOverLifetime as Record<string, unknown> | undefined;
+  const start = e.color as Record<string, unknown> | undefined;
+  if (col && str(col.mode) === 'Gradient' && typeof col.gradient1 === 'object' && col.gradient1) {
+    const g = col.gradient1 as { colorKeys?: { time: number; color: string }[]; alphaKeys?: { time: number; alpha: number }[] };
+    const ck = (g.colorKeys ?? []).slice().sort((a, b) => a.time - b.time);
+    const c0 = adofaiColor(ck[0]?.color);
+    const c1 = adofaiColor(ck[ck.length - 1]?.color);
+    if (c0 && c1) p.colors = [c0, c1];
+    const ak = (g.alphaKeys ?? []).filter((k) => typeof k.time === 'number' && typeof k.alpha === 'number');
+    if (ak.length) p.alphaKeys = ak.map((k) => [Math.max(0, Math.min(1, k.time)), Math.max(0, Math.min(1, k.alpha))]);
+  } else {
+    const c = adofaiColor((col && str(col.mode) === 'Color' ? col.color1 : undefined) ?? start?.color1);
+    if (c && c !== '#ffffff') p.colors = [c, c];
+  }
+  if (e.autoPlay === true || e.autoPlay === 'Enabled') p.autoPlay = true;
+  const pd = num(e.playDuration, 0);
+  if (pd > 0) p.duration = pd;
+  if (e.loop === true || e.loop === 'Enabled') p.loop = true;
+  const mx = num(e.maxParticles, 1000);
+  p.max = Math.max(1, Math.min(2000, mx));
+  const sp = num(e.simulationSpeed, 100) / 100;
+  if (sp !== 1) p.speed = Math.max(0, Math.min(20, sp));
+  return p;
+}
+
+/** 원작 AddObject → 도형 장식 (행성 또는 타일). */
+function objectFrom(e: Record<string, unknown>, floor: number): Decoration | null {
+  const kind = str(e.objectType);
+  const planet = kind === 'Planet';
+  const d = decoFrom({ ...e, decorationImage: 'x' }, floor, false);
+  if (!d) return null;
+  delete d.image;
+  d.shape = planet ? 'planet' : 'tile';
+  const colKey = planet ? e.planetColor : e.trackColor;
+  const c = adofaiColor(colKey) ?? (planet ? '#ff8a3d' : '#debb7b');
+  d.color = c;
+  const a = planet ? adofaiAlpha(colKey) : num(e.trackOpacity, 100) / 100;
+  if (a < 1) d.opacity = Math.max(0, a * (d.opacity ?? 1));
+  if (!planet) {
+    const ang = num(e.trackAngle, 180);
+    if (ang !== 180) d.rotation = (d.rotation ?? 0) + (180 - ang) / 2;
+  }
+  return d;
 }
 
 function mapEase(v: unknown): EaseName | undefined {
@@ -464,6 +539,9 @@ export function convertAdofai(text: string): AdofaiResult {
       ...(img ? { fit: mode === 'Unscaled' ? 'unscaled' : mode === 'Tiled' ? 'tile' : 'cover', opacity: 1, ...(tint && tint !== '#ffffff' ? { tint } : {}) } : {}),
     } as Action);
   }
+  // 타격음 (원작 기본 Kick)
+  if (s.hitsound !== undefined || s.hitsoundVolume !== undefined)
+    actions.push({ floor: 0, type: 'Sound', hitsound: str(s.hitsound) || 'Kick', hitVolume: Math.max(0, Math.min(10, num(s.hitsoundVolume, 100) / 100)) });
   // 장식은 새 버전은 "decorations" 배열, 옛 버전은 actions 안의 AddDecoration/AddText
   const list = expandRepeats([...(Array.isArray(r.actions) ? r.actions : []), ...(Array.isArray(r.decorations) ? r.decorations : [])], last);
   for (const ev of list) {
@@ -677,6 +755,100 @@ export function convertAdofai(text: string): AdofaiResult {
         if (d) decorations.push(d);
         break;
       }
+      case 'AddParticle': {
+        const d = decoFrom(e, floor, false);
+        if (d) {
+          delete d.scale; // 원작 입자의 scale은 방출 영역 크기
+          d.particle = particleFrom(e);
+          decorations.push(d);
+        }
+        break;
+      }
+      case 'AddObject': {
+        const d = objectFrom(e, floor);
+        if (d) decorations.push(d);
+        break;
+      }
+      case 'SetParticle':
+      case 'EmitParticle': {
+        const tag = str(e.tag).trim();
+        if (!tag) break;
+        if (type === 'EmitParticle') {
+          vis({ floor, type: 'MoveDecorations', tag, emit: Math.max(1, Math.min(100000, Math.round(num(e.count, 10)))), duration: 0 });
+          break;
+        }
+        const mode = str(e.targetMode);
+        const particle = mode === 'Start' ? 'start' : mode === 'Stop' ? 'stop' : mode === 'Clear' ? 'clear' : null;
+        if (particle) vis({ floor, type: 'MoveDecorations', tag, particle, duration: 0 });
+        else bump(approx, 'SetParticle(속성 바꾸기)');
+        break;
+      }
+      case 'SetObject': {
+        const tag = str(e.tag).trim();
+        if (!tag) break;
+        const key = e.planetColor !== undefined ? e.planetColor : e.trackColor;
+        const c = adofaiColor(key);
+        if (!c) break;
+        const a: Action = { floor, type: 'MoveDecorations', tag, color: c, duration: dur(e.duration, 0) };
+        if (e.planetColor !== undefined) a.opacity = adofaiAlpha(e.planetColor);
+        const ease = mapEase(e.ease);
+        if (ease) a.ease = ease;
+        vis(a);
+        break;
+      }
+      case 'SetText': {
+        const tag = str(e.tag).trim();
+        if (tag) vis({ floor, type: 'MoveDecorations', tag, text: str(e.decText), duration: 0 });
+        break;
+      }
+      case 'ScalePlanets': {
+        const a: Action = { floor, type: 'Planets', size: Math.max(0, Math.min(100, num(e.scale, 100) / 100)), duration: dur(e.duration, 0) };
+        const ease = mapEase(e.ease);
+        if (ease) a.ease = ease;
+        if (str(e.targetPlanet) && str(e.targetPlanet) !== 'All') bump(approx, 'ScalePlanets(행성 하나만)');
+        vis(a);
+        break;
+      }
+      case 'ScaleRadius':
+        vis({ floor, type: 'Planets', radius: Math.max(0, Math.min(100, num(e.scale, 100) / 100)), duration: 0 });
+        break;
+      case 'HallOfMirrors':
+        vis({ floor, type: 'Screen', mirrors: onOff(e.enabled) });
+        break;
+      case 'ScreenTile': {
+        const t = Array.isArray(e.tile) ? e.tile : [1, 1];
+        const a: Action = { floor, type: 'Screen', tile: [num(t[0], 1), num(t[1], 1)], duration: dur(e.duration, 0) };
+        const ease = mapEase(e.ease);
+        if (ease) a.ease = ease;
+        vis(a);
+        break;
+      }
+      case 'ScreenScroll': {
+        // 원작 속도 단위는 확실하지 않아 1000 = 초당 화면 한 개로 본다
+        const sc = Array.isArray(e.scroll) ? e.scroll : [0, 0];
+        vis({ floor, type: 'Screen', scroll: [num(sc[0], 0) / 1000, -num(sc[1], 0) / 1000] });
+        break;
+      }
+      case 'SetFrameRate':
+        vis({ floor, type: 'Screen', fps: onOff(e.enabled) ? Math.max(1, Math.min(1000, num(e.frameRate, 60))) : 0 });
+        break;
+      case 'SetHitsound':
+        if (str(e.gameSound || 'Hitsound') !== 'Hitsound') {
+          bump(approx, 'SetHitsound(게임 소리)');
+          break;
+        }
+        actions.push({ floor, type: 'Sound', hitsound: str(e.hitsound) || 'Kick', hitVolume: Math.max(0, Math.min(10, num(e.hitsoundVolume, 100) / 100)) });
+        break;
+      case 'PlaySound':
+        vis({ floor, type: 'Sound', play: str(e.hitsound) || 'Kick', volume: Math.max(0, Math.min(10, num(e.hitsoundVolume, 100) / 100)) });
+        break;
+      // 편집기 전용·판정 문구·여백 등 화면에 영향이 없는 이벤트는 조용히 넘긴다
+      case 'Bookmark':
+      case 'EditorComment':
+      case 'SetDefaultText':
+      case 'ScaleMargin':
+      case 'Hide':
+        break;
       case 'MoveDecorations': {
         const tag = str(e.tag).trim();
         if (!tag) break;
@@ -703,7 +875,6 @@ export function convertAdofai(text: string): AdofaiResult {
       case 'FreeRoamTwirl':
       case 'FreeRoamRemove':
       case 'SetPlanetRotation':
-      case 'ScaleRadius':
         bump(approx, type);
         break;
       default:

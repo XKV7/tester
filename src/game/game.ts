@@ -88,6 +88,12 @@ export class Game {
   private hold: Hold | null = null;
   private held = new Set<string>();
   private schedIdx = 0;
+  /** 타일별 타격음 (원작 SetHitsound): 종류 (null = 기본 소리, 'None' = 없음)·크기 */
+  private hitKind: (string | null)[] = [];
+  private hitVol: Float32Array = new Float32Array(0);
+  /** 원작 PlaySound: 곡 시각 순 */
+  private plays: { time: number; sound: string; volume: number }[] = [];
+  private playIdx = 0;
   private beginFloor = 0;
   private failAt = 0;
   private clearAt = 0;
@@ -107,6 +113,37 @@ export class Game {
     this.speed = settings.playbackSpeed > 0 ? settings.playbackSpeed : 1;
     this.pitch = this.chart.level.settings.pitch * this.speed;
     this.startFloor = Math.max(0, Math.min(opts.startFloor ?? 0, this.chart.finish - 1));
+    // 타격음 바꾸기는 타일 기준, 소리 재생은 시각 기준
+    const n = this.chart.tiles.length;
+    this.hitKind = new Array(n).fill(null);
+    this.hitVol = new Float32Array(n).fill(1);
+    const sets = this.chart.level.actions.filter((a) => a.type === 'Sound' && (a.hitsound !== undefined || a.hitVolume !== undefined)).sort((a, b) => a.floor - b.floor);
+    let kind: string | null = null;
+    let vol = 1;
+    let si = 0;
+    for (let i = 0; i < n; i++) {
+      while (si < sets.length && sets[si].floor <= i) {
+        const a = sets[si++];
+        if (a.type !== 'Sound') continue;
+        if (a.hitsound !== undefined) kind = a.hitsound;
+        if (a.hitVolume !== undefined) vol = a.hitVolume;
+      }
+      this.hitKind[i] = kind;
+      this.hitVol[i] = vol;
+    }
+    this.plays = this.chart.visual
+      .filter((v) => v.action.type === 'Sound' && !!v.action.play)
+      .map((v) => ({ time: v.time, sound: (v.action as { play: string }).play, volume: (v.action as { volume?: number }).volume ?? 1 }))
+      .sort((a, b) => a.time - b.time);
+  }
+
+  /** 타일 i의 타격음 (when = ctx 시각). */
+  private hitSound(i: number, when?: number, scheduled = false): void {
+    const k = this.hitKind[i] ?? null;
+    if (k === 'None') return;
+    const v = this.hitVol[i] ?? 1;
+    if (v <= 0) return;
+    this.sfx.hit(when, scheduled, k, v);
   }
 
   /** 곡 재생 배율 = 레벨 pitch × 플레이 속도 (게임 중에는 고정). */
@@ -155,6 +192,7 @@ export class Game {
     }
     stage.setScreenFilters([]);
     stage.setWorldFilters([]);
+    stage.setMirrors(false);
     stage.camera.shakeX = 0;
     stage.camera.shakeY = 0;
     stage.setBackgroundImage(null);
@@ -200,6 +238,8 @@ export class Game {
     this.eng.play(this.buffer, songStart, this.pitch, ch.level.settings.volume, 0.15);
     for (const tt of ticks) this.sfx.tick(this.eng.ctxTimeForSong(tt), tt === ticks[ticks.length - 1]);
     this.schedIdx = floor + 1;
+    this.playIdx = 0;
+    while (this.playIdx < this.plays.length && this.plays[this.playIdx].time < songStart) this.playIdx++;
     this.timeline.reset();
     this.timeline.update(songStart);
     const p = this.track.pos(floor);
@@ -304,7 +344,7 @@ export class Game {
     this.cur++;
     this.stats.recordHit(this.cur, j);
     this.showJudge(this.cur, j);
-    if (!settings.autoHitSound) this.sfx.hit();
+    if (!settings.autoHitSound) this.hitSound(this.cur);
     this.onArrive();
   }
 
@@ -453,16 +493,26 @@ export class Game {
         while (this.schedIdx <= ch.finish && ch.times[this.schedIdx] < t + 0.35) {
           const i = this.schedIdx++;
           if (i > 0 && ch.times[i] === ch.times[i - 1] && i - 1 > this.beginFloor) continue;
-          if (ch.times[i] > t - 0.01) this.sfx.hit(this.eng.ctxTimeForSong(ch.times[i]), true);
+          if (ch.times[i] > t - 0.01) this.hitSound(i, this.eng.ctxTimeForSong(ch.times[i]), true);
         }
+      }
+      // 원작 PlaySound
+      while (this.state === 'playing' && this.playIdx < this.plays.length && this.plays[this.playIdx].time < t + 0.35) {
+        const pl = this.plays[this.playIdx++];
+        if (pl.time > t - 0.05) this.sfx.hit(this.eng.ctxTimeForSong(pl.time), true, pl.sound, pl.volume);
       }
     }
 
     // ── 렌더 ──
+    // 화면 끊김 (원작 SetFrameRate): 그리는 시각을 초당 fps 단계로 끊는다
+    const fpsQ = this.timeline.fps;
+    if (fpsQ > 0 && !settings.reduceEffects) tr = Math.floor(tr * fpsQ) / fpsQ;
     (window as unknown as { __orbitSongTime?: number }).__orbitSongTime = tr; // 자동 시험용 (화면 비교)
     this.timeline.update(tr);
     const tl = this.timeline;
     const reduce = settings.reduceEffects;
+    stage.setMirrors(tl.mirrors && !reduce);
+    this.planets.setSize(tl.planetSize);
     stage.setBackground(tl.bgColor);
     stage.setBackgroundImage(tl.bgImage ? fileUrl(this.opts.pkg, tl.bgImage) : null, { fit: tl.bgFit, tint: tl.bgTint, opacity: tl.bgOpacity });
     stage.setBackgroundVideo(
@@ -484,7 +534,7 @@ export class Game {
     const holdProgress = this.hold ? (tr - this.hold.start) / (this.hold.release - this.hold.start) : null;
     const aIsPivot = vcur % 2 === 0;
     if (this.state !== 'failed') {
-      this.orbiterPos = this.planets.update(pivot, angle, TILE_LEN, this.state === 'cleared' ? [] : tail, aIsPivot, holdProgress);
+      this.orbiterPos = this.planets.update(pivot, angle, TILE_LEN * tl.planetRadius, this.state === 'cleared' ? [] : tail, aIsPivot, holdProgress);
     }
 
     const cam = tl.camera;
@@ -507,10 +557,11 @@ export class Game {
       stage.camera.shakeX += (Math.random() - 0.5) * 24 * quake;
       stage.camera.shakeY += (Math.random() - 0.5) * 24 * quake;
     }
-    this.deco.update(stage.camera.x, stage.camera.y, stage.camera.rotation);
+    this.deco.update(stage.camera.x, stage.camera.y, stage.camera.rotation, tr);
     this.screenFx.screenH = stage.height;
     stage.setWorldFilters(this.screenFx.worldFilters(tl.bloom, reduce));
-    stage.setScreenFilters(this.screenFx.filters(tl.filters, tl.bloom, tr, reduce, motion));
+    const scroll: [number, number] = [tl.screenScroll[0] * tr, tl.screenScroll[1] * tr];
+    stage.setScreenFilters(this.screenFx.filters(tl.filters, tl.bloom, tr, reduce, motion, { tile: tl.screenTile, scroll }));
     this.screenFx.drawWeather(tl.filters, stage.width, stage.height, dt, reduce);
     const phase = beatPhaseAt(ch, tr);
     const frac = phase - Math.floor(phase);

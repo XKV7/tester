@@ -82,7 +82,7 @@ describe('.adofai 변환', () => {
     expect(byType('Checkpoint')).toHaveLength(1);
     expect(byType('RecolorTrack').filter((a) => a.floor === 6)).toEqual([{ floor: 6, type: 'RecolorTrack', from: 6, to: 8, color: '#ff0000', duration: 1 }]);
     expect(byType('Camera')[0]).toMatchObject({ zoom: 0.5, rotation: 30, offset: [TILE_LEN, 2 * TILE_LEN], ease: 'inOutQuad', duration: 2 });
-    expect(r.warnings.join(' ')).toContain('EditorComment 1개');
+    expect(r.warnings.join(' ')).not.toContain('EditorComment'); // 편집기 전용 이벤트는 조용히 넘김
     const c = compileChart(r.level);
     expect(c.tiles[1].bpm).toBe(200);
     expect(c.tiles[2].bpm).toBe(100);
@@ -311,5 +311,62 @@ describe('극단적인 BPM (Hello (BPM) 류)', () => {
     expect(f.find((a) => a.type === 'Filter' && a.filter === 'Brightness')).toMatchObject({ intensity: 0.8, duration: 2 });
     expect(r.level.actions.find((a) => a.type === 'Bloom')).toMatchObject({ enabled: true, threshold: 0.25, color: '#ff3600' });
     expect(r.warnings.join()).toContain('SuperHexagon');
+  });
+  it('입자·도형·글자 바꾸기·행성·화면·소리 이벤트', () => {
+    const r = level({
+      pathData: 'R'.repeat(12),
+      settings: { hitsound: 'Hat', hitsoundVolume: 50 },
+      actions: [
+        { floor: 1, eventType: 'AddParticle', tag: 'p1', decorationImage: 'dot.png', position: [1, 2], relativeTo: 'Tile', emissionRate: [5, 10], particleLifetime: [1, 2], particleSize: [50, 100], velocity: [[0, 1], [1, 2]], scale: [200, 100], shapeType: 'Rectangle', autoPlay: false, playDuration: 2, loop: false, maxParticles: 300, simulationSpeed: 200,
+          colorOverLifetime: { mode: 'Gradient', gradient1: { colorKeys: [{ time: 0, color: 'FF0000' }, { time: 1, color: '0000FF' }], alphaKeys: [{ time: 0, alpha: 0 }, { time: 1, alpha: 1 }] } } },
+        { floor: 1, eventType: 'AddObject', objectType: 'Planet', tag: 'o1', planetColor: 'ff000080', position: [0, 0], relativeTo: 'Tile', scale: [300, 300] },
+        { floor: 1, eventType: 'AddText', tag: 't1', decText: 'hi', position: [0, 0], relativeTo: 'Tile' },
+        { floor: 2, eventType: 'SetParticle', tag: 'p1', targetMode: 'Start', duration: 0 },
+        { floor: 3, eventType: 'EmitParticle', tag: 'p1', count: 20 },
+        { floor: 3, eventType: 'SetObject', tag: 'o1', planetColor: '00ff00ff', duration: 2 },
+        { floor: 3, eventType: 'SetText', tag: 't1', decText: 'bye' },
+        { floor: 4, eventType: 'ScalePlanets', scale: 50, duration: 1, targetPlanet: 'All' },
+        { floor: 4, eventType: 'ScaleRadius', scale: 150 },
+        { floor: 5, eventType: 'HallOfMirrors', enabled: true },
+        { floor: 5, eventType: 'ScreenTile', tile: [2, -1], duration: 0 },
+        { floor: 5, eventType: 'SetFrameRate', enabled: true, frameRate: 8 },
+        { floor: 6, eventType: 'SetHitsound', gameSound: 'Hitsound', hitsound: 'Kick', hitsoundVolume: 100 },
+        { floor: 6, eventType: 'PlaySound', hitsound: 'Clap', hitsoundVolume: 80, angleOffset: 90 },
+        { floor: 7, eventType: 'Bookmark' },
+      ],
+    });
+    const decos = r.level.decorations!;
+    const p = decos.find((d) => d.tag === 'p1')!;
+    expect(p.particle).toMatchObject({ rate: [5, 10], lifetime: [1, 2], size: [0.5, 1], colors: ['#ff0000', '#0000ff'], duration: 2, max: 300, speed: 2 });
+    expect(p.particle!.area![0]).toBeCloseTo(2 * TILE_LEN);
+    const o = decos.find((d) => d.tag === 'o1')!;
+    expect(o).toMatchObject({ shape: 'planet', color: '#ff0000', scale: [3, 3] });
+    expect(o.opacity).toBeCloseTo(128 / 255, 2);
+    const acts = r.level.actions;
+    const md = acts.filter((a) => a.type === 'MoveDecorations');
+    expect(md).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ tag: 'p1', particle: 'start' }),
+        expect.objectContaining({ tag: 'p1', emit: 20 }),
+        expect.objectContaining({ tag: 'o1', color: '#00ff00', opacity: 1, duration: 2 }),
+        expect.objectContaining({ tag: 't1', text: 'bye' }),
+      ]),
+    );
+    expect(acts.filter((a) => a.type === 'Planets')).toEqual([
+      expect.objectContaining({ size: 0.5, duration: 1 }),
+      expect.objectContaining({ radius: 1.5 }),
+    ]);
+    expect(acts.filter((a) => a.type === 'Screen')).toEqual(
+      expect.arrayContaining([expect.objectContaining({ mirrors: true }), expect.objectContaining({ tile: [2, -1] }), expect.objectContaining({ fps: 8 })]),
+    );
+    const snd = acts.filter((a) => a.type === 'Sound');
+    expect(snd).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ floor: 0, hitsound: 'Hat', hitVolume: 0.5 }),
+        expect.objectContaining({ floor: 6, hitsound: 'Kick', hitVolume: 1 }),
+        expect.objectContaining({ floor: 6, play: 'Clap', volume: 0.8, delay: 0.5 }),
+      ]),
+    );
+    expect(r.warnings.join()).not.toMatch(/AddParticle|AddObject|HallOfMirrors|ScreenTile|SetHitsound|PlaySound|Bookmark|ScalePlanets/);
   });
 });

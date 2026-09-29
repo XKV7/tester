@@ -1,18 +1,65 @@
-import { Container, Sprite, Text, Texture } from 'pixi.js';
+import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import type { Chart } from '../core/chart';
+import { lerpColor, parseColor } from '../core/color';
 import { degToRad, TILE_LEN } from '../core/math';
 import type { DecoState, VisualTimeline } from '../core/timeline';
+import type { ParticleDef } from '../core/types';
+import { BLOCK_W, PLANET_R } from './shapes';
 
 /** 원작 장식 이미지 1px의 월드 크기 (원작: 100px = 1 유닛, 타일 간격 = 1.5 유닛). */
 export const DECO_PX = TILE_LEN / 150;
 
+/** 한 장식의 입자들 (방출 장소 기준 좌표). */
+interface Particle {
+  s: Sprite;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  rot: number;
+  spin: number;
+  size: number;
+  age: number;
+  life: number;
+}
+
+interface PSys {
+  def: ParticleDef;
+  layer: Container;
+  live: Particle[];
+  pool: Sprite[];
+  /** 아직 내보내지 못한 방출량 (소수 누적) */
+  debt: number;
+  rate: number;
+  clearSerial: number;
+  c0: number;
+  c1: number;
+}
+
 interface Obj {
-  node: Sprite | Text;
+  node: Sprite | Text | Graphics | Container;
   image: string | null;
+  ps?: PSys;
+}
+
+const rand = (a: number, b: number) => a + Math.random() * (b - a);
+
+/** 불투명도 키 사이를 선형으로 (키가 없으면 1). */
+function alphaAt(keys: [number, number][] | undefined, t: number): number {
+  if (!keys || keys.length === 0) return 1;
+  if (t <= keys[0][0]) return keys[0][1];
+  for (let i = 1; i < keys.length; i++) {
+    if (t <= keys[i][0]) {
+      const [t0, a0] = keys[i - 1];
+      const [t1, a1] = keys[i];
+      return t1 > t0 ? a0 + ((a1 - a0) * (t - t0)) / (t1 - t0) : a1;
+    }
+  }
+  return keys[keys.length - 1][1];
 }
 
 /**
- * 장식(이미지·글자) 렌더링. depth 0 이상은 트랙 뒤(behind), 음수는 앞(front).
+ * 장식(이미지·글자·도형·입자) 렌더링. depth 0 이상은 트랙 뒤(behind), 음수는 앞(front).
  * 좌표는 월드(y 위쪽)를 화면용(y 아래쪽)으로 뒤집어 그린다.
  */
 export class DecorationView {
@@ -20,6 +67,7 @@ export class DecorationView {
   readonly front = new Container();
   private readonly objs: Obj[] = [];
   private readonly tex = new Map<string, Texture | 'loading' | null>();
+  private lastTime: number | null = null;
 
   constructor(
     private readonly chart: Chart,
@@ -29,17 +77,45 @@ export class DecorationView {
     this.behind.sortableChildren = true;
     this.front.sortableChildren = true;
     for (const d of tl.decos) {
-      const node = d.def.text !== undefined ? this.makeText(d) : new Sprite(Texture.EMPTY);
-      if (node instanceof Sprite) node.anchor.set(0.5);
+      const o = this.makeObj(d);
       const depth = d.def.depth ?? -1;
-      node.zIndex = -depth;
-      (depth >= 0 ? this.behind : this.front).addChild(node);
-      this.objs.push({ node, image: null });
+      o.node.zIndex = -depth;
+      (depth >= 0 ? this.behind : this.front).addChild(o.node);
+      this.objs.push(o);
     }
   }
 
   get count(): number {
     return this.objs.length;
+  }
+
+  private makeObj(d: DecoState): Obj {
+    const def = d.def;
+    if (def.particle) {
+      const layer = new Container();
+      const p = def.particle;
+      const c0 = parseColor(p.colors?.[0], 0xffffff);
+      const c1 = parseColor(p.colors?.[1], c0);
+      return { node: layer, image: null, ps: { def: p, layer, live: [], pool: [], debt: 0, rate: rand(p.rate[0], p.rate[1]), clearSerial: d.clearSerial, c0, c1 } };
+    }
+    if (def.shape === 'planet') {
+      // 흰색으로 그려 두고 색은 tint로 (색 바꾸기 이벤트가 그대로 먹게)
+      const g = new Graphics().circle(0, 0, PLANET_R).fill({ color: 0xffffff });
+      return { node: g, image: null };
+    }
+    if (def.shape === 'tile') {
+      const w = TILE_LEN;
+      const g = new Graphics()
+        .rect(-w / 2, -BLOCK_W / 2, w, BLOCK_W)
+        .fill({ color: 0xffffff })
+        .rect(-w / 2 + 5, -BLOCK_W / 2 + 5, w - 10, BLOCK_W - 10)
+        .fill({ color: 0xffffff, alpha: 0.35 });
+      return { node: g, image: null };
+    }
+    if (def.text !== undefined) return { node: this.makeText(d), image: null };
+    const s = new Sprite(Texture.EMPTY);
+    s.anchor.set(0.5);
+    return { node: s, image: null };
   }
 
   private makeText(d: DecoState): Text {
@@ -69,20 +145,32 @@ export class DecorationView {
   }
 
   /**
-   * camX, camY: 카메라 중심 (화면 좌표, y 아래쪽). camRot: 카메라 회전 (도).
+   * camX, camY: 카메라 중심 (화면 좌표, y 아래쪽). camRot: 카메라 회전 (도). time: 곡 시각 (초, 입자 시뮬레이션용).
    */
-  update(camX: number, camY: number, camRot: number): void {
+  update(camX: number, camY: number, camRot: number, time?: number): void {
     const decos = this.tl.decos;
     const rc = degToRad(camRot);
     const cos = Math.cos(-rc);
     const sin = Math.sin(-rc);
+    // 입자는 곡 시각 차이로 움직인다 (뒤로 가면 = 재시작, 모두 지움)
+    let dt = 0;
+    let rewound = false;
+    if (time !== undefined) {
+      if (this.lastTime !== null) {
+        dt = time - this.lastTime;
+        if (dt < 0) rewound = true;
+        dt = Math.max(0, Math.min(0.1, dt));
+      }
+      this.lastTime = time;
+    }
     for (let i = 0; i < decos.length; i++) {
       const d = decos[i];
       const o = this.objs[i];
       const node = o.node;
-      node.visible = d.visible && d.opacity > 0.001;
-      if (!node.visible) continue;
       const def = d.def;
+      if (o.ps) this.stepParticles(o.ps, d, dt, rewound, time ?? 0);
+      node.visible = d.visible && d.opacity > 0.001 && (!o.ps || o.ps.live.length > 0);
+      if (!node.visible) continue;
       // 이미지 교체·지연 로드
       if (node instanceof Sprite && d.image !== o.image) {
         const t = d.image ? this.texture(d.image) : null;
@@ -90,6 +178,11 @@ export class DecorationView {
           node.texture = t ?? Texture.EMPTY;
           o.image = d.image;
         }
+      }
+      // 글자 바꾸기 (원작 SetText)
+      if (node instanceof Text) {
+        const want = d.text ?? def.text ?? '';
+        if (node.text !== want) node.text = want;
       }
       const px = (def.position?.[0] ?? 0) + d.ox;
       const py = (def.position?.[1] ?? 0) + d.oy;
@@ -118,7 +211,12 @@ export class DecorationView {
       node.position.set(x, y);
       node.rotation = r;
       node.alpha = d.opacity;
-      node.tint = d.color;
+      if (o.ps) {
+        // 입자 묶음: 색은 입자마다, 크기 배율은 장식 크기
+        node.scale.set(d.sx, d.sy);
+        continue;
+      }
+      if (node instanceof Sprite || node instanceof Text || node instanceof Graphics) node.tint = d.color;
       if (node instanceof Sprite) {
         const tw = node.texture.width || 1;
         const th = node.texture.height || 1;
@@ -128,6 +226,91 @@ export class DecorationView {
         node.scale.set(sx, sy);
       }
     }
+  }
+
+  /** 입자 한 묶음 진행: 방출·이동·수명. */
+  private stepParticles(ps: PSys, d: DecoState, dt: number, rewound: boolean, time: number): void {
+    const p = ps.def;
+    if (rewound || ps.clearSerial !== d.clearSerial) {
+      for (const q of ps.live) this.release(ps, q);
+      ps.live = [];
+      ps.debt = 0;
+      ps.clearSerial = d.clearSerial;
+    }
+    const k = p.speed ?? 1;
+    const sdt = dt * k;
+    const max = p.max ?? 1000;
+    // 방출: 켜져 있고 (반복이 아니면) 방출 시간 안
+    let emitting = d.emitting && d.visible;
+    if (emitting && !p.loop && p.duration && time - d.emitSince > p.duration) emitting = false;
+    let n = 0;
+    if (emitting && sdt > 0) {
+      ps.debt += ps.rate * sdt;
+      n = Math.floor(ps.debt);
+      ps.debt -= n;
+    }
+    if (d.burst > 0) {
+      n += d.burst;
+      d.burst = 0;
+    }
+    n = Math.min(n, max - ps.live.length);
+    if (n > 0) {
+      const tex = d.image ? this.texture(d.image) : null;
+      for (let j = 0; j < n; j++) this.spawn(ps, tex);
+    }
+    // 이동·수명
+    const keep: Particle[] = [];
+    for (const q of ps.live) {
+      q.age += sdt;
+      if (q.age >= q.life) {
+        this.release(ps, q);
+        continue;
+      }
+      q.x += q.vx * sdt;
+      q.y += q.vy * sdt;
+      q.rot += q.spin * sdt;
+      const f = q.age / q.life;
+      q.s.position.set(q.x, -q.y);
+      q.s.rotation = -degToRad(q.rot);
+      q.s.alpha = alphaAt(p.alphaKeys, f);
+      q.s.tint = ps.c0 === ps.c1 ? ps.c0 : lerpColor(ps.c0, ps.c1, f);
+      keep.push(q);
+    }
+    ps.live = keep;
+  }
+
+  private spawn(ps: PSys, tex: Texture | null): void {
+    const p = ps.def;
+    const s = ps.pool.pop() ?? new Sprite(Texture.EMPTY);
+    s.anchor.set(0.5);
+    s.texture = tex ?? Texture.WHITE;
+    const size = rand(p.size[0], p.size[1]);
+    // 그림이 없으면 작은 흰 사각형
+    const base = tex ? DECO_PX : TILE_LEN * 0.08;
+    s.scale.set(base * size * (tex ? 1 : 1 / Math.max(1, s.texture.width)));
+    const area = p.area ?? [0, 0];
+    const q: Particle = {
+      s,
+      x: (Math.random() - 0.5) * area[0],
+      y: (Math.random() - 0.5) * area[1],
+      vx: rand(p.velocity[0][0], p.velocity[1][0]),
+      vy: rand(p.velocity[0][1], p.velocity[1][1]),
+      rot: 0,
+      spin: p.spin ? rand(p.spin[0], p.spin[1]) : 0,
+      size,
+      age: 0,
+      life: Math.max(0.05, rand(p.lifetime[0], p.lifetime[1])),
+    };
+    s.visible = true;
+    ps.layer.addChild(s);
+    ps.live.push(q);
+  }
+
+  private release(ps: PSys, q: Particle): void {
+    q.s.visible = false;
+    ps.layer.removeChild(q.s);
+    if (ps.pool.length < 500) ps.pool.push(q.s);
+    else q.s.destroy();
   }
 
   destroy(): void {

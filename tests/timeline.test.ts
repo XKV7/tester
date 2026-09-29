@@ -180,6 +180,36 @@ describe('원작 연출 타임라인', () => {
     expect(tl.flashAlpha).toBeCloseTo(1);
   });
 
+  it('행성 크기·반지름, 화면 반복·잔상·끊김, 입자 방출 상태', () => {
+    const tl = lv(
+      [
+        { floor: 1, type: 'Planets', size: 0.5, radius: 2, duration: 2 },
+        { floor: 2, type: 'Screen', tile: [2, 2], duration: 0, mirrors: true, fps: 10 },
+        { floor: 3, type: 'MoveDecorations', tag: 'p', particle: 'start' },
+        { floor: 4, type: 'MoveDecorations', tag: 'p', emit: 30 },
+        { floor: 5, type: 'MoveDecorations', tag: 'p', particle: 'clear' },
+      ],
+      [{ tag: 'p', image: 'a.png', particle: { rate: [1, 1], lifetime: [1, 1], size: [1, 1], velocity: [[0, 0], [0, 0]] } }],
+    );
+    tl.update(2);
+    expect(tl.planetSize).toBeCloseTo(0.75);
+    expect(tl.planetRadius).toBeCloseTo(1.5);
+    expect(tl.screenTile).toEqual([2, 2]);
+    expect(tl.mirrors).toBe(true);
+    expect(tl.fps).toBe(10);
+    const d = tl.decos[0];
+    expect(d.emitting).toBe(false);
+    tl.update(3.5);
+    expect(d.emitting).toBe(true);
+    expect(d.emitSince).toBe(3);
+    tl.update(4.5);
+    expect(d.burst).toBe(30);
+    const cs = d.clearSerial;
+    tl.update(5.5);
+    expect(d.emitting).toBe(false);
+    expect(d.clearSerial).toBe(cs + 1);
+  });
+
   it('밝기 필터는 1이 변화 없음: 켤 때 1에서, 끌 때 1로', () => {
     const tl = lv([
       { floor: 1, type: 'Filter', filter: 'Brightness', enabled: true, intensity: 0.5, duration: 2 },

@@ -68,6 +68,12 @@ export class PlanetsView {
     this.container.visible = v;
   }
 
+  /** 행성 크기 배율 (원작 ScalePlanets). */
+  setSize(k: number): void {
+    this.a.scale.set(k);
+    this.b.scale.set(k);
+  }
+
   setAlpha(a: number, b: number): void {
     this.a.alpha = a;
     this.b.alpha = b;
