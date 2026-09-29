@@ -1,7 +1,7 @@
 import { GraphicsContext } from 'pixi.js';
 import { degToRad, TILE_LEN } from '../core/math';
 
-export const BAND_W = 34;
+export const BAND_W = 42;
 export const PLANET_R = 15;
 
 /** 수학 각도 → 화면 벡터 (y 반전). */
@@ -37,6 +37,46 @@ export function bandContext(angleIn: number | null, angleOut: number | null, mid
   c.circle(0, 0, BAND_W * 0.25).fill({ color: 0x000000, alpha: 0.16 });
   bandCache.set(key, c);
   return c;
+}
+
+/** 원작식 블록 타일 굵기와 테두리 두께. */
+export const BLOCK_W = 58;
+export const BLOCK_BORDER = 6;
+const blockCache = new Map<string, { outer: GraphicsContext; inner: GraphicsContext }>();
+
+/**
+ * 원작식 사각 블록 타일: 바깥(테두리 색) + 안쪽(속 색) 두 겹. 모서리는 각지게, 흰색으로 그려 tint로 색칠.
+ */
+export function blockContexts(angleIn: number | null, angleOut: number | null, midspin: boolean): { outer: GraphicsContext; inner: GraphicsContext } {
+  const key = `${angleIn === null ? 'n' : angleIn.toFixed(2)}|${angleOut === null ? 'n' : angleOut.toFixed(2)}|${midspin}`;
+  const hit = blockCache.get(key);
+  if (hit) return hit;
+  const half = TILE_LEN / 2;
+  const back = angleIn !== null ? sv(angleIn + 180, half) : null;
+  const fwd = angleOut !== null && !midspin ? sv(angleOut, half) : null;
+  const draw = (c: GraphicsContext, w: number, trim: number) => {
+    // 끝을 조금 줄여 이웃 타일과 경계가 보이게
+    const shorten = (v: { x: number; y: number }) => {
+      const l = Math.hypot(v.x, v.y) || 1;
+      return { x: (v.x * (l - trim)) / l, y: (v.y * (l - trim)) / l };
+    };
+    const b = back ? shorten(back) : null;
+    const f = fwd ? shorten(fwd) : null;
+    if (b && f) c.moveTo(b.x, b.y).lineTo(0, 0).lineTo(f.x, f.y);
+    else if (b) c.moveTo(b.x, b.y).lineTo(0, 0);
+    else if (f) c.moveTo(0, 0).lineTo(f.x, f.y);
+    else c.moveTo(-1, 0).lineTo(1, 0);
+    c.stroke({ width: w, color: 0xffffff, cap: 'butt', join: 'miter', miterLimit: 3 });
+    // 한쪽만 있는 타일(시작·끝·미드스핀)은 중심 쪽 끝도 네모나게
+    if (!(b && f)) c.rect(-w / 2, -w / 2, w, w).fill({ color: 0xffffff });
+  };
+  const outer = new GraphicsContext();
+  draw(outer, BLOCK_W, 0.5);
+  const inner = new GraphicsContext();
+  draw(inner, BLOCK_W - BLOCK_BORDER * 2, BLOCK_BORDER + 0.5);
+  const v = { outer, inner };
+  blockCache.set(key, v);
+  return v;
 }
 
 export type IconKind =

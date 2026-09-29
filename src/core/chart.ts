@@ -167,7 +167,9 @@ export function compileChart(level: LevelData): Chart {
     const t = tiles[a.floor];
     const beats = 'duration' in a && typeof a.duration === 'number' ? a.duration : 0;
     // delay: 타일을 친 뒤 몇 박 늦게 (그 타일의 BPM 기준 — 원작 angleOffset)
-    visual.push({ action: a, time: t.time + ((a.delay ?? 0) * 60) / t.bpm, duration: (beats * 60) / t.bpm });
+    // 첫 타일의 즉시 이벤트(길이 0, 지연 없음)는 레벨 시작 상태 — 카운트다운 전부터 적용
+    const atStart = a.floor === 0 && !a.delay && !(beats > 0);
+    visual.push({ action: a, time: atStart ? -1e9 : t.time + ((a.delay ?? 0) * 60) / t.bpm, duration: (beats * 60) / t.bpm });
   }
   visual.sort((a, b) => a.time - b.time);
 

@@ -2,7 +2,7 @@ import { compileChart } from '../core/chart';
 import { TILE_LEN } from '../core/math';
 import { defaultMeta, defaultSettings, FILTER_NAMES, MAX_BPM, MAX_EFFECT_BEATS, MAX_EXTRA_BEATS, MAX_MULTIPLIER, validateLevel } from '../core/level';
 import { EASE_NAMES } from '../core/ease';
-import type { Action, Decoration, EaseName, LevelData, TrackAppear, TrackDisappear } from '../core/types';
+import type { Action, Decoration, EaseName, LevelData, RecolorTrackAction, TrackAppear, TrackDisappear, TrackStyle } from '../core/types';
 
 /**
  * 얼음과 불의 춤(.adofai) 레벨 → ORBIT 레벨 변환. 순수 함수.
@@ -125,6 +125,32 @@ function tileRef(ref: unknown, floor: number, last: number): number {
   return Math.max(0, Math.min(last, base + n));
 }
 
+const STYLE_MAP: Record<string, TrackStyle> = { Standard: 'standard', Neon: 'neon', NeonLight: 'neon', Basic: 'basic', Minimal: 'basic', Gems: 'standard' };
+const APPEAR_MAP: Record<string, TrackAppear> = {
+  None: 'none', Fade: 'fade', Grow: 'grow', Grow_Spin: 'spin', Extend: 'extend', Drop: 'drop', Rise: 'rise',
+  Assemble: 'scatter', Assemble_Far: 'scatter', Assemble_Scatter: 'scatter', Scatter: 'scatter', Scatter_Far: 'scatter',
+};
+const DISAPPEAR_MAP: Record<string, TrackDisappear> = {
+  None: 'none', Fade: 'fade', Shrink: 'shrink', Shrink_Spin: 'spin', Scatter: 'scatter', Scatter_Far: 'scatter', Retract: 'retract', Rise: 'fade', Drop: 'fade',
+};
+
+/** 원작 트랙 색 필드(trackColor·trackStyle·trackColorType·secondaryTrackColor …) → RecolorTrack의 색·모양·물결. */
+function trackLook(e: Record<string, unknown>): Pick<RecolorTrackAction, 'color' | 'style' | 'color2' | 'glowDuration' | 'pulseLength'> | null {
+  const c = adofaiColor(e.trackColor);
+  if (!c) return null;
+  const look: Pick<RecolorTrackAction, 'color' | 'style' | 'color2' | 'glowDuration' | 'pulseLength'> = { color: c };
+  const st = STYLE_MAP[str(e.trackStyle)];
+  if (st) look.style = st;
+  const type = str(e.trackColorType);
+  const c2 = adofaiColor(e.secondaryTrackColor);
+  if (c2 && c2 !== c && (type === 'Glow' || type === 'Blink' || type === 'Switch' || type === 'Rainbow' || type === 'Volume')) {
+    look.color2 = c2;
+    look.glowDuration = Math.max(0.05, num(e.trackColorAnimDuration, 2));
+    if (str(e.trackColorPulse) !== 'None') look.pulseLength = Math.max(0, num(e.trackPulseLength, 10));
+  }
+  return look;
+}
+
 /** 원작 AddDecoration / AddText → 장식. 위치 단위: 타일 (× TILE_LEN). */
 function decoFrom(e: Record<string, unknown>, floor: number, isText: boolean): Decoration | null {
   const image = str(e.decorationImage).split(/[\\/]/).pop() ?? '';
@@ -226,6 +252,43 @@ export function convertAdofai(text: string): AdofaiResult {
 
   const decorations: Decoration[] = [];
   const filterSet = new Set(FILTER_NAMES);
+  const colorTracks: { floor: number; look: NonNullable<ReturnType<typeof trackLook>> }[] = [];
+
+  // ── 레벨 설정에 들어 있는 시작 상태 (원작은 설정에 첫 카메라·트랙 모양·배경·타일 애니메이션을 둔다)
+  const startLook = trackLook({ trackColor: s.trackColor ?? 'debb7b', trackStyle: s.trackStyle ?? 'Standard', ...s });
+  if (startLook) colorTracks.push({ floor: 0, look: startLook });
+  if (s.relativeTo !== undefined || s.zoom !== undefined || s.position !== undefined || s.rotation !== undefined) {
+    const cam: Action = { floor: 0, type: 'Camera', duration: 0 };
+    const rel = str(s.relativeTo);
+    cam.relativeTo = rel === 'Tile' ? 'tile' : rel === 'Global' ? 'global' : 'player';
+    if (rel === 'Tile') cam.tile = 0;
+    if (Array.isArray(s.position)) cam.offset = [num(s.position[0], 0) * TILE_LEN, num(s.position[1], 0) * TILE_LEN];
+    if (s.rotation !== undefined) cam.rotation = num(s.rotation, 0);
+    if (s.zoom !== undefined) cam.zoom = Math.max(0.05, Math.min(20, 100 / Math.max(1, num(s.zoom, 100))));
+    actions.push(cam);
+  }
+  if (s.trackAnimation !== undefined || s.trackDisappearAnimation !== undefined) {
+    actions.push({
+      floor: 0,
+      type: 'TrackAnim',
+      appear: APPEAR_MAP[str(s.trackAnimation)] ?? 'none',
+      beatsAhead: Math.max(0, num(s.beatsAhead, 3)),
+      disappear: DISAPPEAR_MAP[str(s.trackDisappearAnimation)] ?? 'none',
+      beatsBehind: Math.max(0, num(s.beatsBehind, 4)),
+    });
+  }
+  {
+    const img = str(s.bgImage).split(/[\\/]/).pop() ?? '';
+    const mode = str(s.bgDisplayMode);
+    const tint = adofaiColor(s.bgImageColor);
+    actions.push({
+      floor: 0,
+      type: 'Background',
+      color: settings.bgColor,
+      image: img,
+      ...(img ? { fit: mode === 'Unscaled' ? 'unscaled' : mode === 'Tiled' ? 'tile' : 'cover', opacity: 1, ...(tint && tint !== '#ffffff' ? { tint } : {}) } : {}),
+    } as Action);
+  }
   // 장식은 새 버전은 "decorations" 배열, 옛 버전은 actions 안의 AddDecoration/AddText
   const list = [...(Array.isArray(r.actions) ? r.actions : []), ...(Array.isArray(r.decorations) ? r.decorations : [])];
   for (const ev of list) {
@@ -274,16 +337,17 @@ export function convertAdofai(text: string): AdofaiResult {
         actions.push({ floor, type: 'Checkpoint' });
         break;
       case 'ColorTrack': {
-        const c = adofaiColor(e.trackColor);
-        if (c) vis({ floor, type: 'RecolorTrack', from: floor, to: last, color: c });
+        // 원작 ColorTrack은 시간 이벤트가 아니라 '이 타일부터 트랙 모양' — 아래에서 구간별로 처음부터 적용
+        const look = trackLook(e);
+        if (look) colorTracks.push({ floor, look });
         break;
       }
       case 'RecolorTrack': {
-        const c = adofaiColor(e.trackColor);
-        if (!c) break;
+        const look = trackLook(e);
+        if (!look) break;
         const a = tileRef(e.startTile, floor, last);
         const b = tileRef(e.endTile, floor, last);
-        vis({ floor, type: 'RecolorTrack', from: Math.min(a, b), to: Math.max(a, b), color: c, duration: dur(e.duration, 0) });
+        vis({ floor, type: 'RecolorTrack', from: Math.min(a, b), to: Math.max(a, b), ...look, duration: dur(e.duration, 0) });
         break;
       }
       case 'MoveCamera': {
@@ -304,8 +368,20 @@ export function convertAdofai(text: string): AdofaiResult {
         break;
       }
       case 'Flash': {
+        // 원작: 시작 → 끝 상태로 바뀌고, 끝 상태가 그대로 남는다
         const color = adofaiColor(e.startColor) ?? '#ffffff';
-        vis({ floor, type: 'Flash', color, opacity: Math.max(0, Math.min(1, num(e.startOpacity, 100) / 100)), duration: dur(e.duration, 1) });
+        const endColor = adofaiColor(e.endColor) ?? color;
+        const pct = (v: unknown, d: number) => Math.max(0, Math.min(1, num(v, d) / 100));
+        vis({
+          floor,
+          type: 'Flash',
+          color,
+          opacity: pct(e.startOpacity, 100),
+          endColor,
+          endOpacity: pct(e.endOpacity, 0),
+          ...(str(e.plane) === 'Background' ? { plane: 'bg' as const } : {}),
+          duration: dur(e.duration, 1),
+        });
         break;
       }
       case 'MoveTrack': {
@@ -383,13 +459,8 @@ export function convertAdofai(text: string): AdofaiResult {
         });
         break;
       case 'AnimateTrack': {
-        const ap: Record<string, TrackAppear> = {
-          None: 'none', Fade: 'fade', Grow: 'grow', Grow_Spin: 'spin', Extend: 'extend', Drop: 'drop', Rise: 'rise',
-          Assemble: 'scatter', Assemble_Far: 'scatter', Assemble_Scatter: 'scatter', Scatter: 'scatter', Scatter_Far: 'scatter',
-        };
-        const dp: Record<string, TrackDisappear> = {
-          None: 'none', Fade: 'fade', Shrink: 'shrink', Shrink_Spin: 'spin', Scatter: 'scatter', Scatter_Far: 'scatter', Retract: 'retract', Rise: 'fade', Drop: 'fade',
-        };
+        const ap = APPEAR_MAP;
+        const dp = DISAPPEAR_MAP;
         const a: Action = { floor, type: 'TrackAnim' };
         if (e.trackAnimation !== undefined) a.appear = ap[str(e.trackAnimation)] ?? 'fade';
         if (e.beatsAhead !== undefined) a.beatsAhead = Math.max(0, Math.min(MAX_EFFECT_BEATS, num(e.beatsAhead, 3)));
@@ -437,6 +508,14 @@ export function convertAdofai(text: string): AdofaiResult {
         bump(skipped, type || '(이름 없음)');
     }
   }
+
+  // ColorTrack (+ 설정의 시작 모양) → 구간마다 레벨 시작부터 적용되는 RecolorTrack
+  colorTracks.sort((a, b) => a.floor - b.floor);
+  colorTracks.forEach((ct, j) => {
+    const to = j + 1 < colorTracks.length ? colorTracks[j + 1].floor - 1 : last;
+    if (to >= ct.floor) actions.unshift({ floor: 0, type: 'RecolorTrack', from: ct.floor, to, ...ct.look, duration: 0 });
+  });
+  if (startLook) settings.trackColor = startLook.color;
 
   // PositionTrack → 타일마다 누적 위치를 구해, 같은 위치가 이어지는 구간마다 즉시 적용되는 MoveTrack (첫 타일에서)
   if (shift.length) {

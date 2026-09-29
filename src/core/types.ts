@@ -78,14 +78,28 @@ export interface FlashAction extends ActionBase {
   type: 'Flash';
   color?: string;
   opacity?: number;
+  /** 끝 색·불투명도 (생략 = 같은 색, 0). 끝나도 끝 상태가 남는다. */
+  endColor?: string;
+  endOpacity?: number;
+  /** fg = 화면 전체(기본), bg = 배경만 (트랙 뒤) */
+  plane?: 'fg' | 'bg';
   duration?: number;
 }
+/** 타일 모양: orbit(기본, 둥근 띠) · standard(채움 + 어두운 테두리) · neon(어두운 속 + 밝은 테두리, 밟으면 환하게) · basic(단색). */
+export type TrackStyle = 'orbit' | 'standard' | 'neon' | 'basic';
 export interface RecolorTrackAction extends ActionBase {
   type: 'RecolorTrack';
   from: number;
   to: number;
   color: string;
   duration?: number;
+  style?: TrackStyle;
+  /** 두 번째 색: 있으면 두 색 사이를 물결치듯 오간다 (원작 Glow). */
+  color2?: string;
+  /** 한 번 오가는 시간 (초). */
+  glowDuration?: number;
+  /** 물결 한 번의 길이 (타일 수). */
+  pulseLength?: number;
 }
 export interface MoveTrackAction extends ActionBase {
   type: 'MoveTrack';

@@ -80,7 +80,7 @@ describe('.adofai 변환', () => {
     expect(byType('Pause')).toEqual([{ floor: 4, type: 'Pause', beats: 2 }]);
     expect(byType('Hold')).toEqual([{ floor: 5, type: 'Hold', beats: 2 }]);
     expect(byType('Checkpoint')).toHaveLength(1);
-    expect(byType('RecolorTrack')).toEqual([{ floor: 6, type: 'RecolorTrack', from: 6, to: 8, color: '#ff0000', duration: 1 }]);
+    expect(byType('RecolorTrack').filter((a) => a.floor === 6)).toEqual([{ floor: 6, type: 'RecolorTrack', from: 6, to: 8, color: '#ff0000', duration: 1 }]);
     expect(byType('Camera')[0]).toMatchObject({ zoom: 0.5, rotation: 30, offset: [TILE_LEN, 2 * TILE_LEN], ease: 'inOutQuad', duration: 2 });
     expect(r.warnings.join(' ')).toContain('EditorComment 1개');
     const c = compileChart(r.level);
@@ -152,7 +152,7 @@ describe('.adofai 변환', () => {
     });
     expect(r.level.actions.find((a) => a.type === 'Camera')).toMatchObject({ duration: 5000 });
     expect(r.level.actions.find((a) => a.type === 'Flash')).toMatchObject({ duration: 2400 });
-    expect(r.level.actions.find((a) => a.type === 'RecolorTrack')).toMatchObject({ duration: 10_000_000 });
+    expect(r.level.actions.find((a) => a.type === 'RecolorTrack' && a.floor === 3)).toMatchObject({ duration: 10_000_000 });
   });
 
   it('깨진 파일은 알아볼 수 있는 오류', () => {
@@ -216,6 +216,34 @@ describe('원작 연출 옮기기', () => {
       { relativeTo: 'camera', floor: 0, position: [0, 0], text: '안녕', fontSize: 40, depth: -1 },
     ]);
     expect(r.level.actions.find((a) => a.type === 'MoveDecorations')).toMatchObject({ tag: 'M1', offset: [0, 20 * TILE_LEN], rotation: 45, scale: [2, 0.5], opacity: 0.5, duration: 2 });
+  });
+});
+
+describe('원작 설정의 시작 상태와 트랙 모양', () => {
+  it('설정의 시작 카메라·트랙 모양·배경·타일 애니메이션, ColorTrack은 구간별로 처음부터', () => {
+    const r = convertAdofai(
+      JSON.stringify({
+        angleData: Array(30).fill(0),
+        settings: {
+          bpm: 120, offset: 0, trackColor: '85dbfc', secondaryTrackColor: '3467a8', trackColorType: 'Glow', trackColorAnimDuration: 2,
+          trackColorPulse: 'Forward', trackPulseLength: 10, trackStyle: 'Neon', trackAnimation: 'None', beatsAhead: 3,
+          trackDisappearAnimation: 'Fade', beatsBehind: 1, bgImage: 'BG1.jpg', bgImageColor: 'ffffff', bgDisplayMode: 'FitToScreen',
+          relativeTo: 'Tile', position: [-1, 2.5], rotation: 0, zoom: 130,
+        },
+        actions: [{ floor: 11, eventType: 'ColorTrack', trackColor: 'ff0000', trackStyle: 'Standard', trackColorType: 'Single' }],
+      }),
+    );
+    const v = validateLevel(r.level);
+    expect(v.ok, v.ok ? '' : v.errors.join('\n')).toBe(true);
+    const at0 = r.level.actions.filter((a) => a.floor === 0);
+    expect(at0).toContainEqual({ floor: 0, type: 'RecolorTrack', from: 0, to: 10, color: '#85dbfc', style: 'neon', color2: '#3467a8', glowDuration: 2, pulseLength: 10, duration: 0 });
+    expect(at0).toContainEqual({ floor: 0, type: 'RecolorTrack', from: 11, to: 30, color: '#ff0000', style: 'standard', duration: 0 });
+    expect(at0.find((a) => a.type === 'Camera')).toMatchObject({ relativeTo: 'tile', tile: 0, offset: [-TILE_LEN, 2.5 * TILE_LEN], zoom: 100 / 130, duration: 0 });
+    expect(at0.find((a) => a.type === 'TrackAnim')).toMatchObject({ appear: 'none', disappear: 'fade', beatsBehind: 1 });
+    expect(at0.find((a) => a.type === 'Background')).toMatchObject({ image: 'BG1.jpg', fit: 'cover', opacity: 1 });
+    // 시작 상태는 카운트다운 전부터 (시각 -∞ 취급)
+    const c = compileChart(r.level);
+    expect(c.visual.filter((v2) => v2.action.floor === 0).every((v2) => v2.time < -1e8)).toBe(true);
   });
 });
 

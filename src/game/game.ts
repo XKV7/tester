@@ -445,6 +445,7 @@ export class Game {
     }
 
     // ── 렌더 ──
+    (window as unknown as { __orbitSongTime?: number }).__orbitSongTime = tr; // 자동 시험용 (화면 비교)
     this.timeline.update(tr);
     const tl = this.timeline;
     const reduce = settings.reduceEffects;
@@ -490,7 +491,8 @@ export class Game {
     this.track.uprightTexts((stage.camera.rotation * Math.PI) / 180);
     this.fx.rotation = (stage.camera.rotation * Math.PI) / 180;
     this.fx.update(now);
-    stage.frame(tl.flashColor, reduce ? 0 : tl.flashAlpha);
+    // 배경 면 플래시는 밝기를 낮추는 용도가 많아 효과 줄이기에서도 유지
+    stage.frame(tl.flashColor, reduce ? 0 : tl.flashAlpha, tl.bgFlashColor, tl.bgFlashAlpha);
 
     // HUD
     hud.setProgress(ch.finish > 0 ? this.cur / ch.finish : 1);
