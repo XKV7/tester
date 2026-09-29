@@ -66,6 +66,8 @@ const PLAYER: CameraAnchor = { kind: 'player' };
 interface ActiveAnim {
   ev: TimedAction;
   apply: (p: number) => void;
+  /** 같은 채널의 새 이벤트가 오면 이전 것은 멈춘다 (원작: 새 카메라 이동이 이전 이동을 대체). */
+  chan?: string;
 }
 
 /**
@@ -90,8 +92,14 @@ export class VisualTimeline {
   shakeY = 0;
   private shakes: { t0: number; dur: number; strength: number; freq: number; fade: boolean }[] = [];
   readonly decos: DecoState[];
-  /** 'last' 기준 카메라가 시작할 때 현재 카메라 중심(월드, y 위쪽)을 묻는다. 없으면 이전 기준 유지. */
-  resolveCenter: (() => { x: number; y: number }) | null = null;
+  /**
+   * 카메라가 따라가는 행성 위치 (월드, y 위쪽). '직전 위치' 카메라는 이걸로 지금 중심을 바로 계산한다
+   * (같은 순간의 앞 이벤트까지 반영 — 지난 프레임 값이면 같은 타일의 '타일로 순간 이동'을 놓친다). 없으면 이전 기준 유지.
+   */
+  playerPos: (() => { x: number; y: number }) | null = null;
+  private currentCenter(): { x: number; y: number } | null {
+    return this.playerPos ? cameraCenter(this.camera, this.playerPos()) : null;
+  }
   readonly tileScale: Float32Array;
   /** 타일별 등장·퇴장 설정 (없으면 null = 항상 보임). */
   readonly tileAnim: (TileAnimCfg | null)[];
@@ -316,6 +324,13 @@ export class VisualTimeline {
     switch (a.type) {
       case 'Camera': {
         const from = { ...this.camera };
+        const setsPos = a.relativeTo !== undefined || a.offset !== undefined;
+        const setsZoom = a.zoom !== undefined;
+        const setsRot = a.rotation !== undefined;
+        // 이 이벤트가 정하는 속성의 이전 이동은 멈춘다 (지금 값에서 이어서 시작)
+        this.active = this.active.filter(
+          (x) => !((setsPos && x.chan === 'cam.pos') || (setsZoom && x.chan === 'cam.zoom') || (setsRot && x.chan === 'cam.rot')),
+        );
         // 새 기준점: 지정이 없으면 그대로
         let anchor = from.anchor;
         let ox0 = from.ox;
@@ -324,11 +339,13 @@ export class VisualTimeline {
         if (rel === 'player') anchor = PLAYER;
         else if (rel === 'global') anchor = { kind: 'fixed', x: 0, y: 0 };
         else if (rel === 'tile') {
-          const ti = this.chart.tiles[Math.max(0, Math.min(n - 1, a.tile ?? a.floor))];
-          anchor = { kind: 'fixed', x: ti.x, y: ti.y };
-        } else if (rel === 'last' && this.resolveCenter) {
+          // 그 타일의 지금 위치 (트랙 위치 이동 포함)
+          const idx = Math.max(0, Math.min(n - 1, a.tile ?? a.floor));
+          const ti = this.chart.tiles[idx];
+          anchor = { kind: 'fixed', x: ti.x + this.tileOffX[idx], y: ti.y + this.tileOffY[idx] };
+        } else if (rel === 'last' && this.playerPos) {
           // 직전 카메라 위치에 고정: 기준을 그 자리로 옮기고 오프셋은 0에서 시작
-          const c = this.resolveCenter();
+          const c = this.currentCenter()!;
           anchor = { kind: 'fixed', x: c.x, y: c.y };
           ox0 = 0;
           oy0 = 0;
@@ -341,22 +358,43 @@ export class VisualTimeline {
           ox: a.offset ? a.offset[0] : rel && rel !== 'last' ? 0 : ox0,
           oy: a.offset ? a.offset[1] : rel && rel !== 'last' ? 0 : oy0,
         };
-        const prev = changed ? from.anchor : anchor;
-        return {
-          ev,
-          apply: (p) => {
-            const k = ease(a.ease as EaseName | undefined, p);
-            this.camera = {
-              zoom: lerp(from.zoom, to.zoom, k),
-              rotation: lerp(from.rotation, to.rotation, k),
-              ox: lerp(ox0, to.ox, k),
-              oy: lerp(oy0, to.oy, k),
-              anchor,
-              prevAnchor: prev,
-              mix: changed ? k : 1,
-            };
-          },
-        };
+        // 기준이 바뀌는 도중에 또 바뀌면: 지금 보이는 자리(오프셋 뺀 것)를 이전 기준으로 삼아 끊김 없이
+        let prevEff = from.anchor;
+        if (from.mix < 1 && this.playerPos) {
+          const c = this.currentCenter()!;
+          prevEff = { kind: 'fixed', x: c.x - from.ox, y: c.y - from.oy };
+        }
+        const prev = changed ? prevEff : anchor;
+        const mid = rel === 'last' || changed || from.mix >= 1 ? null : { prevAnchor: from.prevAnchor, mix: from.mix };
+        const k0 = (p: number) => ease(a.ease as EaseName | undefined, p);
+        if (setsPos)
+          this.active.push({
+            ev,
+            chan: 'cam.pos',
+            apply: (p) => {
+              const k = k0(p);
+              const c = this.camera;
+              c.ox = lerp(ox0, to.ox, k);
+              c.oy = lerp(oy0, to.oy, k);
+              c.anchor = anchor;
+              if (changed) {
+                c.prevAnchor = prev;
+                c.mix = k;
+              } else if (mid) {
+                // 이전 전환이 끝나지 않았으면 그 섞임을 마저 끝낸다
+                c.prevAnchor = mid.prevAnchor;
+                c.mix = lerp(mid.mix, 1, k);
+              } else {
+                c.prevAnchor = anchor;
+                c.mix = 1;
+              }
+            },
+          });
+        if (setsZoom)
+          this.active.push({ ev, chan: 'cam.zoom', apply: (p) => (this.camera.zoom = lerp(from.zoom, to.zoom, k0(p))) });
+        if (setsRot)
+          this.active.push({ ev, chan: 'cam.rot', apply: (p) => (this.camera.rotation = lerp(from.rotation, to.rotation, k0(p))) });
+        return null;
       }
       case 'Flash': {
         const color = parseColor(a.color, 0xffffff);
@@ -419,10 +457,13 @@ export class VisualTimeline {
       }
       case 'Filter': {
         if (a.exclusive) for (const k of [...this.filters.keys()]) if (k !== a.filter) this.filters.delete(k);
+        const chan = 'filter:' + a.filter;
+        this.active = this.active.filter((x) => x.chan !== chan);
         const cur = this.filters.get(a.filter)?.intensity ?? 0;
         const target = a.enabled ? (a.intensity ?? 1) : 0;
         return {
           ev,
+          chan,
           apply: (p) => {
             const v = lerp(cur, target, p);
             if (p >= 1 && target <= 0) this.filters.delete(a.filter);

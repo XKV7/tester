@@ -77,8 +77,13 @@ export class TrackView {
       const kinds = this.iconKinds[t.floor];
       if (t.twirl) twirled = true;
       if (t.twirl) kinds.push('twirl');
-      if (t.speed === 'up') kinds.push('speedUp');
-      if (t.speed === 'down') kinds.push('speedDown');
+      // 원작처럼: 빨라지면 토끼, 느려지면 달팽이 (2배 이상 바뀌면 두 마리)
+      if (t.speed) {
+        const prev = this.chart.tiles[Math.max(0, t.floor - 1)].bpm;
+        const ratio = t.bpm / prev;
+        if (t.speed === 'up') kinds.push(ratio >= 2 - 1e-9 ? 'speedUp2' : 'speedUp');
+        else kinds.push(ratio <= 0.5 + 1e-9 ? 'speedDown2' : 'speedDown');
+      }
       if (t.checkpoint) kinds.push('checkpoint');
       if (t.midspin) kinds.push('midspin');
       if (t.pauseBeats > 0) kinds.push('pause');

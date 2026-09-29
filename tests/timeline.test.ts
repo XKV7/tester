@@ -156,9 +156,20 @@ describe('원작 연출 타임라인', () => {
   it('직전 위치 기준: 지금 카메라 자리에 고정하고 오프셋만 더함', async () => {
     const { cameraCenter } = await import('../src/core/timeline');
     const tl = lv([{ floor: 2, type: 'Camera', relativeTo: 'last', offset: [100, 0], duration: 0 }]);
-    tl.resolveCenter = () => ({ x: 300, y: 40 });
+    tl.playerPos = () => ({ x: 300, y: 40 });
     tl.update(5);
     expect(cameraCenter(tl.camera, player)).toEqual({ x: 400, y: 40 });
+  });
+
+  it('같은 타일: 타일로 순간 이동 → 직전 위치 기준이면 그 타일에 머문다', async () => {
+    const { cameraCenter } = await import('../src/core/timeline');
+    const tl = lv([
+      { floor: 3, type: 'Camera', relativeTo: 'tile', tile: 3, duration: 0 },
+      { floor: 3, type: 'Camera', relativeTo: 'last', offset: [0, 0], zoom: 0.9, duration: 1 },
+    ]);
+    tl.playerPos = () => ({ x: 900, y: 0 });
+    tl.update(3.5);
+    expect(cameraCenter(tl.camera, { x: 900, y: 0 })).toEqual({ x: 300, y: 0 });
   });
 
   it('delay: 타일을 친 뒤 늦게 시작', () => {

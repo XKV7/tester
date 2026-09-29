@@ -93,6 +93,8 @@ export class Game {
   private clearAt = 0;
   private resumeAt = 0;
   private orbiterPos = { x: 0, y: 0 };
+  /** 카메라가 따라가는 행성 위치 (화면 좌표) — 이것만 부드럽게 따라가고, 오프셋·줌·회전·타일 기준은 원작 이징 그대로. */
+  private camPivot = { x: 0, y: 0 };
   private tickerFn = () => this.frame();
   private visHandler = () => {
     if (document.hidden && this.state === 'playing') this.pause();
@@ -124,8 +126,8 @@ export class Game {
     stage.clearWorld();
     stage.world.addChild(this.deco.behind, this.track.container, this.planets.container, this.deco.front, this.fx.container);
     stage.screenLayer.addChild(this.screenFx.weather);
-    // '직전 위치 기준' 카메라: 지금 카메라 중심 (월드, y 위쪽)
-    this.timeline.resolveCenter = () => ({ x: stage.camera.x, y: -stage.camera.y });
+    // 카메라가 따라가는 행성 위치 (월드, y 위쪽) — '직전 위치 기준' 카메라가 지금 중심을 계산할 때 쓴다
+    this.timeline.playerPos = () => ({ x: this.camPivot.x, y: -this.camPivot.y });
     this.input.onEscape = () => this.togglePause();
     this.input.attach();
     document.addEventListener('visibilitychange', this.visHandler);
@@ -194,6 +196,7 @@ export class Game {
     this.timeline.reset();
     this.timeline.update(songStart);
     const p = this.track.pos(floor);
+    this.camPivot = { x: p.x, y: p.y };
     const c0 = cameraCenter(this.timeline.camera, { x: p.x, y: -p.y });
     stage.camera.snap(c0.x, -c0.y, this.timeline.camera.zoom, this.timeline.camera.rotation);
     this.state = 'playing';
@@ -465,11 +468,14 @@ export class Game {
 
     const cam = tl.camera;
     // 카메라 중심: 기준점(행성·타일·월드·직전 위치) + 오프셋 — 월드는 y 위쪽, 화면은 y 아래쪽
-    const cc = cameraCenter(cam, { x: pivot.x, y: -pivot.y });
     const dt = stage.tick();
+    const fk = 1 - Math.exp(-8 * dt);
+    this.camPivot.x += (pivot.x - this.camPivot.x) * fk;
+    this.camPivot.y += (pivot.y - this.camPivot.y) * fk;
+    const cc = cameraCenter(cam, { x: this.camPivot.x, y: -this.camPivot.y });
     const px0 = stage.camera.x;
     const py0 = stage.camera.y;
-    stage.camera.follow(cc.x, -cc.y, cam.zoom, reduce ? 0 : cam.rotation, dt);
+    stage.camera.snap(cc.x, -cc.y, cam.zoom, reduce ? 0 : cam.rotation);
     const sc = stage.baseScale * stage.camera.zoom;
     const motion = dt > 0 ? { x: ((stage.camera.x - px0) * sc) / dt, y: ((stage.camera.y - py0) * sc) / dt } : { x: 0, y: 0 };
     stage.camera.shakeX = reduce ? 0 : tl.shakeX;
