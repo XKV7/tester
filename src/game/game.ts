@@ -557,7 +557,7 @@ export class Game {
       stage.camera.shakeX += (Math.random() - 0.5) * 24 * quake;
       stage.camera.shakeY += (Math.random() - 0.5) * 24 * quake;
     }
-    this.deco.update(stage.camera.x, stage.camera.y, stage.camera.rotation, tr);
+    this.deco.update(stage.camera.x, stage.camera.y, stage.camera.rotation, tr, stage.camera.zoom);
     this.screenFx.screenH = stage.height;
     stage.setWorldFilters(this.screenFx.worldFilters(tl.bloom, reduce));
     const scroll: [number, number] = [tl.screenScroll[0] * tr, tl.screenScroll[1] * tr];

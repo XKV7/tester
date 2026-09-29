@@ -180,6 +180,25 @@ describe('원작 연출 타임라인', () => {
     expect(tl.flashAlpha).toBeCloseTo(1);
   });
 
+  it('장식 이동: 빈 축은 그대로, 크기는 절대값, 카메라 따라가기 값도 움직인다', () => {
+    const tl = lv(
+      [
+        { floor: 1, type: 'MoveDecorations', tag: 'd', offset: [100, 50], duration: 0 },
+        { floor: 2, type: 'MoveDecorations', tag: 'd', offset: [null, 0], scale: [2, null], parallax: [1, null], alpha: 0.5, duration: 0 },
+      ],
+      [{ tag: 'd', image: 'a.png', scale: [4, 3], alpha: 0.2 }],
+    );
+    const d = tl.decos[0];
+    expect([d.sx, d.sy, d.calpha]).toEqual([4, 3, 0.2]);
+    tl.update(1.5);
+    expect([d.ox, d.oy]).toEqual([100, 50]);
+    tl.update(2.5);
+    expect([d.ox, d.oy]).toEqual([100, 0]);
+    expect([d.sx, d.sy]).toEqual([2, 3]);
+    expect([d.parx, d.pary]).toEqual([1, 0]);
+    expect(d.calpha).toBe(0.5);
+  });
+
   it('행성 크기·반지름, 화면 반복·잔상·끊김, 입자 방출 상태', () => {
     const tl = lv(
       [

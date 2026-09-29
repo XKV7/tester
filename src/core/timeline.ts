@@ -40,6 +40,13 @@ export interface DecoState {
   sy: number;
   color: number;
   opacity: number;
+  /** 색의 불투명도 (원작 8자리 색) */
+  calpha: number;
+  /** 카메라 따라가기 비율·기준점 이동 */
+  parx: number;
+  pary: number;
+  pox: number;
+  poy: number;
   visible: boolean;
   image: string | null;
   /** 글자 장식의 지금 글자 (null = 처음 글자) */
@@ -190,6 +197,11 @@ export class VisualTimeline {
       sy: 1,
       color: 0xffffff,
       opacity: 1,
+      calpha: 1,
+      parx: 0,
+      pary: 0,
+      pox: 0,
+      poy: 0,
       visible: true,
       image: null,
       text: null,
@@ -246,10 +258,16 @@ export class VisualTimeline {
       d.ox = 0;
       d.oy = 0;
       d.rot = 0;
-      d.sx = 1;
-      d.sy = 1;
+      // 크기는 절대값 (장식 정의의 크기에서 시작)
+      d.sx = d.def.scale?.[0] ?? 1;
+      d.sy = d.def.scale?.[1] ?? 1;
       d.color = parseColor(d.def.color, 0xffffff);
       d.opacity = d.def.opacity ?? 1;
+      d.calpha = d.def.alpha ?? 1;
+      d.parx = d.def.parallax?.[0] ?? 0;
+      d.pary = d.def.parallax?.[1] ?? 0;
+      d.pox = d.def.parallaxOffset?.[0] ?? 0;
+      d.poy = d.def.parallaxOffset?.[1] ?? 0;
       d.visible = d.def.visible !== false;
       d.image = d.def.image ?? null;
       d.text = null;
@@ -614,7 +632,9 @@ export class VisualTimeline {
         const targets = this.decos.filter((d) => d.tags.some((t) => tags.includes(t)));
         if (!targets.length) return null;
         const col = a.color !== undefined ? parseColor(a.color, 0xffffff) : null;
-        const from = targets.map((d) => ({ ox: d.ox, oy: d.oy, rot: d.rot, sx: d.sx, sy: d.sy, color: d.color, opacity: d.opacity }));
+        const from = targets.map((d) => ({ ox: d.ox, oy: d.oy, rot: d.rot, sx: d.sx, sy: d.sy, color: d.color, opacity: d.opacity, calpha: d.calpha, parx: d.parx, pary: d.pary, pox: d.pox, poy: d.poy }));
+        // null인 축은 지금 값 그대로
+        const to = (v: number | null | undefined, cur: number, k: number) => (v === null || v === undefined ? cur : lerp(cur, v, k));
         for (const d of targets) {
           if (a.visible !== undefined) d.visible = a.visible;
           if (a.image !== undefined) d.image = a.image || null;
@@ -637,14 +657,23 @@ export class VisualTimeline {
             targets.forEach((d, j) => {
               const f = from[j];
               if (a.offset) {
-                d.ox = lerp(f.ox, a.offset[0], k);
-                d.oy = lerp(f.oy, a.offset[1], k);
+                d.ox = to(a.offset[0], f.ox, k);
+                d.oy = to(a.offset[1], f.oy, k);
               }
               if (a.rotation !== undefined) d.rot = lerp(f.rot, a.rotation, k);
               if (a.scale) {
-                d.sx = lerp(f.sx, a.scale[0], k);
-                d.sy = lerp(f.sy, a.scale[1], k);
+                d.sx = to(a.scale[0], f.sx, k);
+                d.sy = to(a.scale[1], f.sy, k);
               }
+              if (a.parallax) {
+                d.parx = to(a.parallax[0], f.parx, k);
+                d.pary = to(a.parallax[1], f.pary, k);
+              }
+              if (a.parallaxOffset) {
+                d.pox = to(a.parallaxOffset[0], f.pox, k);
+                d.poy = to(a.parallaxOffset[1], f.poy, k);
+              }
+              if (a.alpha !== undefined) d.calpha = lerp(f.calpha, a.alpha, k);
               if (col !== null) d.color = p >= 1 ? col : lerpColor(f.color, col, p);
               if (a.opacity !== undefined) d.opacity = lerp(f.opacity, a.opacity, k);
             });
