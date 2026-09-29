@@ -173,10 +173,17 @@ export interface TrackAnimAction extends ActionBase {
 export interface MoveDecorationsAction extends ActionBase {
   type: 'MoveDecorations';
   tag: string;
-  /** 원래 위치 기준 이동량 (월드 단위, y 위쪽). */
-  offset?: [number, number];
+  /** 원래 위치 기준 이동량 (월드 단위, y 위쪽). null인 축은 그대로. */
+  offset?: [number | null, number | null];
   rotation?: number;
-  scale?: [number, number];
+  /** null인 축은 그대로. */
+  scale?: [number | null, number | null];
+  /** 카메라 따라가기 비율 (0~1), null인 축은 그대로. */
+  parallax?: [number | null, number | null];
+  /** 카메라 따라가기 기준점 이동 (월드 단위), null인 축은 그대로. */
+  parallaxOffset?: [number | null, number | null];
+  /** 색의 불투명도 (원작 8자리 색의 마지막 두 자리, 0~1). */
+  alpha?: number;
   color?: string;
   opacity?: number;
   visible?: boolean;
@@ -269,8 +276,19 @@ export interface Decoration {
   opacity?: number;
   /** 작을수록 앞. 0 이상은 트랙 뒤. */
   depth?: number;
-  /** 0 = 월드와 함께, 1 = 화면에 고정 (x, y). */
+  /** 0 = 월드와 함께, 1 = 화면에 고정 (x, y). 기준 타일 위치를 중심으로 계산. */
   parallax?: [number, number];
+  /** 카메라 따라가기 기준점 이동 (월드 단위). */
+  parallaxOffset?: [number, number];
+  /** 색의 불투명도 (0~1, 원작 8자리 색). opacity와 곱한다. */
+  alpha?: number;
+  /** 그림을 가로·세로 몇 번 이어 붙일지 (원작 tile). */
+  tile?: [number, number];
+  /** 섞는 방식: add = 더하기(원작 LinearDodge), screen = 스크린 */
+  blend?: 'add' | 'screen';
+  /** 카메라 회전·확대와 상관없이 화면에서 같은 방향·크기 */
+  lockRotation?: boolean;
+  lockScale?: boolean;
   visible?: boolean;
   /** 글자 크기 (월드 단위). */
   fontSize?: number;

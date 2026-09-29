@@ -1,4 +1,4 @@
-import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
+import { Container, Graphics, Sprite, Text, Texture, TilingSprite } from 'pixi.js';
 import type { Chart } from '../core/chart';
 import { lerpColor, parseColor } from '../core/color';
 import { degToRad, TILE_LEN } from '../core/math';
@@ -37,7 +37,7 @@ interface PSys {
 }
 
 interface Obj {
-  node: Sprite | Text | Graphics | Container;
+  node: Sprite | TilingSprite | Text | Graphics | Container;
   image: string | null;
   ps?: PSys;
 }
@@ -113,8 +113,10 @@ export class DecorationView {
       return { node: g, image: null };
     }
     if (def.text !== undefined) return { node: this.makeText(d), image: null };
-    const s = new Sprite(Texture.EMPTY);
+    // 이어 붙인 그림 (원작 tile)
+    const s = def.tile ? new TilingSprite({ texture: Texture.EMPTY, width: 1, height: 1 }) : new Sprite(Texture.EMPTY);
     s.anchor.set(0.5);
+    if (def.blend) s.blendMode = def.blend;
     return { node: s, image: null };
   }
 
@@ -147,7 +149,7 @@ export class DecorationView {
   /**
    * camX, camY: 카메라 중심 (화면 좌표, y 아래쪽). camRot: 카메라 회전 (도). time: 곡 시각 (초, 입자 시뮬레이션용).
    */
-  update(camX: number, camY: number, camRot: number, time?: number): void {
+  update(camX: number, camY: number, camRot: number, time?: number, camZoom = 1): void {
     const decos = this.tl.decos;
     const rc = degToRad(camRot);
     const cos = Math.cos(-rc);
@@ -169,14 +171,18 @@ export class DecorationView {
       const node = o.node;
       const def = d.def;
       if (o.ps) this.stepParticles(o.ps, d, dt, rewound, time ?? 0);
-      node.visible = d.visible && d.opacity > 0.001 && (!o.ps || o.ps.live.length > 0);
+      node.visible = d.visible && d.opacity * d.calpha > 0.001 && (!o.ps || o.ps.live.length > 0);
       if (!node.visible) continue;
       // 이미지 교체·지연 로드
-      if (node instanceof Sprite && d.image !== o.image) {
+      if ((node instanceof Sprite || node instanceof TilingSprite) && d.image !== o.image) {
         const t = d.image ? this.texture(d.image) : null;
         if (t || !d.image) {
           node.texture = t ?? Texture.EMPTY;
           o.image = d.image;
+          if (node instanceof TilingSprite && t) {
+            node.width = t.width * (def.tile?.[0] ?? 1);
+            node.height = t.height * (def.tile?.[1] ?? 1);
+          }
         }
       }
       // 글자 바꾸기 (원작 SetText)
@@ -186,8 +192,13 @@ export class DecorationView {
       }
       const px = (def.position?.[0] ?? 0) + d.ox;
       const py = (def.position?.[1] ?? 0) + d.oy;
-      const sx = (def.scale?.[0] ?? 1) * d.sx;
-      const sy = (def.scale?.[1] ?? 1) * d.sy;
+      // 크기는 절대값 (타임라인이 장식 정의 크기에서 시작)
+      let sx = d.sx;
+      let sy = d.sy;
+      if (def.lockScale && camZoom > 0) {
+        sx /= camZoom;
+        sy /= camZoom;
+      }
       const rot = (def.rotation ?? 0) + d.rot;
       const rel = def.relativeTo ?? 'tile';
       let x: number;
@@ -204,20 +215,22 @@ export class DecorationView {
         const tile = rel === 'tile' ? this.chart.tiles[Math.min(this.chart.tiles.length - 1, def.floor ?? 0)] : null;
         const bx = tile ? tile.x : 0;
         const by = tile ? -tile.y : 0;
-        const par = def.parallax ?? [0, 0];
-        x = bx + px + camX * par[0];
-        y = by - py + camY * par[1];
+        // 카메라 따라가기 (원작 parallax): 기준 타일(+기준점 이동)과 카메라 사이를 비율만큼
+        // 100%면 카메라와 함께 움직여 화면에 고정된다
+        x = bx + px + (camX - (bx + d.pox)) * d.parx;
+        y = by - py + (camY - (by - d.poy)) * d.pary;
+        if (def.lockRotation) r -= rc;
       }
       node.position.set(x, y);
       node.rotation = r;
-      node.alpha = d.opacity;
+      node.alpha = d.opacity * d.calpha;
       if (o.ps) {
         // 입자 묶음: 색은 입자마다, 크기 배율은 장식 크기
         node.scale.set(d.sx, d.sy);
         continue;
       }
-      if (node instanceof Sprite || node instanceof Text || node instanceof Graphics) node.tint = d.color;
-      if (node instanceof Sprite) {
+      if (node instanceof Sprite || node instanceof TilingSprite || node instanceof Text || node instanceof Graphics) node.tint = d.color;
+      if (node instanceof Sprite || node instanceof TilingSprite) {
         const tw = node.texture.width || 1;
         const th = node.texture.height || 1;
         node.scale.set(DECO_PX * sx, DECO_PX * sy);

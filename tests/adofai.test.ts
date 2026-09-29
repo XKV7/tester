@@ -369,4 +369,19 @@ describe('극단적인 BPM (Hello (BPM) 류)', () => {
     );
     expect(r.warnings.join()).not.toMatch(/AddParticle|AddObject|HallOfMirrors|ScreenTile|SetHitsound|PlaySound|Bookmark|ScalePlanets/);
   });
+  it('장식: 카메라 따라가기·색 투명도·이어 붙이기·섞기, 이동의 빈 축은 그대로·크기는 절대값', () => {
+    const r = level({
+      pathData: 'RRRRRR',
+      decorations: [
+        { floor: 3, eventType: 'AddDecoration', decorationImage: 'a.png', tag: 'd', position: [1, 0], relativeTo: 'Tile', scale: [400, 400], color: 'ff000080', opacity: 0, parallax: [100, 100], parallaxOffset: [0, 10], tile: [10, 1], blendMode: 'LinearDodge', lockRotation: true, lockScale: true },
+      ],
+      actions: [{ floor: 1, eventType: 'MoveDecorations', tag: 'd', duration: 1, positionOffset: [30, null], parallaxOffset: [null, 5], scale: [200, null], opacity: 100, color: 'ffffff40' }],
+    });
+    const d = r.level.decorations![0];
+    expect(d).toMatchObject({ parallax: [1, 1], parallaxOffset: [0, 10 * TILE_LEN], tile: [10, 1], blend: 'add', lockRotation: true, lockScale: true, scale: [4, 4], opacity: 0 });
+    expect(d.alpha).toBeCloseTo(128 / 255, 2);
+    const m = r.level.actions.find((a) => a.type === 'MoveDecorations')!;
+    expect(m).toMatchObject({ offset: [30 * TILE_LEN, null], parallaxOffset: [null, 5 * TILE_LEN], scale: [2, null], opacity: 1, color: '#ffffff' });
+    expect((m as { alpha: number }).alpha).toBeCloseTo(64 / 255, 2);
+  });
 });

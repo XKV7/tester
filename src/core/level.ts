@@ -265,7 +265,9 @@ function validateDecoration(d: unknown, tileCount: number): string | null {
   if (d.floor !== undefined && (!isNum(d.floor) || !Number.isInteger(d.floor) || d.floor < 0 || d.floor >= tileCount)) return `floor는 0 ~ ${tileCount - 1} 범위의 정수여야 합니다.`;
   if (d.color !== undefined && !isColor(d.color)) return 'color 형식이 잘못되었습니다.';
   if (d.visible !== undefined && typeof d.visible !== 'boolean') return 'visible은 true/false여야 합니다.';
-  return [str('tag'), str('image'), str('text'), vec('position'), vec('pivot'), vec('scale'), vec('parallax'), n('rotation'), n('opacity'), n('depth'), n('fontSize')].find((x) => x) ?? null;
+  if (d.blend !== undefined && d.blend !== 'add' && d.blend !== 'screen') return "blend는 'add' 또는 'screen'이어야 합니다.";
+  for (const k of ['lockRotation', 'lockScale']) if (d[k] !== undefined && typeof d[k] !== 'boolean') return `${k}는 true/false여야 합니다.`;
+  return [str('tag'), str('image'), str('text'), vec('position'), vec('pivot'), vec('scale'), vec('parallax'), vec('parallaxOffset'), vec('tile'), n('rotation'), n('opacity'), n('alpha'), n('depth'), n('fontSize')].find((x) => x) ?? null;
 }
 
 function validateParticle(p: unknown): string | null {
@@ -292,6 +294,12 @@ function validateActionParams(a: Record<string, unknown>, type: ActionType, tile
     if (a[k] === undefined) return null;
     const v = a[k];
     return Array.isArray(v) && v.length === 2 && isNum(v[0]) && isNum(v[1]) ? null : `${k}는 [x, y] 숫자 배열이어야 합니다.`;
+  };
+  /** null을 허용하는 [x, y] (null = 그대로) */
+  const vecN = (k: string): string | null => {
+    if (a[k] === undefined) return null;
+    const v = a[k];
+    return Array.isArray(v) && v.length === 2 && v.every((x) => x === null || isNum(x)) ? null : `${k}는 [x, y] (숫자 또는 null) 배열이어야 합니다.`;
   };
   const easeOk = (): string | null =>
     a.ease === undefined || EASE_NAMES.includes(a.ease as never) ? null : `ease '${String(a.ease)}'를 알 수 없습니다.`;
@@ -376,8 +384,11 @@ function validateActionParams(a: Record<string, unknown>, type: ActionType, tile
       if (a.particle !== undefined && !['start', 'stop', 'clear'].includes(a.particle as string)) return "particle은 'start', 'stop', 'clear' 중 하나여야 합니다.";
       return first(
         optNum('emit', 0, 100000),
-        vec('offset'),
-        vec('scale'),
+        vecN('offset'),
+        vecN('scale'),
+        vecN('parallax'),
+        vecN('parallaxOffset'),
+        optNum('alpha', 0, 1),
         optNum('rotation'),
         optNum('opacity', 0, 1),
         a.color !== undefined && !isColor(a.color) ? 'color 형식이 잘못되었습니다.' : null,

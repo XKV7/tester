@@ -253,11 +253,22 @@ function decoFrom(e: Record<string, unknown>, floor: number, isText: boolean): D
   if (sc[0] !== 100 || sc[1] !== 100) d.scale = [sc[0] / 100, sc[1] / 100];
   const c = adofaiColor(e.color);
   if (c && c !== '#ffffff') d.color = c;
+  const ca = adofaiAlpha(e.color);
+  if (ca < 1) d.alpha = ca;
   const op = num(e.opacity, 100) / 100;
   if (op !== 1) d.opacity = Math.max(0, Math.min(1, op));
   d.depth = num(e.depth, -1);
   const par = vec(e.parallax, 0);
   if (par[0] || par[1]) d.parallax = [par[0] / 100, par[1] / 100];
+  const po = vec(e.parallaxOffset, 0);
+  if (po[0] || po[1]) d.parallaxOffset = [po[0] * TILE_LEN, po[1] * TILE_LEN];
+  const tl = vec(e.tile, 1);
+  if ((tl[0] !== 1 || tl[1] !== 1) && tl[0] > 0 && tl[1] > 0) d.tile = [Math.min(200, tl[0]), Math.min(200, tl[1])];
+  const blend = str(e.blendMode);
+  if (blend === 'LinearDodge' || blend === 'Add' || blend === 'Additive') d.blend = 'add';
+  else if (blend === 'Screen') d.blend = 'screen';
+  if (e.lockRotation === true) d.lockRotation = true;
+  if (e.lockScale === true) d.lockScale = true;
   if (e.hideIcon === undefined && (e.visible === false || e.visible === 'Disabled')) d.visible = false;
   return d;
 }
@@ -853,15 +864,28 @@ export function convertAdofai(text: string): AdofaiResult {
         const tag = str(e.tag).trim();
         if (!tag) break;
         const a: Action = { floor, type: 'MoveDecorations', tag, duration: dur(e.duration, 1) };
-        if (Array.isArray(e.positionOffset) && e.positionOffset.some((v) => v !== null))
-          a.offset = [num(e.positionOffset[0], 0) * TILE_LEN, num(e.positionOffset[1], 0) * TILE_LEN];
+        // 원작은 비어 있는(null) 축을 그대로 둔다
+        const axes = (v: unknown, k: number): [number | null, number | null] | undefined => {
+          if (!Array.isArray(v)) return v === undefined || v === null ? undefined : [num(v, 0) * k, num(v, 0) * k];
+          const f = (x: unknown) => (x === null || x === undefined || !Number.isFinite(Number(x)) ? null : Number(x) * k);
+          const r: [number | null, number | null] = [f(v[0]), f(v[1])];
+          return r[0] === null && r[1] === null ? undefined : r;
+        };
+        const off = axes(e.positionOffset, TILE_LEN);
+        if (off) a.offset = off;
         if (e.rotationOffset !== undefined && e.rotationOffset !== null) a.rotation = num(e.rotationOffset, 0);
-        if (e.scale !== undefined && e.scale !== null) {
-          const sc = Array.isArray(e.scale) ? e.scale : [e.scale, e.scale];
-          a.scale = [num(sc[0], 100) / 100, num(sc[1] ?? sc[0], 100) / 100];
-        }
+        // 크기는 원작처럼 절대값 (100 = 그림 원래 크기)
+        const sc = axes(e.scale, 1 / 100);
+        if (sc) a.scale = sc;
+        const par = axes(e.parallax, 1 / 100);
+        if (par) a.parallax = par;
+        const po = axes(e.parallaxOffset, TILE_LEN);
+        if (po) a.parallaxOffset = po;
         const c = adofaiColor(e.color);
-        if (c) a.color = c;
+        if (c) {
+          a.color = c;
+          a.alpha = adofaiAlpha(e.color);
+        }
         if (e.opacity !== undefined && e.opacity !== null) a.opacity = Math.max(0, Math.min(1, num(e.opacity, 100) / 100));
         if (e.visible !== undefined) a.visible = onOff(e.visible);
         if (str(e.decorationImage)) a.image = str(e.decorationImage).split(/[\\/]/).pop();
