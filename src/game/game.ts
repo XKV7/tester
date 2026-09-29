@@ -94,6 +94,8 @@ export class Game {
   /** 원작 PlaySound: 곡 시각 순 */
   private plays: { time: number; sound: string; volume: number }[] = [];
   private playIdx = 0;
+  /** 일시정지한 곡 시각 (일시정지 중·재개 카운트다운 동안 화면은 이 시각에 멈춘다) */
+  private pausedSong: number | null = null;
   private beginFloor = 0;
   private failAt = 0;
   private clearAt = 0;
@@ -209,6 +211,7 @@ export class Game {
     const ch = this.chart;
     if (this.eng.ctx.state === 'suspended') void this.eng.ctx.resume();
     this.resumeAt = 0;
+    this.pausedSong = null;
     this.cur = floor;
     this.beginFloor = floor;
     this.hold = null;
@@ -281,19 +284,28 @@ export class Game {
     return out;
   }
 
+  /**
+   * 일시정지: 오디오 장치를 멈추지(suspend) 않고 노래만 그 지점에서 멈춘다.
+   * (휴대폰은 장치를 다시 켤 때 소리 지연이 달라져 재개 후 노래와 타일이 어긋났다)
+   */
   pause(): void {
     if (this.state !== 'playing') return;
     this.state = 'paused';
     this.resumeAt = 0;
-    void this.eng.ctx.suspend();
+    this.pausedSong = this.eng.songTime();
+    this.eng.stop();
+    this.eng.cancelScheduled();
     this.opts.hud.setPaused(true);
   }
 
-  /** 일시정지 해제: 3박자 카운트다운 후 재개. */
+  /** 일시정지 해제: 카운트다운(1.5초)이 끝나는 순간 멈춘 지점부터 다시 들리게 재생을 예약한다. */
   resume(): void {
     if (this.state !== 'paused' || this.resumeAt) return;
     this.opts.hud.setPaused(false);
-    this.resumeAt = performance.now() + 1500;
+    const lead = 1.5;
+    if (this.eng.ctx.state === 'suspended') void this.eng.ctx.resume();
+    this.eng.play(this.buffer, this.pausedSong ?? this.eng.songTime(), this.pitch, this.chart.level.settings.volume, lead);
+    this.resumeAt = performance.now() + lead * 1000;
   }
 
   quit(): void {
@@ -476,15 +488,21 @@ export class Game {
       if (left <= 0) {
         this.resumeAt = 0;
         this.input.clear();
-        void this.eng.ctx.resume();
         this.state = 'playing';
+        // 타격음·효과음은 재개 지점부터 다시 예약
+        const from = this.pausedSong ?? 0;
+        this.pausedSong = null;
+        this.schedIdx = this.cur + 1;
+        this.playIdx = 0;
+        while (this.playIdx < this.plays.length && this.plays[this.playIdx].time < from) this.playIdx++;
       }
     }
 
     // 입력 먼저 처리 (재시작 시 클럭이 바뀌므로 곡 시각은 그 뒤에 읽는다)
     for (const ev of this.input.drain()) this.handleInput(ev);
 
-    const t = this.eng.songTime(now);
+    // 일시정지·재개 카운트다운 중에는 멈춘 시각 그대로 (카운트다운 동안 노래 시각은 뒤에서 다가온다)
+    const t = this.state === 'paused' && this.pausedSong !== null ? this.pausedSong : this.eng.songTime(now);
     const tj = t - (settings.inputOffset / 1000) * this.pitch;
     let tr = t + (settings.visualOffset / 1000) * this.pitch;
     // 자동 시험용 (화면 비교): 이 시각에서 화면만 멈춘다
