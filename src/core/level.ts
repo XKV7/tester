@@ -341,7 +341,7 @@ function validateActionParams(a: Record<string, unknown>, type: ActionType, tile
     case 'RecolorTrack':
       if (a.style !== undefined && !['orbit', 'standard', 'neon', 'basic'].includes(a.style as string)) return "style은 'orbit', 'standard', 'neon', 'basic' 중 하나여야 합니다.";
       if (a.color2 !== undefined && !isColor(a.color2)) return 'color2 형식이 잘못되었습니다.';
-      return first(range(), isColor(a.color) ? null : 'color가 필요합니다.', optNum('duration', 0, MAX_EFFECT_BEATS), optNum('glowDuration', 0.01, 1000), optNum('pulseLength', 0, 100000));
+      return first(range(), isColor(a.color) ? null : 'color가 필요합니다.', optNum('duration', 0, MAX_EFFECT_BEATS), optNum('glowDuration', 0.01, 1000), optNum('pulseLength', 0, 100000), optNum('lit', 0, 1));
     case 'MoveTrack':
       return first(range(), vec('offset'), optNum('rotation'), optNum('opacity', 0, 1), optNum('scale', 0, 100), optNum('duration', 0, MAX_EFFECT_BEATS), easeOk());
     case 'Background':

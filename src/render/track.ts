@@ -216,28 +216,35 @@ export class TrackView {
         if (k >= 1) this.pulses.delete(i);
         else {
           s = 1 + 0.12 * Math.sin(Math.PI * k);
-          flash = 1 - k;
+          flash = Math.max(0, Math.min(1, 1 - k));
         }
       }
       const W = 0xffffff;
       switch (o.style) {
-        case 1: // standard: 채움 + 어두운 테두리
-          o.band.tint = lerpColor(scaleColor(base, 0.55), W, flash * 0.8);
-          o.inner!.tint = lerpColor(scaleColor(base, bright), W, flash * 0.85);
+        case 1: {
+          // standard: 채움 + 어두운 테두리, 지나간 타일은 하얗게 빛난다 (원작 트랙 글로우)
+          const lit = passed ? (tl ? tl.tileLit[i] : 1) : 0;
+          const wOuter = Math.max(flash * 0.8, lit * 0.6);
+          const wInner = Math.max(flash * 0.85, lit * 0.85);
+          o.band.tint = lerpColor(scaleColor(base, 0.55), W, wOuter);
+          o.inner!.tint = lerpColor(scaleColor(base, bright), W, wInner);
           break;
-        case 2: // neon: 어두운 속 + 밝은 테두리, 밟은 타일은 환하게 남는다
-          if (passed || flash > 0) {
-            o.band.tint = W;
-            o.inner!.tint = lerpColor(base, W, 0.8);
-          } else {
-            o.band.tint = scaleColor(base, bright);
-            o.inner!.tint = scaleColor(base, 0.12);
-          }
+        }
+        case 2: {
+          // neon: 어두운 속 + 색 테두리, 지나간 타일은 테두리가 하얗게 빛난다 (막 친 순간은 속도 잠깐 밝게)
+          const lit = passed ? (tl ? tl.tileLit[i] : 1) : 0;
+          o.band.tint = lerpColor(scaleColor(base, bright), W, Math.max(lit, flash));
+          o.inner!.tint = lerpColor(scaleColor(base, 0.12), W, Math.max(flash * 0.7, lit * 0.3));
           break;
-        case 3: // basic: 단색
-          o.band.tint = lerpColor(base, W, flash * 0.8);
-          o.inner!.tint = lerpColor(base, W, flash * 0.8);
+        }
+        case 3: {
+          // basic: 단색, 지나간 타일은 하얗게
+          const lit = passed ? (tl ? tl.tileLit[i] : 1) : 0;
+          const w = Math.max(flash * 0.8, lit * 0.8);
+          o.band.tint = lerpColor(base, W, w);
+          o.inner!.tint = lerpColor(base, W, w);
           break;
+        }
         default: // orbit: 지나간 타일은 어둡게, 막 친 타일은 하얗게 번쩍
           o.band.tint = lerpColor(scaleColor(base, passed ? 0.55 : 1.25 * bright), W, flash * 0.75);
       }

@@ -223,7 +223,8 @@ uniform sampler2D uTexture;
 uniform float uThr;
 void main() {
   vec4 c = texture(uTexture, vTextureCoord);
-  float l = max(c.r, max(c.g, c.b));
+  // 밝기보다 '흰 정도'(가장 약한 채널) 위주 — 원작처럼 흰 타일은 빛나고 하늘색 타일은 덜 빛나게
+  float l = 0.25 * max(c.r, max(c.g, c.b)) + 0.75 * min(c.r, min(c.g, c.b));
   // 문턱을 넘은 만큼 부드럽게
   finalColor = vec4(c.rgb * smoothstep(uThr, min(1.0, uThr + 0.25), l), 1.0);
 }`;
@@ -456,7 +457,7 @@ export class ScreenFx {
     const c = bloom.color;
     const half = (sh: number) => Math.round(127.5 + ((c >> sh) & 255) / 2);
     const col = (half(16) << 16) | (half(8) << 8) | half(0);
-    this.glow.set(Math.max(0.35, bloom.threshold), 1.1 + 0.5 * b, col, (26 + 10 * Math.min(2, b)) * (this.screenH / 720));
+    this.glow.set(Math.max(0.7, bloom.threshold), 1.1 + 0.5 * b, col, (26 + 10 * Math.min(2, b)) * (this.screenH / 720));
     return [this.glow];
   }
 

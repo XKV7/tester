@@ -210,10 +210,12 @@ const DISAPPEAR_MAP: Record<string, TrackDisappear> = {
 };
 
 /** 원작 트랙 색 필드(trackColor·trackStyle·trackColorType·secondaryTrackColor …) → RecolorTrack의 색·모양·물결. */
-function trackLook(e: Record<string, unknown>): Pick<RecolorTrackAction, 'color' | 'style' | 'color2' | 'glowDuration' | 'pulseLength'> | null {
+function trackLook(e: Record<string, unknown>): Pick<RecolorTrackAction, 'color' | 'style' | 'color2' | 'glowDuration' | 'pulseLength' | 'lit'> | null {
   const c = adofaiColor(e.trackColor);
   if (!c) return null;
-  const look: Pick<RecolorTrackAction, 'color' | 'style' | 'color2' | 'glowDuration' | 'pulseLength'> = { color: c };
+  const look: Pick<RecolorTrackAction, 'color' | 'style' | 'color2' | 'glowDuration' | 'pulseLength' | 'lit'> = { color: c };
+  // 지나간 타일이 빛나는 정도 (없으면 기본 1)
+  if (e.trackGlowIntensity !== undefined) look.lit = Math.max(0, Math.min(1, num(e.trackGlowIntensity, 100) / 100));
   const st = STYLE_MAP[str(e.trackStyle)];
   if (st) look.style = st;
   const type = str(e.trackColorType);

@@ -100,6 +100,8 @@ export interface RecolorTrackAction extends ActionBase {
   glowDuration?: number;
   /** 물결 한 번의 길이 (타일 수). */
   pulseLength?: number;
+  /** 지나간 타일이 하얗게 빛나는 정도 (0~1, 원작 trackGlowIntensity, 기본 1). standard·neon·basic 모양에서. */
+  lit?: number;
 }
 export interface MoveTrackAction extends ActionBase {
   type: 'MoveTrack';
