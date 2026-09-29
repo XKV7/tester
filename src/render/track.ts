@@ -64,6 +64,7 @@ export class TrackView {
   ) {
     this.editorMode = !!opts.editor;
     this.objs = new Array(chart.tiles.length);
+    this.tileLayer.sortableChildren = true;
     this.container.addChild(this.tileLayer, this.selGfx, this.iconLayer, this.textLayer);
     this.iconKinds = Array.from({ length: chart.tiles.length }, () => []);
     this.editorFloors = new Set(
@@ -165,6 +166,8 @@ export class TrackView {
       o.label = label;
       this.textLayer.addChild(label);
     }
+    // 원작처럼 앞 타일이 위에 그려진다 (겹친 뒤쪽 타일은 가려짐)
+    root.zIndex = -i;
     this.tileLayer.addChild(root);
     this.objs[i] = o;
     return o;
