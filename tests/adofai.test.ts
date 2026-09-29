@@ -130,6 +130,17 @@ describe('.adofai 변환', () => {
     expect(pkg.warnings.some((w) => w.includes('합성 비트'))).toBe(false);
   });
 
+  it('zip 안에 .adofai가 여러 개면 가장 큰 본 레벨을 연다', () => {
+    const files = new Map<string, Uint8Array>([
+      ['a.adofai', strToU8('{"angleData":[0],"settings":{"bpm":2026}}')],
+      ['Hello BPM 2026.adofai', strToU8(JSON.stringify({ angleData: Array(300).fill(0), settings: { bpm: 2026 } }))],
+      ['backup_big.adofai', strToU8(JSON.stringify({ angleData: Array(900).fill(0), settings: { bpm: 1 } }))],
+    ]);
+    const pkg = packageFromFiles(files, 't');
+    expect(pkg.level.path.length).toBe(300);
+    expect(pkg.warnings.join(' ')).toContain('3개');
+  });
+
   it('깨진 파일은 알아볼 수 있는 오류', () => {
     expect(() => convertAdofai('{ not json')).toThrow('.adofai');
     expect(() => convertAdofai('{"settings":{}}')).toThrow('타일');

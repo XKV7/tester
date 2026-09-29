@@ -47,8 +47,15 @@ export function packageFromFiles(files: Map<string, Uint8Array>, id = newPackage
   const names = [...flat.keys()];
   const orbitJson = names.find((n) => lower(n) === 'level.orbit.json') ?? names.find((n) => lower(n).endsWith('.orbit.json'));
   // 얼음과 불의 춤 레벨: ORBIT 레벨이 없고 .adofai가 있으면 변환 (backup 파일은 뒤로)
-  const adofai = names.filter((n) => lower(n).endsWith('.adofai')).sort((a, b) => Number(/backup/i.test(a)) - Number(/backup/i.test(b)) || a.length - b.length)[0];
-  if (!orbitJson && adofai) return packageFromAdofai(flat, adofai, id);
+  // 여러 개면 backup이 아닌 것 중 가장 큰 파일 (타일이 가장 많은 본 레벨)
+  const adofais = names
+    .filter((n) => lower(n).endsWith('.adofai'))
+    .sort((a, b) => Number(/backup/i.test(a)) - Number(/backup/i.test(b)) || flat.get(b)!.length - flat.get(a)!.length);
+  if (!orbitJson && adofais.length) {
+    const pkg = packageFromAdofai(flat, adofais[0], id);
+    if (adofais.length > 1) pkg.warnings.push(`레벨 파일이 ${adofais.length}개라 가장 큰 '${adofais[0]}'을(를) 열었습니다. (다른 파일: ${adofais.slice(1).join(', ')})`);
+    return pkg;
+  }
   const jsonName =
     names.find((n) => lower(n) === 'level.orbit.json') ??
     names.find((n) => lower(n).endsWith('.orbit.json')) ??
@@ -73,6 +80,7 @@ function packageFromAdofai(flat: Map<string, Uint8Array>, name: string, id: stri
   const song = conv.level.settings.songFile;
   if (song && !findFile(flat, song)) warnings.push(`음원 파일 '${song}'이(가) 없어 합성 비트로 대체합니다. 레벨 파일과 음원을 함께 zip으로 묶어 불러오세요.`);
   if (!song) warnings.push('원작 레벨에 음원 파일 정보가 없어 합성 비트로 재생합니다.');
+  if (conv.level.path.length < 2) warnings.push(`'${name}'에 타일이 ${conv.level.path.length + 1}개뿐입니다. 레벨 파일이 맞는지 확인하세요.`);
   return { id, level: conv.level, files: flat, builtin: false, warnings, imported: 'adofai' };
 }
 
