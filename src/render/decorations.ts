@@ -44,6 +44,9 @@ interface Obj {
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
+/** 휴대폰 GPU가 받을 수 있는 그림 크기 (넘으면 줄여서 올린다) */
+const MAX_TEX = 4096;
+
 /** 불투명도 키 사이를 선형으로 (키가 없으면 1). */
 function alphaAt(keys: [number, number][] | undefined, t: number): number {
   if (!keys || keys.length === 0) return 1;
@@ -67,6 +70,10 @@ export class DecorationView {
   readonly front = new Container();
   private readonly objs: Obj[] = [];
   private readonly tex = new Map<string, Texture | 'loading' | null>();
+  /** 줄여서 올린 그림: 원래 크기 / 줄인 크기 */
+  private readonly texFactor = new Map<Texture, number>();
+  /** 그림 불러오기 현황 (진단용) */
+  readonly stats = { loaded: 0, failed: 0, missing: 0, shrunk: 0, failedNames: [] as string[], missingNames: [] as string[] };
   private lastTime: number | null = null;
 
   constructor(
@@ -136,12 +143,35 @@ export class DecorationView {
     const url = this.urlOf(name);
     if (!url) {
       this.tex.set(name, null);
+      this.stats.missing++;
+      if (this.stats.missingNames.length < 20) this.stats.missingNames.push(name);
       return null;
     }
     this.tex.set(name, 'loading');
     const img = new Image();
-    img.onload = () => this.tex.set(name, Texture.from(img));
-    img.onerror = () => this.tex.set(name, null);
+    img.onload = () => {
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      const k = Math.min(1, MAX_TEX / Math.max(w, h, 1));
+      let t: Texture;
+      if (k < 1) {
+        // 너무 큰 그림은 휴대폰에서 안 보이므로 줄여서 올리고, 그리는 크기는 원래대로
+        const cv = document.createElement('canvas');
+        cv.width = Math.max(1, Math.round(w * k));
+        cv.height = Math.max(1, Math.round(h * k));
+        cv.getContext('2d')?.drawImage(img, 0, 0, cv.width, cv.height);
+        t = Texture.from(cv);
+        this.texFactor.set(t, w / cv.width);
+        this.stats.shrunk++;
+      } else t = Texture.from(img);
+      this.tex.set(name, t);
+      this.stats.loaded++;
+    };
+    img.onerror = () => {
+      this.tex.set(name, null);
+      this.stats.failed++;
+      if (this.stats.failedNames.length < 20) this.stats.failedNames.push(name);
+    };
     img.src = url;
     return null;
   }
@@ -231,9 +261,10 @@ export class DecorationView {
       }
       if (node instanceof Sprite || node instanceof TilingSprite || node instanceof Text || node instanceof Graphics) node.tint = d.color;
       if (node instanceof Sprite || node instanceof TilingSprite) {
-        const tw = node.texture.width || 1;
-        const th = node.texture.height || 1;
-        node.scale.set(DECO_PX * sx, DECO_PX * sy);
+        const f = this.texFactor.get(node.texture) ?? 1;
+        const tw = (node.texture.width || 1) * f;
+        const th = (node.texture.height || 1) * f;
+        node.scale.set(DECO_PX * sx * f, DECO_PX * sy * f);
         if (def.pivot) node.anchor.set(0.5 - def.pivot[0] / (tw * DECO_PX), 0.5 + def.pivot[1] / (th * DECO_PX));
       } else {
         node.scale.set(sx, sy);
@@ -300,7 +331,7 @@ export class DecorationView {
     const size = rand(p.size[0], p.size[1]);
     // 그림이 없으면 작은 흰 사각형
     const base = tex ? DECO_PX : TILE_LEN * 0.08;
-    s.scale.set(base * size * (tex ? 1 : 1 / Math.max(1, s.texture.width)));
+    s.scale.set(base * size * (tex ? (this.texFactor.get(tex) ?? 1) : 1 / Math.max(1, s.texture.width)));
     const area = p.area ?? [0, 0];
     const q: Particle = {
       s,

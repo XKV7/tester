@@ -133,7 +133,12 @@ function packageFromAdofai(flat: Map<string, Uint8Array>, name: string, id: stri
   if (song && !findSong(flat, song)) warnings.push(`음원 파일 '${song}'이(가) 없어 합성 비트로 대체합니다. 레벨 파일과 음원을 함께 zip으로 묶어 불러오세요.`);
   if (!song) warnings.push('원작 레벨에 음원 파일 정보가 없어 합성 비트로 재생합니다.');
   if (conv.level.path.length < 2) warnings.push(`'${name}'에 타일이 ${conv.level.path.length + 1}개뿐입니다. 레벨 파일이 맞는지 확인하세요.`);
-  return { id, level: conv.level, files: flat, builtin: false, warnings, imported: 'adofai', source: name };
+  const pkg: LevelPackage = { id, level: conv.level, files: flat, builtin: false, warnings, imported: 'adofai', source: name };
+  // 레벨이 쓰는 그림 중 zip에 없는 것 (음원은 위에서 따로 알림)
+  const missing = levelFileNames(pkg).filter((n) => n !== song && !findFile(flat, n));
+  if (missing.length)
+    warnings.push(`그림 파일 ${missing.length}개를 zip에서 찾지 못해 그 장식은 보이지 않습니다: ${missing.slice(0, 8).join(', ')}${missing.length > 8 ? ' …' : ''}`);
+  return pkg;
 }
 
 /** 음원 파일 하나 → 자동 생성 레벨 패키지. 박을 찾지 못하면 PackageError. */

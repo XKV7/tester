@@ -255,6 +255,27 @@ export class Game {
     else if (this.state === 'failed' || this.state === 'cleared') this.opts.onQuit();
   }
 
+  /** 진단 정보 (주소에 ?debug를 붙이면 화면에 표시). */
+  diag(): string[] {
+    const lv = this.chart.level;
+    const decos = lv.decorations ?? [];
+    const st = this.deco?.stats;
+    const tl = this.timeline;
+    const shown = tl.decos.filter((d) => d.visible && d.opacity * d.calpha > 0.01).length;
+    const out = [
+      `버전 ${__BUILD__} · 파일 ${this.opts.pkg.files.size}개 · 원작 변환 ${this.opts.pkg.imported ? '예' : '아니오'}`,
+      `타일 ${this.chart.tiles.length} · 이벤트 ${lv.actions.length} · 장식 ${decos.length} (지금 보이는 것 ${shown})`,
+      `음원 ${this.opts.pkg.synthesized ? '없음(합성 비트)' : '있음'} · 곡 시각 ${this.eng.songTime(performance.now()).toFixed(2)}초`,
+    ];
+    if (st) {
+      out.push(`그림: 불러옴 ${st.loaded} · 줄임 ${st.shrunk} · 실패 ${st.failed} · 파일 없음 ${st.missing}`);
+      if (st.missingNames.length) out.push(`없는 파일: ${st.missingNames.slice(0, 6).join(', ')}`);
+      if (st.failedNames.length) out.push(`실패한 파일: ${st.failedNames.slice(0, 6).join(', ')}`);
+    }
+    out.push(`필터 ${[...tl.filters.keys()].join(', ') || '없음'} · 빛 번짐 ${tl.bloom.intensity.toFixed(2)}`);
+    return out;
+  }
+
   pause(): void {
     if (this.state !== 'playing') return;
     this.state = 'paused';

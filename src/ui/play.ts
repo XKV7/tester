@@ -74,6 +74,18 @@ export class PlayScreen implements Screen, GameHud {
       onClear: (r) => this.onClear(r),
       onQuit: () => void show(this.opts.back()),
     });
+    // 진단 표시: 주소에 ?debug
+    if (/[?&]debug\b/.test(location.search)) {
+      const box = h('div', { style: 'position:fixed;left:8px;bottom:40px;z-index:50;font:11px/1.4 monospace;color:#9f9;background:rgba(0,0,0,.7);padding:6px 8px;border-radius:6px;max-width:92vw;white-space:pre-wrap;pointer-events:none' });
+      root.append(box);
+      const iv = setInterval(() => {
+        if (!this.game || !box.isConnected) {
+          clearInterval(iv);
+          return;
+        }
+        box.textContent = this.game.diag().join('\n');
+      }, 500);
+    }
     try {
       await this.game.start();
     } catch (e) {
