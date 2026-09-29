@@ -593,8 +593,9 @@ export class VisualTimeline {
             for (let i = lo; i <= hi; i++) {
               const j = i - lo;
               if (a.offset && this.claimPos[i] === id) {
-                this.tileOffX[i] = lerp(fx[j], a.offset[0], k);
-                this.tileOffY[i] = lerp(fy[j], a.offset[1], k);
+                // null인 축은 그대로
+                if (a.offset[0] !== null) this.tileOffX[i] = lerp(fx[j], a.offset[0], k);
+                if (a.offset[1] !== null) this.tileOffY[i] = lerp(fy[j], a.offset[1], k);
               }
               if (a.rotation !== undefined && this.claimRot[i] === id) this.tileRot[i] = lerp(fr[j], a.rotation, k);
               if (a.opacity !== undefined && this.claimAlpha[i] === id) this.tileAlpha[i] = lerp(fa[j], a.opacity, k);

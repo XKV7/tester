@@ -300,6 +300,15 @@ describe('원작 연출 타임라인', () => {
     expect(tl.tileAnimAt(10, 4.5)!.alpha).toBe(0);
   });
 
+  it('트랙 이동: 빈 축은 그대로', () => {
+    const tl = lv([
+      { floor: 1, type: 'MoveTrack', from: 5, to: 5, offset: [100, 50], duration: 0 },
+      { floor: 2, type: 'MoveTrack', from: 5, to: 5, offset: [null, 0], duration: 0 },
+    ]);
+    tl.update(2.5);
+    expect([tl.tileOffX[5], tl.tileOffY[5]]).toEqual([100, 0]);
+  });
+
   it('같은 타일을 움직이는 이동 이벤트가 겹치면 나중 것이 이어받는다', () => {
     const tl = lv([
       { floor: 1, type: 'MoveTrack', from: 5, to: 5, offset: [100, 0], duration: 4 },

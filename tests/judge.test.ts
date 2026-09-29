@@ -121,4 +121,14 @@ describe('통계', () => {
     expect(s.isAllPerfect()).toBe(false);
     expect(s.isFlawless()).toBe(false);
   });
+  it('빠른 연타 구간도 최소 범위(원작 약 65ms)는 받아준다', () => {
+    // 720 BPM (박 83ms), 음표 간격 83ms → 전에는 ±41ms였다
+    const w = judgeWindows(83.3, 1.15, 41.7, 65);
+    expect(w.far).toBeCloseTo(65);
+    expect(w.near).toBeCloseTo(65);
+    expect(w.perfect).toBeCloseTo(35 * 1.15);
+    expect(judgeError(-60, w, 41.7)).toBe('earlyPerfect');
+    expect(judgeError(60, w, 41.7)).toBe('latePerfect');
+    expect(judgeError(70, w, 41.7)).toBe('miss');
+  });
 });
