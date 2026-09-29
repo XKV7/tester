@@ -182,14 +182,19 @@ export class Game {
     let songStart: number;
     const ticks: number[] = [];
     if (floor === 0 && !resume) {
+      // 원작처럼 마지막 째깍 한 박 뒤가 첫 타격 (타일 1)
       const n = ch.level.settings.countdownTicks;
       const beat = 60 / tile.bpm;
-      for (let k = n; k >= 1; k--) ticks.push(tile.time - k * beat);
-      songStart = Math.min(0, tile.time - (n + 0.5) * beat);
+      const firstHit = ch.tiles.length > 1 ? ch.tiles[1].time : tile.time;
+      for (let k = n; k >= 1; k--) ticks.push(firstHit - k * beat);
+      songStart = Math.min(0, firstHit - (n + 0.5) * beat);
     } else {
+      // 이 타일에 서서 시작 → 다음 타일이 첫 타격, 째깍 두 번 뒤 한 박에 친다
       const beat = 60 / prevBpm;
-      songStart = resumeTime(ch, floor, 2) - 0.5 * beat;
-      ticks.push(tile.time - 2 * beat, tile.time - beat);
+      const nextHit = floor + 1 < ch.tiles.length ? ch.tiles[floor + 1].time : tile.time;
+      const nb = 60 / tile.bpm;
+      songStart = Math.min(resumeTime(ch, floor, 2) - 0.5 * beat, nextHit - 2.5 * nb);
+      ticks.push(nextHit - 2 * nb, nextHit - nb);
     }
     this.eng.cancelScheduled();
     this.eng.play(this.buffer, songStart, this.pitch, ch.level.settings.volume, 0.15);
