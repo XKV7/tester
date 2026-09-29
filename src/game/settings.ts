@@ -19,6 +19,7 @@ export interface UserSettings {
 const KEY = 'orbit.settings.v1';
 const AT_KEY = 'orbit.settings.at';
 const BEST_KEY = 'orbit.best.v1';
+const HIT_FIX_KEY = 'orbit.settings.hitfix';
 
 /** 설정·기록이 바뀌면 호출 (온라인 동기화용). */
 let changeHook: (() => void) | null = null;
@@ -45,7 +46,17 @@ function load(): UserSettings {
   const d = defaultUserSettings();
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return { ...d, ...(JSON.parse(raw) as Partial<UserSettings>) };
+    if (raw) {
+      const s = { ...d, ...(JSON.parse(raw) as Partial<UserSettings>) };
+      // 한 번만: 타격음은 박자에 맞춰 예약(원작과 같음)으로 되돌린다 — 누른 순간 재생하면 소리 지연 때문에 노래와 어긋난다
+      if (!localStorage.getItem(HIT_FIX_KEY)) {
+        s.autoHitSound = true;
+        localStorage.setItem(HIT_FIX_KEY, '1');
+        localStorage.setItem(KEY, JSON.stringify(s));
+        localStorage.setItem(AT_KEY, String(Date.now())); // 온라인 동기화에서 이 값이 이기게
+      }
+      return s;
+    }
   } catch {
     /* 저장소 사용 불가 */
   }
