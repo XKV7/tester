@@ -47,9 +47,9 @@ const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const MOBILE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
 /**
  * GPU에 올릴 그림 최대 크기 (넘으면 줄여서 올린다). 휴대폰은 큰 그림 수십 장이 한꺼번에 보이면
- * GPU 메모리가 모자라 그림이 통째로 안 그려지므로 훨씬 작게.
+ * GPU 메모리가 모자라 그림이 통째로 안 그려지므로 작게 (메모리 8GB 이상 기기는 조금 크게).
  */
-const MAX_TEX = MOBILE ? 1024 : 4096;
+const MAX_TEX = MOBILE ? (((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4) >= 8 ? 2048 : 1024) : 4096;
 /** 한꺼번에 해독하는 그림 수 (휴대폰에서 수십 장을 동시에 풀면 메모리가 튄다) */
 const MAX_LOADING = MOBILE ? 3 : 8;
 /** 이만큼(ms) 안 보인 그림은 GPU에서 내린다 (다시 보이면 새로 불러온다) */
