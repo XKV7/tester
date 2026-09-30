@@ -265,7 +265,42 @@ export class Stage {
   }
 
   /** 트랙 층 필터 (빛 번짐). */
+  // ── 자동 화질: 필터가 켜진 채로 프레임이 계속 느리면 한 단계씩 낮춘다 ──
+  // 0: 필터 = 화면 해상도, 1: 필터 1.5배, 2: 필터 1배, 3: 화면도 1.5배, 4: 화면도 1배
+  private quality = 0;
+  private frameEma = 16;
+  private slowMs = 0;
+  private get filterRes(): number | 'inherit' {
+    return this.quality === 0 ? 'inherit' : this.quality === 1 ? 1.5 : 1;
+  }
+  /** 매 프레임 (게임 중에만): 걸린 시간(ms)과 필터가 켜져 있는지. */
+  adaptQuality(frameMs: number, filtersOn: boolean): void {
+    if (frameMs > 250) return; // 탭 전환·일시 멈춤은 무시
+    this.frameEma += (frameMs - this.frameEma) * 0.05;
+    // 약 40fps보다 느린 상태가 2초 이어지면 한 단계 내린다
+    if (this.frameEma > 25 && filtersOn) this.slowMs += frameMs;
+    else this.slowMs = Math.max(0, this.slowMs - frameMs);
+    if (this.slowMs < 2000 || this.quality >= 4) return;
+    this.slowMs = 0;
+    this.frameEma = 16;
+    this.quality++;
+    const base = this.app.renderer.resolution;
+    if (this.quality >= 3 && base > 1) {
+      const r = this.quality === 3 ? Math.min(base, 1.5) : 1;
+      this.app.renderer.resize(this.width, this.height, r);
+    }
+    console.info(`[ORBIT] 느려서 화질을 한 단계 낮춥니다 (단계 ${this.quality})`);
+  }
+  get qualityLevel(): number {
+    return this.quality;
+  }
+  private applyRes(fs: Filter[]): void {
+    const r = this.filterRes;
+    for (const f of fs) if (f.resolution !== r) f.resolution = r;
+  }
+
   setWorldFilters(fs: Filter[]): void {
+    this.applyRes(fs);
     const w = this.worldWrap;
     if (fs.length === 0) {
       if (w.filters && (w.filters as Filter[]).length) w.filters = [];
@@ -277,6 +312,7 @@ export class Stage {
 
   /** 화면 전체 필터 (없으면 빈 배열). */
   setScreenFilters(fs: Filter[]): void {
+    this.applyRes(fs);
     const st = this.app.stage;
     if (fs.length === 0) {
       if (st.filters && (st.filters as Filter[]).length) st.filters = [];

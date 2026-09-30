@@ -287,6 +287,7 @@ export class Game {
       if (st.missingNames.length) out.push(`없는 파일: ${st.missingNames.slice(0, 6).join(', ')}`);
       if (st.failedNames.length) out.push(`실패한 파일: ${st.failedNames.slice(0, 6).join(', ')}`);
     }
+    out.push(`화질 단계 ${stage.qualityLevel} (0 = 최고, 느리면 자동으로 낮춤) · 화면 해상도 ${stage.app.renderer.resolution}배`);
     out.push(`필터 ${[...tl.filters.keys()].join(', ') || '없음'} · 빛 번짐 ${tl.bloom.intensity.toFixed(2)}`);
     return out;
   }
@@ -611,9 +612,13 @@ export class Game {
     }
     this.deco.update(stage.camera.x, stage.camera.y, stage.camera.rotation, tr, stage.camera.zoom);
     this.screenFx.screenH = stage.height;
-    stage.setWorldFilters(this.screenFx.worldFilters(tl.bloom, reduce));
+    const worldFs = this.screenFx.worldFilters(tl.bloom, reduce);
+    stage.setWorldFilters(worldFs);
     const scroll: [number, number] = [tl.screenScroll[0] * tr, tl.screenScroll[1] * tr];
-    stage.setScreenFilters(this.screenFx.filters(tl.filters, tl.bloom, tr, reduce, motion, { tile: tl.screenTile, scroll }));
+    const screenFs = this.screenFx.filters(tl.filters, tl.bloom, tr, reduce, motion, { tile: tl.screenTile, scroll });
+    stage.setScreenFilters(screenFs);
+    // 느린 기기면 필터 해상도부터 자동으로 낮춘다 (진행 중일 때만 잰다)
+    if (this.state === 'playing') stage.adaptQuality(stage.app.ticker.deltaMS, worldFs.length + screenFs.length > 0);
     this.screenFx.drawWeather(tl.filters, stage.width, stage.height, dt, reduce);
     const phase = beatPhaseAt(ch, tr);
     const frac = phase - Math.floor(phase);
