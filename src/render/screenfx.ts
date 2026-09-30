@@ -404,8 +404,10 @@ export class ScreenFx {
     const mx = Math.min(4, (Math.abs(motion.x) / 3000) * mb * 2);
     const my = Math.min(4, (Math.abs(motion.y) / 3000) * mb * 2);
     if (bl > 0 || mx > 1 || my > 1) {
-      this.blur.strengthX = 8 * Math.min(3, bl) + (mx > 1 ? mx : 0);
-      this.blur.strengthY = 8 * Math.min(3, bl) + (my > 1 ? my : 0);
+      // 세기 1 ≈ 3px, 가장 세도 약 8px — 원작 흐림은 배경 분위기용이라 타일이 알아볼 수 있어야 한다
+      const b = 3 * Math.min(2.7, bl);
+      this.blur.strengthX = b + (mx > 1 ? mx : 0);
+      this.blur.strengthY = b + (my > 1 ? my : 0);
       out.push(this.blur);
     }
 
