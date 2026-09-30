@@ -301,6 +301,9 @@ class GlowFilter extends Filter {
     this.resources.uMapTexture = blurred.source;
     this.resources.uMap2Texture = wide.source;
     fm.applyFilter(this, input, output, clear);
+    // 풀 텍스처를 붙잡고 있으면 화면 크기가 바뀔 때(가로·세로 전환) 풀이 그 텍스처를 지워 매 프레임 오류로 화면이 꺼진다
+    this.resources.uMapTexture = Texture.WHITE.source;
+    this.resources.uMap2Texture = Texture.WHITE.source;
     TexturePool.returnTexture(wide);
     TexturePool.returnTexture(blurred);
     TexturePool.returnTexture(bright);

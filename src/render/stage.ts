@@ -1,4 +1,4 @@
-import { Application, Container, Filter, Graphics, RenderTexture, Sprite, Texture, TilingSprite } from 'pixi.js';
+import { Application, Container, Filter, Graphics, RenderTexture, Sprite, Texture, TexturePool, TilingSprite } from 'pixi.js';
 import { TILE_LEN } from '../core/math';
 
 // 필터(흐림·색·왜곡·빛 번짐)는 기본이 1배 해상도라, 휴대폰(2배 화면)에서 필터가 켜지면 화면 전체가 절반 해상도로 뭉개졌다.
@@ -94,6 +94,17 @@ export class Stage {
       preference: 'webgl',
     });
     host.appendChild(this.app.canvas);
+    // 화면 크기가 바뀌면(가로·세로 전환) Pixi가 예전 크기의 풀 텍스처를 지우는데, 필터 스택이 지난 프레임의
+    // 입력 텍스처를 붙잡고 있어 다음 프레임부터 매번 오류가 나고 화면이 까매졌다 → 지우기 전에 참조를 끊는다
+    const pool = TexturePool as unknown as { _pruneScreenTextures?: () => void };
+    const prune = pool._pruneScreenTextures?.bind(TexturePool);
+    const filterSys = (this.app.renderer as unknown as { filter?: { _filterStack?: ({ inputTexture: unknown } | undefined)[] } }).filter;
+    if (prune) {
+      pool._pruneScreenTextures = () => {
+        for (const fd of filterSys?._filterStack ?? []) if (fd) fd.inputTexture = null;
+        prune();
+      };
+    }
     // 전에 그래픽 메모리가 바닥났던 기기면 필터 해상도를 처음부터 낮춰 둔다
     try {
       if (localStorage.getItem('orbit.lowgpu') === '1') this.quality = 2;

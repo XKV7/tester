@@ -499,6 +499,7 @@ export function convertAdofai(text: string): AdofaiResult {
   meta.author = author ? `원작 맵: ${author}` : '원작 맵 (얼음과 불의 춤)';
   meta.difficulty = Math.max(1, Math.min(10, Math.round(num(s.difficulty, 5))));
   meta.previewStart = Math.max(0, num(s.previewSongStart, 0));
+  meta.origin = 'adofai';
 
   // ── 이벤트
   const actions: Action[] = midspins.map((floor) => ({ floor, type: 'Midspin' as const }));
