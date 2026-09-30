@@ -103,6 +103,8 @@ uniform float uWave;
 uniform float uGlitch;
 uniform vec2 uTile;
 uniform vec2 uScroll;
+uniform vec4 uHole;
+uniform float uDark;
 
 vec2 toTex(vec2 s) { return s * uOutputFrame.zw * uInputSize.zw; }
 vec4 samp(vec2 s) { return texture(uTexture, clamp(toTex(s), uInputClamp.xy, uInputClamp.zw)); }
@@ -118,6 +120,18 @@ void main() {
     vec2 d = s - 0.5;
     float r2 = dot(d, d);
     s = 0.5 + d * (1.0 - uFish * 0.9 * (0.5 - r2));
+  }
+  // 블랙홀 (원작 BlackHole): 가운데로 빨려드는 굴절, 가운데는 검게
+  float holeShade = 1.0;
+  if (uHole.w > 0.0) {
+    float asp = uOutputFrame.z / uOutputFrame.w;
+    vec2 hp = vec2(uHole.x, 1.0 - uHole.y);
+    vec2 d = (s - hp) * vec2(asp, 1.0);
+    float r = length(d);
+    float rad = uHole.z * 0.5;
+    float k = rad * rad * uHole.w;
+    s = hp + (d * (1.0 - k / max(r * r, 1e-4) * 0.35)) / vec2(asp, 1.0);
+    holeShade = smoothstep(rad * 0.55, rad * 0.8, r);
   }
   // 물결 (원작 Waves): 가로로 출렁
   if (uWave > 0.0) s.x += sin(s.y * 24.0 + uTime * 5.0) * 0.008 * uWave;
@@ -166,6 +180,19 @@ void main() {
     c.rgb *= 1.0 - uVig * smoothstep(0.35, 1.0, edge);
   }
   if (uFish > 0.0 && (s.x < 0.0 || s.y < 0.0 || s.x > 1.0 || s.y > 1.0)) c = vec4(0.0, 0.0, 0.0, 1.0);
+  c.rgb *= holeShade;
+  // 암흑 물질 (원작 DarkMatter): 가운데를 도는 어두운 소용돌이와 보랏빛 가장자리
+  if (uDark > 0.0) {
+    float asp = uOutputFrame.z / uOutputFrame.w;
+    vec2 d = (s0 - 0.5) * vec2(asp, 1.0);
+    float r = length(d);
+    float a = atan(d.y, d.x);
+    float sw = a * 3.0 + 6.0 / (r + 0.25) - uTime * 1.6;
+    float band = 0.5 + 0.5 * sin(sw) * sin(sw * 0.5 + r * 9.0 - uTime);
+    float fall = smoothstep(0.9, 0.05, r);
+    float dm = clamp(band * fall * uDark, 0.0, 1.0);
+    c.rgb = c.rgb * (1.0 - 0.75 * dm) + vec3(0.35, 0.1, 0.55) * pow(band, 6.0) * fall * 0.6 * uDark;
+  }
   finalColor = c;
 }`;
 
@@ -207,12 +234,14 @@ class DistortFilter extends Filter {
           uTile: { value: new Float32Array([1, 1]), type: 'vec2<f32>' },
           uScroll: { value: new Float32Array([0, 0]), type: 'vec2<f32>' },
           uGlitch: { value: 0, type: 'f32' },
+          uHole: { value: new Float32Array([0.5, 0.5, 0.3, 0]), type: 'vec4<f32>' },
+          uDark: { value: 0, type: 'f32' },
         }),
       },
     });
   }
-  get u(): Record<string, number> & { uBloomCol: Float32Array; uTile: Float32Array; uScroll: Float32Array } {
-    return (this.resources.fx as { uniforms: Record<string, number> & { uBloomCol: Float32Array; uTile: Float32Array; uScroll: Float32Array } }).uniforms;
+  get u(): Record<string, number> & { uBloomCol: Float32Array; uTile: Float32Array; uScroll: Float32Array; uHole: Float32Array } {
+    return (this.resources.fx as { uniforms: Record<string, number> & { uBloomCol: Float32Array; uTile: Float32Array; uScroll: Float32Array; uHole: Float32Array } }).uniforms;
   }
 }
 
@@ -384,6 +413,12 @@ export class ScreenFx {
     const funk = k('Funk');
     if (funk > 0) m = mul(m, hue(((timeSec * 120) % 360) * Math.min(1, funk)));
     // 밝기 (원작 확장 필터 Brightness): 세기 = 배율 (1 = 그대로)
+    // 색 채널 배율 (원작 FullColors)
+    const ch = (n: string) => fs.get(n)?.intensity ?? 1;
+    const cr = ch('ChanR');
+    const cg = ch('ChanG');
+    const cb = ch('ChanB');
+    if (cr !== 1 || cg !== 1 || cb !== 1) m = mul(m, [cr, 0, 0, 0, 0, 0, cg, 0, 0, 0, 0, 0, cb, 0, 0, 0, 0, 0, 1, 0]);
     const br = fs.get('Brightness');
     if (br && Math.abs(br.intensity - 1) > 0.005) m = mul(m, brightness(Math.max(0, Math.min(3, br.intensity)), 0, 0));
     if (bloom.intensity > 0 && (reduce || !this.glow)) {
@@ -435,6 +470,11 @@ export class ScreenFx {
       u.uVig = Math.min(1, Math.max(k('Arcade'), k('Fisheye'), k('VHS'), k('EightiesTV'), k('FiftiesTV'), k('Vignette')) * 0.9);
       u.uWave = Math.min(3, k('Waves'));
       u.uGlitch = reduce ? 0 : Math.min(2, k('Glitch'));
+      u.uHole[0] = k('HoleX');
+      u.uHole[1] = k('HoleY');
+      u.uHole[2] = Math.max(0.01, k('HoleSize'));
+      u.uHole[3] = Math.min(3, k('Hole'));
+      u.uDark = Math.min(2, k('DarkMatter'));
       // 0에 가까운 반복 횟수는 화면이 한 점으로 모이므로 막는다
       const tl = (v: number) => (Math.abs(v) < 0.05 ? (v < 0 ? -0.05 : 0.05) : v);
       u.uTile[0] = tl(screen.tile[0]);
@@ -447,7 +487,7 @@ export class ScreenFx {
       u.uBloomCol[0] = ((bloom.color >> 16) & 255) / 255;
       u.uBloomCol[1] = ((bloom.color >> 8) & 255) / 255;
       u.uBloomCol[2] = (bloom.color & 255) / 255;
-      if (u.uPixel > 0 || u.uAberr > 0 || u.uScan > 0 || u.uFish > 0 || u.uPoster > 0 || u.uVig > 0 || u.uBloom > 0 || u.uWave > 0 || u.uGlitch > 0 || tiled) out.push(this.distort);
+      if (u.uPixel > 0 || u.uAberr > 0 || u.uScan > 0 || u.uFish > 0 || u.uPoster > 0 || u.uVig > 0 || u.uBloom > 0 || u.uWave > 0 || u.uGlitch > 0 || u.uHole[3] > 0 || u.uDark > 0 || tiled) out.push(this.distort);
     }
     return out;
   }

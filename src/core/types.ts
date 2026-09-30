@@ -98,6 +98,12 @@ export interface RecolorTrackAction extends ActionBase {
   color: string;
   duration?: number;
   style?: TrackStyle;
+  /** 건너뛸 타일 수 (원작 gapLength): 적용, n개 건너뜀, 적용 … */
+  gap?: number;
+  /** 색 움직임: glow = 두 색 사이 물결(기본), blink = 두 색 번갈아 딱딱, rainbow = 무지개 */
+  colorMode?: 'glow' | 'blink' | 'rainbow';
+  /** 물결이 트랙 뒤쪽으로 (원작 Backward) */
+  pulseBack?: boolean;
   /** 두 번째 색: 있으면 두 색 사이를 물결치듯 오간다 (원작 Glow). */
   color2?: string;
   /** 한 번 오가는 시간 (초). */
@@ -117,6 +123,8 @@ export interface MoveTrackAction extends ActionBase {
   opacity?: number;
   /** 타일 크기 배율 (1 = 원래 크기). */
   scale?: number;
+  /** 건너뛸 타일 수 (원작 gapLength) */
+  gap?: number;
   duration?: number;
   ease?: EaseName;
 }
@@ -201,6 +209,10 @@ export interface MoveDecorationsAction extends ActionBase {
   particle?: 'start' | 'stop' | 'clear';
   /** 입자 장식: 한 번에 이만큼 뿜기 (원작 EmitParticle) */
   emit?: number;
+  /** 가리기 바꾸기 ('none' = 가리기 없음) */
+  mask?: DecoMask | 'none';
+  /** 깊이 바꾸기 */
+  depth?: number;
   duration?: number;
   ease?: EaseName;
 }
@@ -265,6 +277,10 @@ export type Action =
 export type ActionType = Action['type'];
 
 /** 장식 (이미지 또는 글자). 위치·크기는 월드 단위 (TILE_LEN = 타일 한 칸, y 위쪽). */
+export type DecoBlend = 'add' | 'screen' | 'overlay' | 'soft-light' | 'difference' | 'multiply';
+export const DECO_BLENDS: DecoBlend[] = ['add', 'screen', 'overlay', 'soft-light', 'difference', 'multiply'];
+export type DecoMask = 'mask' | 'inside' | 'outside';
+
 export interface Decoration {
   /** 태그 (공백으로 여러 개) — MoveDecorations가 찾는 이름. */
   tag?: string;
@@ -291,8 +307,12 @@ export interface Decoration {
   alpha?: number;
   /** 그림을 가로·세로 몇 번 이어 붙일지 (원작 tile). */
   tile?: [number, number];
-  /** 섞는 방식: add = 더하기(원작 LinearDodge), screen = 스크린 */
-  blend?: 'add' | 'screen';
+  /** 섞는 방식: add = 더하기(원작 LinearDodge), screen = 스크린, 그 밖에 오버레이·소프트 라이트·차이·곱하기 */
+  blend?: DecoBlend;
+  /** 가리기 (원작 maskingType): mask = 가림막(안 보임), inside = 가림막 안에서만, outside = 가림막 밖에서만 */
+  mask?: DecoMask;
+  /** false면 그림을 부드럽게 늘리지 않고 픽셀 그대로 (원작 imageSmoothing) */
+  smooth?: boolean;
   /** 카메라 회전·확대와 상관없이 화면에서 같은 방향·크기 */
   lockRotation?: boolean;
   lockScale?: boolean;
@@ -332,6 +352,18 @@ export interface ParticleDef {
   max?: number;
   /** 시간 배율 (1 = 보통) */
   speed?: number;
+  /** 방출 영역이 원 (area = 지름)이면 true — 아니면 사각형 */
+  circle?: boolean;
+  /** 원 영역에서 쓰는 각도 범위 (도, 360 = 한 바퀴) */
+  arc?: number;
+  /** 처음 회전 (도) [최소, 최대] */
+  rot0?: [number, number];
+  /** 수명 동안 크기 배율 [시작, 끝] */
+  sizeLife?: [number, number];
+  /** 그림을 가로·세로 몇 칸으로 나눠 입자마다 한 칸을 무작위로 (원작 randomTextureTiling) */
+  sheet?: [number, number];
+  /** 뿜은 뒤에는 방출 장소가 움직여도 따라가지 않음 (원작 simulationSpace World) */
+  world?: boolean;
 }
 
 export interface LevelData {

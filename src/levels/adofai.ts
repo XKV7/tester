@@ -2,7 +2,7 @@ import { compileChart } from '../core/chart';
 import { TILE_LEN } from '../core/math';
 import { defaultMeta, defaultSettings, FILTER_NAMES, MAX_BPM, MAX_EFFECT_BEATS, MAX_EXTRA_BEATS, MAX_MULTIPLIER, validateLevel } from '../core/level';
 import { EASE_NAMES } from '../core/ease';
-import type { Action, Decoration, EaseName, LevelData, ParticleDef, RecolorTrackAction, TrackAppear, TrackDisappear, TrackStyle } from '../core/types';
+import type { Action, DecoBlend, DecoMask, Decoration, EaseName, LevelData, ParticleDef, RecolorTrackAction, TrackAppear, TrackDisappear, TrackStyle } from '../core/types';
 
 /**
  * 얼음과 불의 춤(.adofai) 레벨 → ORBIT 레벨 변환. 순수 함수.
@@ -109,8 +109,21 @@ function particleFrom(e: Record<string, unknown>): ParticleDef {
   const sc = pair(e.scale, [100, 100]).map((x) => Math.abs(x) / 100);
   const shape = str(e.shapeType);
   const rad = num(e.shapeRadius, 1);
-  const area: [number, number] = shape === 'Rectangle' || shape === 'Box' ? [sc[0] * TILE_LEN, sc[1] * TILE_LEN] : [2 * rad * sc[0] * TILE_LEN, 2 * rad * sc[1] * TILE_LEN];
+  const rect = shape === 'Rectangle' || shape === 'Box';
+  const area: [number, number] = rect ? [sc[0] * TILE_LEN, sc[1] * TILE_LEN] : [2 * rad * sc[0] * TILE_LEN, 2 * rad * sc[1] * TILE_LEN];
   if (area[0] > 0 || area[1] > 0) p.area = area;
+  if (!rect && p.area) {
+    p.circle = true;
+    const arc = num(e.arc, 360);
+    if (arc < 360) p.arc = Math.max(0, arc);
+  }
+  const r0 = pair(e.startRotation, [0, 0]);
+  if (r0[0] || r0[1]) p.rot0 = sorted(r0);
+  const sl = pair(e.sizeOverLifetime, [100, 100]);
+  if (sl[0] !== 100 || sl[1] !== 100) p.sizeLife = [Math.max(0, sl[0] / 100), Math.max(0, sl[1] / 100)];
+  const tt = pair(e.randomTextureTiling, [1, 1]).map((x) => Math.max(1, Math.min(64, Math.round(x)))) as [number, number];
+  if (tt[0] > 1 || tt[1] > 1) p.sheet = tt;
+  if (str(e.simulationSpace) === 'World') p.world = true;
   const col = e.colorOverLifetime as Record<string, unknown> | undefined;
   const start = e.color as Record<string, unknown> | undefined;
   if (col && str(col.mode) === 'Gradient' && typeof col.gradient1 === 'object' && col.gradient1) {
@@ -210,25 +223,70 @@ const DISAPPEAR_MAP: Record<string, TrackDisappear> = {
 };
 
 /** 원작 트랙 색 필드(trackColor·trackStyle·trackColorType·secondaryTrackColor …) → RecolorTrack의 색·모양·물결. */
-function trackLook(e: Record<string, unknown>): Pick<RecolorTrackAction, 'color' | 'style' | 'color2' | 'glowDuration' | 'pulseLength' | 'lit'> | null {
+function trackLook(e: Record<string, unknown>): Pick<RecolorTrackAction, 'color' | 'style' | 'color2' | 'glowDuration' | 'pulseLength' | 'lit' | 'colorMode' | 'pulseBack'> | null {
   const c = adofaiColor(e.trackColor);
   if (!c) return null;
-  const look: Pick<RecolorTrackAction, 'color' | 'style' | 'color2' | 'glowDuration' | 'pulseLength' | 'lit'> = { color: c };
+  const look: Pick<RecolorTrackAction, 'color' | 'style' | 'color2' | 'glowDuration' | 'pulseLength' | 'lit' | 'colorMode' | 'pulseBack'> = { color: c };
   // 지나간 타일이 빛나는 정도 (없으면 기본 1)
   if (e.trackGlowIntensity !== undefined) look.lit = Math.max(0, Math.min(1, num(e.trackGlowIntensity, 100) / 100));
   const st = STYLE_MAP[str(e.trackStyle)];
   if (st) look.style = st;
   const type = str(e.trackColorType);
   const c2 = adofaiColor(e.secondaryTrackColor);
-  if (c2 && c2 !== c && (type === 'Glow' || type === 'Blink' || type === 'Switch' || type === 'Rainbow' || type === 'Volume')) {
-    look.color2 = c2;
+  // 무지개는 두 번째 색이 필요 없다
+  if (type === 'Rainbow' || (c2 && c2 !== c && (type === 'Glow' || type === 'Blink' || type === 'Switch' || type === 'Volume'))) {
+    look.color2 = c2 ?? c;
     look.glowDuration = Math.max(0.05, num(e.trackColorAnimDuration, 2));
-    if (str(e.trackColorPulse) !== 'None') look.pulseLength = Math.max(0, num(e.trackPulseLength, 10));
+    if (type === 'Rainbow') look.colorMode = 'rainbow';
+    else if (type === 'Blink' || type === 'Switch') look.colorMode = 'blink';
+    const pulse = str(e.trackColorPulse);
+    if (pulse && pulse !== 'None') {
+      look.pulseLength = Math.max(0, num(e.trackPulseLength, 10));
+      if (pulse === 'Backward') look.pulseBack = true;
+    }
   }
   return look;
 }
 
 /** 원작 AddDecoration / AddText → 장식. 위치 단위: 타일 (× TILE_LEN). */
+/** 원작 섞는 방식 → ORBIT (없거나 모르는 방식은 보통) */
+function blendFrom(v: unknown): DecoBlend | undefined {
+  switch (str(v)) {
+    case 'LinearDodge':
+    case 'Add':
+    case 'Additive':
+      return 'add';
+    case 'Screen':
+      return 'screen';
+    case 'Overlay':
+      return 'overlay';
+    case 'SoftLight':
+      return 'soft-light';
+    case 'Difference':
+      return 'difference';
+    case 'Multiply':
+      return 'multiply';
+    default:
+      return undefined;
+  }
+}
+
+/** 원작 maskingType → ORBIT 가리기 */
+function maskFrom(v: unknown): DecoMask | 'none' | undefined {
+  switch (str(v)) {
+    case 'Mask':
+      return 'mask';
+    case 'VisibleInsideMask':
+      return 'inside';
+    case 'VisibleOutsideMask':
+      return 'outside';
+    case 'None':
+      return 'none';
+    default:
+      return undefined;
+  }
+}
+
 function decoFrom(e: Record<string, unknown>, floor: number, isText: boolean): Decoration | null {
   const image = str(e.decorationImage).split(/[\\/]/).pop() ?? '';
   const text = isText ? str(e.decText) : '';
@@ -266,9 +324,11 @@ function decoFrom(e: Record<string, unknown>, floor: number, isText: boolean): D
   if (po[0] || po[1]) d.parallaxOffset = [po[0] * TILE_LEN, po[1] * TILE_LEN];
   const tl = vec(e.tile, 1);
   if ((tl[0] !== 1 || tl[1] !== 1) && tl[0] > 0 && tl[1] > 0) d.tile = [Math.min(200, tl[0]), Math.min(200, tl[1])];
-  const blend = str(e.blendMode);
-  if (blend === 'LinearDodge' || blend === 'Add' || blend === 'Additive') d.blend = 'add';
-  else if (blend === 'Screen') d.blend = 'screen';
+  const blend = blendFrom(e.blendMode);
+  if (blend) d.blend = blend;
+  const mask = maskFrom(e.maskingType);
+  if (mask && mask !== 'none') d.mask = mask;
+  if (e.imageSmoothing === false) d.smooth = false;
   if (e.lockRotation === true) d.lockRotation = true;
   if (e.lockScale === true) d.lockScale = true;
   if (e.hideIcon === undefined && (e.visible === false || e.visible === 'Disabled')) d.visible = false;
@@ -376,6 +436,26 @@ export function advancedFilter(name: string, p: Map<string, unknown>): AdvancedC
     case 'FX_Drunk2':
     case 'FX_Drunk':
       return one('Waves', 1);
+    case 'Colors_Adjust_FullColors':
+      // 채널별 배율만 (다른 채널 섞기·상수는 거의 안 씀)
+      return {
+        filters: [
+          ['ChanR', v('Red_R', 10000) / 10000],
+          ['ChanG', v('Green_G', 10000) / 10000],
+          ['ChanB', v('Blue_B', 10000) / 10000],
+        ],
+      };
+    case 'Distortion_BlackHole':
+      return {
+        filters: [
+          ['HoleX', Math.max(0, Math.min(1, v('PositionX', 50) / 100))],
+          ['HoleY', Math.max(0, Math.min(1, v('PositionY', 50) / 100))],
+          ['HoleSize', Math.max(0.01, Math.min(1, v('Size', 30) / 100))],
+          ['Hole', Math.max(0.1, Math.min(3, v('Distortion', 3000) / 10000))],
+        ],
+      };
+    case 'FX_DarkMatter':
+      return one('DarkMatter', Math.max(0.1, Math.min(2, (v('Intensity', 100) / 100) * (v('DarkIntensity', 100) / 100))));
     case 'Glow_Glow':
     case 'Glow_Glow_Color': {
       const col = adofaiColor(p.get('glowcolor'));
@@ -513,6 +593,7 @@ export function convertAdofai(text: string): AdofaiResult {
   const decorations: Decoration[] = [];
   const filterSet = new Set(FILTER_NAMES);
   const colorTracks: { floor: number; look: NonNullable<ReturnType<typeof trackLook>> }[] = [];
+  const thisTileLooks: { floor: number; look: NonNullable<ReturnType<typeof trackLook>> }[] = [];
 
   // ── 레벨 설정에 들어 있는 시작 상태 (원작은 설정에 첫 카메라·트랙 모양·배경·타일 애니메이션을 둔다)
   const startLook = trackLook({ trackColor: s.trackColor ?? 'debb7b', trackStyle: s.trackStyle ?? 'Standard', ...s });
@@ -606,7 +687,9 @@ export function convertAdofai(text: string): AdofaiResult {
       case 'ColorTrack': {
         // 원작 ColorTrack은 시간 이벤트가 아니라 '이 타일부터 트랙 모양' — 아래에서 구간별로 처음부터 적용
         const look = trackLook(e);
-        if (look) colorTracks.push({ floor, look });
+        // justThisTile: 이 타일만 (뒤 타일은 앞 모양 그대로)
+        if (look && onOff(e.justThisTile)) thisTileLooks.push({ floor, look });
+        else if (look) colorTracks.push({ floor, look });
         break;
       }
       case 'RecolorTrack': {
@@ -614,7 +697,8 @@ export function convertAdofai(text: string): AdofaiResult {
         if (!look) break;
         const a = tileRef(e.startTile, floor, last);
         const b = tileRef(e.endTile, floor, last);
-        vis({ floor, type: 'RecolorTrack', from: Math.min(a, b), to: Math.max(a, b), ...look, duration: dur(e.duration, 0) });
+        const gap = Math.max(0, Math.round(num(e.gapLength, 0)));
+        vis({ floor, type: 'RecolorTrack', from: Math.min(a, b), to: Math.max(a, b), ...look, ...(gap ? { gap } : {}), duration: dur(e.duration, 0) });
         break;
       }
       case 'MoveCamera': {
@@ -654,7 +738,8 @@ export function convertAdofai(text: string): AdofaiResult {
       case 'MoveTrack': {
         const a = tileRef(e.startTile, floor, last);
         const b = tileRef(e.endTile, floor, last);
-        const mv: Action = { floor, type: 'MoveTrack', from: Math.min(a, b), to: Math.max(a, b), duration: dur(e.duration, 1) };
+        const mgap = Math.max(0, Math.round(num(e.gapLength, 0)));
+        const mv: Action = { floor, type: 'MoveTrack', from: Math.min(a, b), to: Math.max(a, b), ...(mgap ? { gap: mgap } : {}), duration: dur(e.duration, 1) };
         // 비어 있는(null) 축은 그대로
         if (Array.isArray(e.positionOffset) && e.positionOffset.some((v) => v !== null)) {
           const ax = (v: unknown) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v) * TILE_LEN);
@@ -715,6 +800,8 @@ export function convertAdofai(text: string): AdofaiResult {
         const props = parseFilterProps(e.filterProperties);
         const on = onOff(e.enabled);
         const conv = advancedFilter(str(e.filter), props);
+        // 끄기만 하는 이벤트는 (없는 필터라도) 할 일이 없다
+        if (!conv && !on) break;
         if (!conv) {
           bump(skipped, `확장 필터 ${str(e.filter).replace(/^CameraFilterPack_/, '')}`);
           break;
@@ -897,6 +984,9 @@ export function convertAdofai(text: string): AdofaiResult {
         if (e.opacity !== undefined && e.opacity !== null) a.opacity = Math.max(0, Math.min(1, num(e.opacity, 100) / 100));
         if (e.visible !== undefined) a.visible = onOff(e.visible);
         if (str(e.decorationImage)) a.image = str(e.decorationImage).split(/[\\/]/).pop();
+        const mk = maskFrom(e.maskingType);
+        if (mk) a.mask = mk;
+        if (e.depth !== undefined && e.depth !== null && Number.isFinite(Number(e.depth))) a.depth = Number(e.depth);
         const ease = mapEase(e.ease);
         if (ease) a.ease = ease;
         vis(a);
@@ -915,6 +1005,8 @@ export function convertAdofai(text: string): AdofaiResult {
   }
 
   // ColorTrack (+ 설정의 시작 모양) → 구간마다 레벨 시작부터 적용되는 RecolorTrack
+  // 이 타일만 바꾸는 모양은 구간 모양보다 뒤에 적용되게 먼저 앞에 넣는다 (아래 구간들이 그 앞에 들어감)
+  for (const t of thisTileLooks) actions.unshift({ floor: 0, type: 'RecolorTrack', from: t.floor, to: t.floor, ...t.look, duration: 0 });
   colorTracks.sort((a, b) => a.floor - b.floor);
   colorTracks.forEach((ct, j) => {
     const to = j + 1 < colorTracks.length ? colorTracks[j + 1].floor - 1 : last;

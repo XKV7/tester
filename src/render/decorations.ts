@@ -1,4 +1,5 @@
-import { Container, Graphics, Sprite, Text, Texture, TilingSprite } from 'pixi.js';
+import { Container, Graphics, Rectangle, RenderTexture, Sprite, Text, Texture, TilingSprite, type Matrix, type Renderer } from 'pixi.js';
+import 'pixi.js/advanced-blend-modes';
 import type { Chart } from '../core/chart';
 import { lerpColor, parseColor } from '../core/color';
 import { degToRad, TILE_LEN } from '../core/math';
@@ -21,6 +22,9 @@ interface Particle {
   size: number;
   age: number;
   life: number;
+  /** 처음 크기 (수명 동안 크기 배율을 곱한다) */
+  bx: number;
+  by: number;
 }
 
 interface PSys {
@@ -34,12 +38,17 @@ interface PSys {
   clearSerial: number;
   c0: number;
   c1: number;
+  /** 지난 프레임 방출 장소 위치 (world 모드에서 입자를 제자리에 두려고) */
+  lx: number | null;
+  ly: number | null;
 }
 
 interface Obj {
   node: Sprite | TilingSprite | Text | Graphics | Container;
   image: string | null;
   ps?: PSys;
+  /** 지금 걸린 가리기 (inside/outside) */
+  masked: 'inside' | 'outside' | null;
 }
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
@@ -98,6 +107,15 @@ export class DecorationView {
   readonly stats = { loaded: 0, failed: 0, missing: 0, shrunk: 0, unloaded: 0, failedNames: [] as string[], missingNames: [] as string[] };
   private lastTime: number | null = null;
   private destroyed = false;
+  /** 가림막 장식들 (화면에 그리지 않고, 매 프레임 가림막 그림으로만 그린다) */
+  private readonly maskLayer = new Container();
+  private maskRT: RenderTexture | null = null;
+  /** 가림막 그림을 화면 전체에 까는 스프라이트 (가려질 장식들의 mask) */
+  private readonly maskSprite = new Sprite(Texture.EMPTY);
+  /** 이번 프레임에 가림막·가려질 장식이 보이는지 */
+  private maskUsed = false;
+  /** 픽셀 그대로 그릴 그림 이름 (원작 imageSmoothing 끔) */
+  private readonly nearest = new Set<string>();
 
   constructor(
     private readonly chart: Chart,
@@ -108,11 +126,17 @@ export class DecorationView {
     this.front.sortableChildren = true;
     for (const d of tl.decos) {
       const o = this.makeObj(d);
-      const depth = d.def.depth ?? -1;
-      o.node.zIndex = -depth;
-      (depth >= 0 ? this.behind : this.front).addChild(o.node);
+      this.place(o, d.def.mask ?? null, d.def.depth ?? -1);
       this.objs.push(o);
+      if (d.def.smooth === false && d.def.image) this.nearest.add(d.def.image);
     }
+  }
+
+  /** 깊이·가리기에 맞는 층에 둔다 (가림막은 화면에 안 그리는 층). */
+  private place(o: Obj, mask: string | null, depth: number): void {
+    const want = mask === 'mask' ? this.maskLayer : depth >= 0 ? this.behind : this.front;
+    o.node.zIndex = -depth;
+    if (o.node.parent !== want) want.addChild(o.node);
   }
 
   get count(): number {
@@ -126,12 +150,12 @@ export class DecorationView {
       const p = def.particle;
       const c0 = parseColor(p.colors?.[0], 0xffffff);
       const c1 = parseColor(p.colors?.[1], c0);
-      return { node: layer, image: null, ps: { def: p, layer, live: [], pool: [], debt: 0, rate: rand(p.rate[0], p.rate[1]), clearSerial: d.clearSerial, c0, c1 } };
+      return { node: layer, image: null, masked: null, ps: { def: p, layer, live: [], pool: [], debt: 0, rate: rand(p.rate[0], p.rate[1]), clearSerial: d.clearSerial, c0, c1, lx: null, ly: null } };
     }
     if (def.shape === 'planet') {
       // 흰색으로 그려 두고 색은 tint로 (색 바꾸기 이벤트가 그대로 먹게)
       const g = new Graphics().circle(0, 0, PLANET_R).fill({ color: 0xffffff });
-      return { node: g, image: null };
+      return { node: g, image: null, masked: null };
     }
     if (def.shape === 'tile') {
       const w = TILE_LEN;
@@ -140,14 +164,14 @@ export class DecorationView {
         .fill({ color: 0xffffff })
         .rect(-w / 2 + 5, -BLOCK_W / 2 + 5, w - 10, BLOCK_W - 10)
         .fill({ color: 0xffffff, alpha: 0.35 });
-      return { node: g, image: null };
+      return { node: g, image: null, masked: null };
     }
-    if (def.text !== undefined) return { node: this.makeText(d), image: null };
+    if (def.text !== undefined) return { node: this.makeText(d), image: null, masked: null };
     // 이어 붙인 그림 (원작 tile)
     const s = def.tile ? new TilingSprite({ texture: Texture.EMPTY, width: 1, height: 1 }) : new Sprite(Texture.EMPTY);
     s.anchor.set(0.5);
     if (def.blend) s.blendMode = def.blend;
-    return { node: s, image: null };
+    return { node: s, image: null, masked: null };
   }
 
   private makeText(d: DecoState): Text {
@@ -202,9 +226,13 @@ export class DecorationView {
           cv.height = Math.max(1, Math.round(h * k));
           cv.getContext('2d')?.drawImage(img, 0, 0, cv.width, cv.height);
           t = Texture.from(cv);
+          if (this.nearest.has(name)) t.source.scaleMode = 'nearest';
           this.texFactor.set(t, w / cv.width);
           this.stats.shrunk++;
-        } else t = Texture.from(img);
+        } else {
+          t = Texture.from(img);
+          if (this.nearest.has(name)) t.source.scaleMode = 'nearest';
+        }
         this.tex.set(name, t);
         this.stats.loaded++;
         done();
@@ -239,6 +267,11 @@ export class DecorationView {
     for (const name of dropped) {
       const t = this.tex.get(name) as Texture;
       this.texFactor.delete(t);
+      const cl = this.cells.get(t);
+      if (cl) {
+        for (const c of cl) c.destroy();
+        this.cells.delete(t);
+      }
       t.destroy(true);
       this.tex.delete(name);
       this.stats.loaded--;
@@ -253,6 +286,7 @@ export class DecorationView {
     const decos = this.tl.decos;
     const now = performance.now();
     this.sweep(now);
+    this.maskUsed = false;
     const rc = degToRad(camRot);
     const cos = Math.cos(-rc);
     const sin = Math.sin(-rc);
@@ -273,8 +307,19 @@ export class DecorationView {
       const node = o.node;
       const def = d.def;
       if (o.ps) this.stepParticles(o.ps, d, dt, rewound, time ?? 0);
-      node.visible = d.visible && d.opacity * d.calpha > 0.001 && (!o.ps || o.ps.live.length > 0);
+      // 깊이·가리기 바뀜 (원작 MoveDecorations)
+      if (node.zIndex !== -d.depth || (d.mask === 'mask') !== (node.parent === this.maskLayer)) this.place(o, d.mask, d.depth);
+      const isMask = d.mask === 'mask';
+      // 가림막은 투명도와 상관없이 모양만 쓴다 (원작 SpriteMask)
+      node.visible = d.visible && (isMask || d.opacity * d.calpha > 0.001) && (!o.ps || o.ps.live.length > 0);
+      const want = d.mask === 'inside' || d.mask === 'outside' ? d.mask : null;
+      if (want !== o.masked) {
+        o.masked = want;
+        if (want) node.setMask({ mask: this.maskSprite, inverse: want === 'outside' });
+        else node.mask = null;
+      }
       if (!node.visible) continue;
+      if (isMask || want) this.maskUsed = true;
       // 이미지 교체·지연 로드
       if (o.image) this.lastUsed.set(o.image, now);
       if ((node instanceof Sprite || node instanceof TilingSprite) && d.image !== o.image) {
@@ -326,7 +371,7 @@ export class DecorationView {
       }
       node.position.set(x, y);
       node.rotation = r;
-      node.alpha = d.opacity * d.calpha;
+      node.alpha = isMask ? 1 : d.opacity * d.calpha;
       if (o.ps) {
         // 입자 묶음: 색은 입자마다, 크기 배율은 장식 크기
         node.scale.set(d.sx, d.sy);
@@ -377,6 +422,19 @@ export class DecorationView {
     }
     // 살아 있는 입자가 쓰는 그림은 내리지 않는다
     if (ps.live.length && d.image) this.lastUsed.set(d.image, performance.now());
+    // world: 방출 장소가 움직인 만큼 입자를 반대로 옮겨 제자리에 둔다 (회전은 무시)
+    const L = ps.layer;
+    if (p.world && ps.lx !== null && ps.ly !== null && L.scale.x && L.scale.y) {
+      const dx = (L.x - ps.lx) / L.scale.x;
+      const dy = (L.y - ps.ly) / L.scale.y;
+      if (dx || dy)
+        for (const q of ps.live) {
+          q.x -= dx;
+          q.y += dy;
+        }
+    }
+    ps.lx = L.x;
+    ps.ly = L.y;
     // 이동·수명
     const keep: Particle[] = [];
     for (const q of ps.live) {
@@ -392,29 +450,62 @@ export class DecorationView {
       q.s.position.set(q.x, -q.y);
       q.s.rotation = -degToRad(q.rot);
       q.s.alpha = alphaAt(p.alphaKeys, f);
+      if (p.sizeLife) {
+        const m = p.sizeLife[0] + (p.sizeLife[1] - p.sizeLife[0]) * f;
+        q.s.scale.set(q.bx * m, q.by * m);
+      }
       q.s.tint = ps.c0 === ps.c1 ? ps.c0 : lerpColor(ps.c0, ps.c1, f);
       keep.push(q);
     }
     ps.live = keep;
   }
 
+  /** 그림을 cols×rows 칸으로 나눈 한 칸 (칸 그림은 원래 그림이 바뀌기 전까지 재사용) */
+  private readonly cells = new Map<Texture, Texture[]>();
+  private cell(tex: Texture, cols: number, rows: number): Texture {
+    let list = this.cells.get(tex);
+    if (!list) {
+      list = [];
+      const w = tex.width / cols;
+      const h = tex.height / rows;
+      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) list.push(new Texture({ source: tex.source, frame: new Rectangle(tex.frame.x + c * w, tex.frame.y + r * h, w, h) }));
+      this.cells.set(tex, list);
+    }
+    return list[Math.floor(Math.random() * list.length)];
+  }
+
   private spawn(ps: PSys, tex: Texture | null): void {
     const p = ps.def;
     const s = ps.pool.pop() ?? new Sprite(Texture.EMPTY);
     s.anchor.set(0.5);
-    s.texture = tex ?? Texture.WHITE;
+    const sheet = tex && p.sheet && (p.sheet[0] > 1 || p.sheet[1] > 1) ? p.sheet : null;
+    s.texture = tex ? (sheet ? this.cell(tex, sheet[0], sheet[1]) : tex) : Texture.WHITE;
     const size = rand(p.size[0], p.size[1]);
-    // 그림이 없으면 작은 흰 사각형
+    // 그림이 없으면 작은 흰 사각형. 칸으로 나눈 그림은 한 칸이 원래 그림 크기로 보이게
     const base = tex ? DECO_PX : TILE_LEN * 0.08;
-    s.scale.set(base * size * (tex ? (this.texFactor.get(tex) ?? 1) : 1 / Math.max(1, s.texture.width)));
+    const k = base * size * (tex ? (this.texFactor.get(tex) ?? 1) : 1 / Math.max(1, s.texture.width));
+    const bx = k * (sheet ? sheet[0] : 1);
+    const by = k * (sheet ? sheet[1] : 1);
+    s.scale.set(bx, by);
     const area = p.area ?? [0, 0];
+    let x = (Math.random() - 0.5) * area[0];
+    let y = (Math.random() - 0.5) * area[1];
+    if (p.circle) {
+      // 원 안 (arc가 있으면 그 각도 범위만)
+      const a = degToRad(Math.random() * (p.arc ?? 360));
+      const r = Math.sqrt(Math.random()) * 0.5;
+      x = Math.cos(a) * r * area[0];
+      y = Math.sin(a) * r * area[1];
+    }
     const q: Particle = {
       s,
-      x: (Math.random() - 0.5) * area[0],
-      y: (Math.random() - 0.5) * area[1],
+      x,
+      y,
+      bx,
+      by,
       vx: rand(p.velocity[0][0], p.velocity[1][0]),
       vy: rand(p.velocity[0][1], p.velocity[1][1]),
-      rot: 0,
+      rot: p.rot0 ? rand(p.rot0[0], p.rot0[1]) : 0,
       spin: p.spin ? rand(p.spin[0], p.spin[1]) : 0,
       size,
       age: 0,
@@ -432,8 +523,29 @@ export class DecorationView {
     else q.s.destroy();
   }
 
+  /**
+   * 가림막 장식들을 화면 크기 그림으로 그려 둔다 (가려질 장식의 mask). 카메라 변환이 정해진 뒤, 화면 그리기 전에.
+   * worldTransform: 월드 → 화면 변환.
+   */
+  renderMask(renderer: Renderer, worldTransform: Matrix, width: number, height: number): void {
+    if (!this.maskUsed) return;
+    const res = renderer.resolution;
+    const w = Math.max(1, Math.ceil(width));
+    const h = Math.max(1, Math.ceil(height));
+    if (!this.maskRT || this.maskRT.width !== w || this.maskRT.height !== h || this.maskRT.source.resolution !== res) {
+      this.maskRT?.destroy(true);
+      this.maskRT = RenderTexture.create({ width: w, height: h, resolution: res });
+      this.maskSprite.texture = this.maskRT;
+    }
+    renderer.render({ container: this.maskLayer, target: this.maskRT, clear: true, clearColor: [0, 0, 0, 0], transform: worldTransform });
+  }
+
   destroy(): void {
     this.destroyed = true;
+    for (const list of this.cells.values()) for (const t of list) t.destroy();
+    this.maskLayer.destroy({ children: true });
+    this.maskSprite.destroy();
+    this.maskRT?.destroy(true);
     this.behind.destroy({ children: true });
     this.front.destroy({ children: true });
     for (const t of this.tex.values()) if (t && t !== 'loading') t.destroy(true);

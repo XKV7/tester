@@ -1,6 +1,6 @@
 import { BitmapText, Container, Graphics, Text } from 'pixi.js';
 import { VISUAL_TYPES, type Chart } from '../core/chart';
-import { lerpColor, scaleColor } from '../core/color';
+import { hueColor, lerpColor, scaleColor } from '../core/color';
 import { degToRad, TILE_LEN } from '../core/math';
 import type { VisualTimeline } from '../core/timeline';
 import { BAND_W, bandContext, blockContexts, iconContext, sv, type IconKind } from './shapes';
@@ -204,8 +204,12 @@ export class TrackView {
       if (tl && tl.tileColor2[i] >= 0) {
         const tt = u.time ?? u.now / 1000;
         const len = tl.tilePulseLen[i];
-        const ph = tt / Math.max(0.05, tl.tileGlowDur[i]) - (len > 0 ? i / len : 0);
-        base = lerpColor(base, tl.tileColor2[i], 0.5 - 0.5 * Math.cos(ph * Math.PI * 2));
+        const mode = tl.tileColorMode[i];
+        const ph = tt / Math.max(0.05, tl.tileGlowDur[i]) - (len > 0 ? ((mode & 4 ? -1 : 1) * i) / len : 0);
+        const m = mode & 3;
+        if (m === 2) base = hueColor(ph - Math.floor(ph));
+        else if (m === 1) base = ph - Math.floor(ph) < 0.5 ? base : tl.tileColor2[i];
+        else base = lerpColor(base, tl.tileColor2[i], 0.5 - 0.5 * Math.cos(ph * Math.PI * 2));
       }
       const passed = i < u.passed;
       const ps = this.pulses.get(i);

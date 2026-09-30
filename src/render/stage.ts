@@ -92,6 +92,8 @@ export class Stage {
       resolution: Math.min(window.devicePixelRatio || 1, 2),
       autoDensity: true,
       preference: 'webgl',
+      // 장식의 오버레이·소프트 라이트·차이 섞기 (원작 blendMode)
+      useBackBuffer: true,
     });
     host.appendChild(this.app.canvas);
     this.host = host;
