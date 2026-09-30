@@ -1020,6 +1020,13 @@ export class EditorScreen implements Screen {
         return;
       }
       const pkg = packageFromFiles(picked);
+      // 같은 원작 레벨인데 지금 레벨이 이벤트·장식이 더 많으면 (고른 zip의 레벨이 예전 버전) 레벨은 두고 파일만 더한다
+      const size = (lv: LevelData) => lv.actions.length + (lv.decorations?.length ?? 0);
+      if (this.pkg.imported === 'adofai' && pkg.level.path.length === this.level.path.length && size(pkg.level) < size(this.level)) {
+        this.addFiles(picked);
+        toast('고른 묶음의 레벨이 지금 레벨보다 예전 버전이라, 레벨은 그대로 두고 그림·음원만 더했어요.', 6000);
+        return;
+      }
       pkg.id = newPackageId('edit');
       editing = pkg;
       this.pkg = pkg;
