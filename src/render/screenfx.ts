@@ -460,7 +460,8 @@ export class ScreenFx {
     const c = bloom.color;
     const half = (sh: number) => Math.round(127.5 + ((c >> sh) & 255) / 2);
     const col = (half(16) << 16) | (half(8) << 8) | half(0);
-    this.glow.set(Math.max(0.7, bloom.threshold), 1.1 + 0.5 * b, col, (26 + 10 * Math.min(2, b)) * (this.screenH / 720));
+    // 세기는 예전의 약 절반, 퍼짐도 좁게 (폰 화면에서 타일이 빛에 묻혔다)
+    this.glow.set(Math.max(0.75, bloom.threshold), 0.55 + 0.25 * b, col, (18 + 6 * Math.min(2, b)) * (this.screenH / 720));
     return [this.glow];
   }
 
