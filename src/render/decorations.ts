@@ -44,8 +44,16 @@ interface Obj {
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
-/** GPU에 올릴 그림 최대 크기 (넘으면 줄여서 올린다). 휴대폰은 그림이 수백 장이면 메모리가 모자라 더 작게 */
-const MAX_TEX = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 2048 : 4096;
+const MOBILE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+/**
+ * GPU에 올릴 그림 최대 크기 (넘으면 줄여서 올린다). 휴대폰은 큰 그림 수십 장이 한꺼번에 보이면
+ * GPU 메모리가 모자라 그림이 통째로 안 그려지므로 훨씬 작게.
+ */
+const MAX_TEX = MOBILE ? 1024 : 4096;
+/** 한꺼번에 해독하는 그림 수 (휴대폰에서 수십 장을 동시에 풀면 메모리가 튄다) */
+const MAX_LOADING = MOBILE ? 3 : 8;
+/** 이만큼(ms) 안 보인 그림은 GPU에서 내린다 (다시 보이면 새로 불러온다) */
+const UNLOAD_AFTER_MS = MOBILE ? 4000 : 20000;
 
 /** 불투명도 키 사이를 선형으로 (키가 없으면 1). */
 function alphaAt(keys: [number, number][] | undefined, t: number): number {
@@ -72,9 +80,15 @@ export class DecorationView {
   private readonly tex = new Map<string, Texture | 'loading' | null>();
   /** 줄여서 올린 그림: 원래 크기 / 줄인 크기 */
   private readonly texFactor = new Map<Texture, number>();
+  /** 그림 이름 → 마지막으로 화면에 쓴 시각 (performance.now) */
+  private readonly lastUsed = new Map<string, number>();
+  private readonly queue: string[] = [];
+  private loading = 0;
+  private lastSweep = 0;
   /** 그림 불러오기 현황 (진단용) */
-  readonly stats = { loaded: 0, failed: 0, missing: 0, shrunk: 0, failedNames: [] as string[], missingNames: [] as string[] };
+  readonly stats = { loaded: 0, failed: 0, missing: 0, shrunk: 0, unloaded: 0, failedNames: [] as string[], missingNames: [] as string[] };
   private lastTime: number | null = null;
+  private destroyed = false;
 
   constructor(
     private readonly chart: Chart,
@@ -137,6 +151,7 @@ export class DecorationView {
   }
 
   private texture(name: string): Texture | null {
+    this.lastUsed.set(name, performance.now());
     const c = this.tex.get(name);
     if (c === 'loading') return null;
     if (c !== undefined) return c;
@@ -148,32 +163,78 @@ export class DecorationView {
       return null;
     }
     this.tex.set(name, 'loading');
-    const img = new Image();
-    img.onload = () => {
-      const w = img.naturalWidth;
-      const h = img.naturalHeight;
-      const k = Math.min(1, MAX_TEX / Math.max(w, h, 1));
-      let t: Texture;
-      if (k < 1) {
-        // 너무 큰 그림은 휴대폰에서 안 보이므로 줄여서 올리고, 그리는 크기는 원래대로
-        const cv = document.createElement('canvas');
-        cv.width = Math.max(1, Math.round(w * k));
-        cv.height = Math.max(1, Math.round(h * k));
-        cv.getContext('2d')?.drawImage(img, 0, 0, cv.width, cv.height);
-        t = Texture.from(cv);
-        this.texFactor.set(t, w / cv.width);
-        this.stats.shrunk++;
-      } else t = Texture.from(img);
-      this.tex.set(name, t);
-      this.stats.loaded++;
-    };
-    img.onerror = () => {
-      this.tex.set(name, null);
-      this.stats.failed++;
-      if (this.stats.failedNames.length < 20) this.stats.failedNames.push(name);
-    };
-    img.src = url;
+    this.queue.push(name);
+    this.pump();
     return null;
+  }
+
+  /** 대기 중인 그림을 몇 장씩 해독해 올린다. */
+  private pump(): void {
+    while (this.loading < MAX_LOADING && this.queue.length) {
+      const name = this.queue.shift()!;
+      const url = this.urlOf(name);
+      if (!url || this.tex.get(name) !== 'loading') continue;
+      this.loading++;
+      const img = new Image();
+      const done = () => {
+        this.loading--;
+        this.pump();
+      };
+      img.onload = () => {
+        if (this.destroyed || this.tex.get(name) !== 'loading') return done();
+        const w = img.naturalWidth;
+        const h = img.naturalHeight;
+        const k = Math.min(1, MAX_TEX / Math.max(w, h, 1));
+        let t: Texture;
+        if (k < 1) {
+          // 너무 큰 그림은 줄여서 올리고, 그리는 크기는 원래대로
+          const cv = document.createElement('canvas');
+          cv.width = Math.max(1, Math.round(w * k));
+          cv.height = Math.max(1, Math.round(h * k));
+          cv.getContext('2d')?.drawImage(img, 0, 0, cv.width, cv.height);
+          t = Texture.from(cv);
+          this.texFactor.set(t, w / cv.width);
+          this.stats.shrunk++;
+        } else t = Texture.from(img);
+        this.tex.set(name, t);
+        this.stats.loaded++;
+        done();
+      };
+      img.onerror = () => {
+        this.tex.set(name, null);
+        this.stats.failed++;
+        if (this.stats.failedNames.length < 20) this.stats.failedNames.push(name);
+        done();
+      };
+      img.src = url;
+    }
+  }
+
+  /** 한동안 안 쓴 그림을 GPU에서 내린다 (그 그림을 쓰던 장식은 다시 보일 때 새로 불러온다). */
+  private sweep(now: number): void {
+    if (now - this.lastSweep < 1000) return;
+    this.lastSweep = now;
+    let dropped: Set<string> | null = null;
+    for (const [name, t] of this.tex) {
+      if (!t || t === 'loading') continue;
+      if (now - (this.lastUsed.get(name) ?? 0) < UNLOAD_AFTER_MS) continue;
+      (dropped ??= new Set()).add(name);
+    }
+    if (!dropped) return;
+    for (const o of this.objs) {
+      if (o.image && dropped.has(o.image) && (o.node instanceof Sprite || o.node instanceof TilingSprite)) {
+        o.node.texture = Texture.EMPTY;
+        o.image = null;
+      }
+    }
+    for (const name of dropped) {
+      const t = this.tex.get(name) as Texture;
+      this.texFactor.delete(t);
+      t.destroy(true);
+      this.tex.delete(name);
+      this.stats.loaded--;
+      this.stats.unloaded++;
+    }
   }
 
   /**
@@ -181,6 +242,8 @@ export class DecorationView {
    */
   update(camX: number, camY: number, camRot: number, time?: number, camZoom = 1): void {
     const decos = this.tl.decos;
+    const now = performance.now();
+    this.sweep(now);
     const rc = degToRad(camRot);
     const cos = Math.cos(-rc);
     const sin = Math.sin(-rc);
@@ -204,6 +267,7 @@ export class DecorationView {
       node.visible = d.visible && d.opacity * d.calpha > 0.001 && (!o.ps || o.ps.live.length > 0);
       if (!node.visible) continue;
       // 이미지 교체·지연 로드
+      if (o.image) this.lastUsed.set(o.image, now);
       if ((node instanceof Sprite || node instanceof TilingSprite) && d.image !== o.image) {
         const t = d.image ? this.texture(d.image) : null;
         if (t || !d.image) {
@@ -302,6 +366,8 @@ export class DecorationView {
       const tex = d.image ? this.texture(d.image) : null;
       for (let j = 0; j < n; j++) this.spawn(ps, tex);
     }
+    // 살아 있는 입자가 쓰는 그림은 내리지 않는다
+    if (ps.live.length && d.image) this.lastUsed.set(d.image, performance.now());
     // 이동·수명
     const keep: Particle[] = [];
     for (const q of ps.live) {
@@ -358,6 +424,7 @@ export class DecorationView {
   }
 
   destroy(): void {
+    this.destroyed = true;
     this.behind.destroy({ children: true });
     this.front.destroy({ children: true });
     for (const t of this.tex.values()) if (t && t !== 'loading') t.destroy(true);

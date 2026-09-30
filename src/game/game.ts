@@ -281,7 +281,7 @@ export class Game {
       `음원 ${this.opts.pkg.synthesized ? '없음(합성 비트)' : '있음'} · 곡 시각 ${this.eng.songTime(performance.now()).toFixed(2)}초`,
     ];
     if (st) {
-      out.push(`그림: 불러옴 ${st.loaded} · 줄임 ${st.shrunk} · 실패 ${st.failed} · 파일 없음 ${st.missing}`);
+      out.push(`그림: 올림 ${st.loaded} · 줄임 ${st.shrunk} · 내림 ${st.unloaded} · 실패 ${st.failed} · 파일 없음 ${st.missing}`);
       if (st.missingNames.length) out.push(`없는 파일: ${st.missingNames.slice(0, 6).join(', ')}`);
       if (st.failedNames.length) out.push(`실패한 파일: ${st.failedNames.slice(0, 6).join(', ')}`);
     }
