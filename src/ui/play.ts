@@ -140,6 +140,8 @@ export class PlayScreen implements Screen, GameHud {
         h('button', { class: 'btn primary', onclick: () => g.resume() }, '계속'),
         h('button', { class: 'btn', onclick: () => (g.pause(), g.restart(true), this.setPaused(false)) }, '처음부터 다시 시작'),
         h('button', { class: 'btn', onclick: () => g.quit() }, this.opts.editorTest ? '에디터로' : '나가기'),
+        // 장식이 안 보일 때 원인을 바로 알 수 있게 (이 화면을 캡처하면 된다)
+        g.hasDecorations ? h('div', { class: 'dim', style: 'font-size:11px;line-height:1.5;white-space:pre-wrap;text-align:left;margin-top:8px;max-width:80vw' }, g.diag().join('\n')) : null,
       ),
     );
     this.root.append(this.pauseEl);

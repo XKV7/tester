@@ -44,8 +44,8 @@ interface Obj {
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
-/** 휴대폰 GPU가 받을 수 있는 그림 크기 (넘으면 줄여서 올린다) */
-const MAX_TEX = 4096;
+/** GPU에 올릴 그림 최대 크기 (넘으면 줄여서 올린다). 휴대폰은 그림이 수백 장이면 메모리가 모자라 더 작게 */
+const MAX_TEX = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 2048 : 4096;
 
 /** 불투명도 키 사이를 선형으로 (키가 없으면 1). */
 function alphaAt(keys: [number, number][] | undefined, t: number): number {
