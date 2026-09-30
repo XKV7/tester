@@ -121,4 +121,12 @@ describe('합성 비트 트랙', () => {
     const edited = { ...fresh.level, actions: [...fresh.level.actions, { floor: 2, type: 'Camera' as const, zoom: 2 }] };
     expect(refreshedAdofai(files, edited, 'x')).toBeNull();
   });
+
+  it('.adofai가 여럿이면 이벤트·장식이 가장 많은 것을 연다 (크기가 더 커도 빈 버전은 아님)', () => {
+    const full = JSON.stringify({ pathData: 'RRRR', settings: { bpm: 120 }, actions: [], decorations: [{ floor: 1, eventType: 'AddDecoration', decorationImage: 'a.png' }] });
+    const bare = JSON.stringify({ pathData: 'RRRR', settings: { bpm: 120, levelDesc: 'x'.repeat(5000) }, actions: [] });
+    const pkg = packageFromFiles(new Map([['lite.adofai', strToU8(bare)], ['main.adofai', strToU8(full)]]));
+    expect(pkg.source).toBe('main.adofai');
+    expect(pkg.level.decorations?.length).toBe(1);
+  });
 });

@@ -4,7 +4,7 @@ import { parseLevelJson, serializeLevel } from '../core/level';
 import type { LevelData } from '../core/types';
 import { audio } from '../audio/engine';
 import { synthBeatTrack } from '../audio/beatTrack';
-import { convertAdofai } from './adofai';
+import { convertAdofai, parseLenientJson } from './adofai';
 
 /** 레벨 패키지: 레벨 JSON + 음원 + 부가 파일. */
 export interface LevelPackage {
@@ -98,14 +98,11 @@ export function packageFromFiles(files: Map<string, Uint8Array>, id = newPackage
     return true;
   });
   const orbitJson = names.find((n) => lower(n) === 'level.orbit.json') ?? names.find((n) => lower(n).endsWith('.orbit.json'));
-  // 얼음과 불의 춤 레벨: ORBIT 레벨이 없고 .adofai가 있으면 변환 (backup 파일은 뒤로)
-  // 여러 개면 backup이 아닌 것 중 가장 큰 파일 (타일이 가장 많은 본 레벨)
-  const adofais = names
-    .filter((n) => lower(n).endsWith('.adofai'))
-    .sort((a, b) => Number(/backup/i.test(a)) - Number(/backup/i.test(b)) || flat.get(b)!.length - flat.get(a)!.length);
+  // 얼음과 불의 춤 레벨: ORBIT 레벨이 없고 .adofai가 있으면 변환
+  const adofais = rankAdofai(flat, names);
   if (!orbitJson && adofais.length) {
     const pkg = packageFromAdofai(flat, adofais[0], id);
-    if (adofais.length > 1) pkg.warnings.push(`레벨 파일이 ${adofais.length}개라 가장 큰 '${adofais[0]}'을(를) 열었습니다. (다른 파일: ${adofais.slice(1).join(', ')})`);
+    if (adofais.length > 1) pkg.warnings.push(`레벨 파일이 ${adofais.length}개라 이벤트·장식이 가장 많은 '${adofais[0]}'을(를) 열었습니다. (다른 파일: ${adofais.slice(1).join(', ')})`);
     return pkg;
   }
   const jsonName =
@@ -129,10 +126,40 @@ export function packageFromFiles(files: Map<string, Uint8Array>, id = newPackage
  * (타일 수가 같고 이벤트·장식이 지금 변환보다 적음) 지금 변환기로 다시 만든 패키지. 아니면 null.
  * 사용자가 고쳐서 이벤트를 더한 레벨은 이벤트가 더 많으니 그대로 둔다.
  */
+/**
+ * 원작 레벨 파일들을 고를 순서대로: backup이 아닌 것 → 이벤트·장식이 많은 것 → 큰 것.
+ * (같은 폴더에 장식 없는 예전·간이 버전이 같이 들어 있는 경우가 있어 크기만으로는 못 고른다)
+ */
+function rankAdofai(files: Map<string, Uint8Array>, names = [...files.keys()]): string[] {
+  const seen = new Set<Uint8Array>();
+  const list = names.filter((n) => {
+    if (!lower(n).endsWith('.adofai') || n.includes('/')) return false;
+    const d = files.get(n)!;
+    if (seen.has(d)) return false; // 깨진 이름의 별칭
+    seen.add(d);
+    return true;
+  });
+  const events = new Map<string, number>();
+  if (list.length > 1) {
+    for (const n of list) {
+      try {
+        const o = parseLenientJson(strFromU8(files.get(n)!)) as { actions?: unknown; decorations?: unknown };
+        events.set(n, (Array.isArray(o.actions) ? o.actions.length : 0) + (Array.isArray(o.decorations) ? o.decorations.length : 0));
+      } catch {
+        events.set(n, -1);
+      }
+    }
+  }
+  return list.sort(
+    (a, b) =>
+      Number(/backup/i.test(a)) - Number(/backup/i.test(b)) ||
+      (events.get(b) ?? 0) - (events.get(a) ?? 0) ||
+      files.get(b)!.length - files.get(a)!.length,
+  );
+}
+
 export function refreshedAdofai(files: Map<string, Uint8Array>, level: LevelData, id: string): LevelPackage | null {
-  const name = [...files.keys()]
-    .filter((n) => lower(n).endsWith('.adofai') && !n.includes('/'))
-    .sort((a, b) => Number(/backup/i.test(a)) - Number(/backup/i.test(b)) || files.get(b)!.length - files.get(a)!.length)[0];
+  const name = rankAdofai(files)[0];
   if (!name) return null;
   let conv: ReturnType<typeof convertAdofai>;
   try {

@@ -280,6 +280,8 @@ export class Game {
       `타일 ${this.chart.tiles.length} · 이벤트 ${lv.actions.length} · 장식 ${decos.length} (지금 보이는 것 ${shown})`,
       `음원 ${this.opts.pkg.synthesized ? '없음(합성 비트)' : '있음'} · 곡 시각 ${this.eng.songTime(performance.now()).toFixed(2)}초`,
     ];
+    const adofais = [...this.opts.pkg.files.keys()].filter((n) => n.toLowerCase().endsWith('.adofai'));
+    if (adofais.length) out.push(`원작 파일: ${this.opts.pkg.source ?? '?'} (묶음 안 .adofai ${adofais.length}개: ${adofais.slice(0, 4).join(', ')})`);
     if (st) {
       out.push(`그림: 올림 ${st.loaded} · 줄임 ${st.shrunk} · 내림 ${st.unloaded} · 실패 ${st.failed} · 파일 없음 ${st.missing}`);
       if (st.missingNames.length) out.push(`없는 파일: ${st.missingNames.slice(0, 6).join(', ')}`);
