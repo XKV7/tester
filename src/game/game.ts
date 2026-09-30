@@ -287,6 +287,7 @@ export class Game {
       if (st.missingNames.length) out.push(`없는 파일: ${st.missingNames.slice(0, 6).join(', ')}`);
       if (st.failedNames.length) out.push(`실패한 파일: ${st.failedNames.slice(0, 6).join(', ')}`);
     }
+    if (stage.contextLost) out.push('⚠ 그래픽 메모리 부족으로 화면이 꺼졌습니다 (새로고침 필요)');
     out.push(`화질 단계 ${stage.qualityLevel} (0 = 최고, 느리면 자동으로 낮춤) · 화면 해상도 ${stage.app.renderer.resolution}배`);
     out.push(`필터 ${[...tl.filters.keys()].join(', ') || '없음'} · 빛 번짐 ${tl.bloom.intensity.toFixed(2)}`);
     return out;
