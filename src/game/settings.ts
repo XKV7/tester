@@ -18,6 +18,8 @@ export interface UserSettings {
   fitWide: boolean;
   /** 휴대폰에서 플레이할 때 전체 화면 (주소창·버튼 숨김) */
   fullscreen: boolean;
+  /** 원작 맵은 원작 모니터 화면(16:9) 그대로만 보이게 (남는 곳은 검은 띠) */
+  lockAspect: boolean;
 }
 
 const KEY = 'orbit.settings.v1';
@@ -45,6 +47,7 @@ export function defaultUserSettings(): UserSettings {
     playbackSpeed: 1,
     fitWide: true,
     fullscreen: true,
+    lockAspect: true,
   };
 }
 

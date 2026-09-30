@@ -94,6 +94,8 @@ export class Stage {
       preference: 'webgl',
     });
     host.appendChild(this.app.canvas);
+    this.host = host;
+    window.addEventListener('resize', this.layoutHost);
     // 화면 크기가 바뀌면(가로·세로 전환) Pixi가 예전 크기의 풀 텍스처를 지우는데, 필터 스택이 지난 프레임의
     // 입력 텍스처를 붙잡고 있어 다음 프레임부터 매번 오류가 나고 화면이 까매졌다 → 지우기 전에 참조를 끊는다
     const pool = TexturePool as unknown as { _pruneScreenTextures?: () => void };
@@ -147,6 +149,32 @@ export class Stage {
 
   /** 원작 맵: 원작의 16:9 화면(세로 7타일 × 가로 약 12.4타일)이 다 들어오게 */
   fitWide = false;
+
+  private host: HTMLElement | null = null;
+  private frameAspect: number | null = null;
+  /**
+   * 게임 화면을 가운데 고정 비율 상자로 (원작 모니터 화면 그대로, 나머지는 검은 띠). null이면 화면 전체.
+   */
+  setFrameAspect(aspect: number | null): void {
+    this.frameAspect = aspect;
+    this.layoutHost();
+  }
+  private layoutHost = (): void => {
+    const el = this.host;
+    if (!el) return;
+    const a = this.frameAspect;
+    if (!a) {
+      el.style.cssText = '';
+    } else {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const w = Math.min(vw, vh * a);
+      const h = w / a;
+      el.style.cssText = `inset:auto;left:${(vw - w) / 2}px;top:${(vh - h) / 2}px;width:${w}px;height:${h}px;box-shadow:0 0 0 100vmax #000`;
+    }
+    // 크기 바뀐 것을 바로 반영 (Pixi는 창 크기 이벤트 때만 다시 잰다)
+    this.app?.resize();
+  };
 
   /** 기본 배율: 화면 짧은 변에 약 7타일 (fitWide면 16:9 화면 전체가 들어오게). */
   get baseScale(): number {

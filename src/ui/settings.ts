@@ -52,7 +52,7 @@ export class SettingsScreen implements Screen {
       });
       return h('div', { class: 'row' }, h('div', { style: 'width:120px' }, inp), h('span', { class: 'dim' }, 'ms'));
     };
-    const toggle = (k: keyof Pick<UserSettings, 'reduceEffects' | 'showJudgeText' | 'autoHitSound' | 'beatPulse' | 'fitWide' | 'fullscreen'>) =>
+    const toggle = (k: keyof Pick<UserSettings, 'reduceEffects' | 'showJudgeText' | 'autoHitSound' | 'beatPulse' | 'fitWide' | 'fullscreen' | 'lockAspect'>) =>
       h('input', {
         type: 'checkbox',
         checked: settings[k],
@@ -117,6 +117,8 @@ export class SettingsScreen implements Screen {
             toggle('beatPulse'),
             h('label', null, '원작 화면 맞춤'),
             h('label', { class: 'row' }, toggle('fitWide'), h('span', { class: 'dim' }, '원작 맵은 세로 화면에서도 원작의 가로(16:9) 화면이 다 보이게 — 끄면 크게 보이지만 양옆 장식이 잘림')),
+            h('label', null, '원작 화면 비율 고정'),
+            h('label', { class: 'row' }, toggle('lockAspect'), h('span', { class: 'dim' }, '원작 맵은 원작 모니터 화면(16:9)과 똑같은 범위만 보이게 — 남는 곳은 검은 띠, 작아질 수 있음')),
             h('label', null, '플레이 중 전체 화면'),
             h('label', { class: 'row' }, toggle('fullscreen'), h('span', { class: 'dim' }, '휴대폰·태블릿에서 플레이할 때 주소창과 아래 버튼을 숨겨 화면을 꽉 채움')),
             h('label', null, '효과 줄이기'),
