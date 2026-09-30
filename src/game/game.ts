@@ -264,6 +264,11 @@ export class Game {
   }
 
   /** 진단 정보 (주소에 ?debug를 붙이면 화면에 표시). */
+  /** 장식이나 원작 변환 레벨인지 (일시정지 화면에 그림 현황을 보여줄지) */
+  get hasDecorations(): boolean {
+    return (this.chart.level.decorations?.length ?? 0) > 0 || !!this.opts.pkg.imported;
+  }
+
   diag(): string[] {
     const lv = this.chart.level;
     const decos = lv.decorations ?? [];
