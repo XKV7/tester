@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { synthBeatTrack } from '../src/audio/beatTrack';
 import { compileChart } from '../src/core/chart';
 import { emptyLevel, serializeLevel } from '../src/core/level';
-import { addLooseFiles, exportZip, findFile, findSong, hasLevelFile, packageFromFiles, PackageError, zipNameCandidates } from '../src/levels/package';
+import { addLooseFiles, exportZip, findFile, findSong, hasLevelFile, packageFromFiles, PackageError, refreshedAdofai, zipNameCandidates } from '../src/levels/package';
 import { demoLevels } from '../src/levels/demos';
 
 describe('레벨 패키지', () => {
@@ -99,5 +99,26 @@ describe('합성 비트 트랙', () => {
     addLooseFiles(pkg, imgs);
     expect(findFile(pkg.files, 'a.png')).toEqual(new Uint8Array([1]));
     expect([...pkg.files.keys()].some((k) => k.includes('/'))).toBe(false);
+  });
+
+  it('예전 변환 레벨 + 원작 파일이 든 zip은 원작으로 다시 변환한다 (고친 레벨은 그대로)', () => {
+    const adofai = JSON.stringify({
+      pathData: 'RRRR',
+      settings: { bpm: 120, songFilename: 's.ogg', offset: 0 },
+      actions: [{ floor: 1, eventType: 'AddDecoration', decorationImage: 'a.png', position: [0, 0], relativeTo: 'Tile' }],
+    });
+    const files = new Map([['main.adofai', strToU8(adofai)]]);
+    const fresh = packageFromFiles(new Map(files));
+    expect(fresh.level.decorations?.length).toBe(1);
+    // 예전 변환: 타일은 같고 장식이 없다
+    const old = { ...fresh.level, decorations: [] };
+    const zip = new Map([...files, ['level.orbit.json', strToU8(serializeLevel(old))]]);
+    const pkg = packageFromFiles(zip);
+    expect(pkg.imported).toBe('adofai');
+    expect(pkg.level.decorations?.length).toBe(1);
+    expect(pkg.warnings[0]).toContain('다시 변환');
+    // 사용자가 이벤트를 더한 레벨은 건드리지 않는다
+    const edited = { ...fresh.level, actions: [...fresh.level.actions, { floor: 2, type: 'Camera' as const, zoom: 2 }] };
+    expect(refreshedAdofai(files, edited, 'x')).toBeNull();
   });
 });
