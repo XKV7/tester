@@ -322,7 +322,11 @@ export function hasLevelFile(files: Map<string, Uint8Array>): boolean {
 export function addLooseFiles(pkg: LevelPackage, files: Map<string, Uint8Array>): void {
   for (const [k, v] of files) {
     if (k.endsWith('/') || k.includes('__MACOSX')) continue;
-    for (const n of zipNameCandidates(baseName(k))) pkg.files.set(n, v);
+    for (const n of zipNameCandidates(baseName(k))) {
+      // 지금 레벨의 원작·레벨 파일은 덮어쓰지 않는다 (같은 이름의 예전 버전이 들어올 수 있다)
+      if (/\.(adofai|json)$/i.test(n) && pkg.files.has(n)) continue;
+      pkg.files.set(n, v);
+    }
   }
 }
 
