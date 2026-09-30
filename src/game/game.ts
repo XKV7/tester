@@ -160,7 +160,7 @@ export class Game {
   }
 
   async start(): Promise<void> {
-    stage.fitWide = settings.fitWide && this.opts.pkg.imported === 'adofai';
+    stage.fitWide = settings.fitWide && this.fromAdofai;
     this.buffer = await loadPackageAudio(this.opts.pkg);
     await this.eng.resume();
     this.track = new TrackView(this.chart, this.timeline);
@@ -271,6 +271,12 @@ export class Game {
     return (this.chart.level.decorations?.length ?? 0) > 0 || !!this.opts.pkg.imported;
   }
 
+  /** 원작(얼음과 불의 춤)에서 온 레벨인지 — 변환 표시가 없어도 묶음에 .adofai가 있으면 */
+  private get fromAdofai(): boolean {
+    const p = this.opts.pkg;
+    return p.imported === 'adofai' || !!p.source?.toLowerCase().endsWith('.adofai') || [...p.files.keys()].some((n) => n.toLowerCase().endsWith('.adofai'));
+  }
+
   diag(): string[] {
     const lv = this.chart.level;
     const decos = lv.decorations ?? [];
@@ -290,6 +296,7 @@ export class Game {
       if (st.failedNames.length) out.push(`실패한 파일: ${st.failedNames.slice(0, 6).join(', ')}`);
     }
     if (stage.contextLost) out.push('⚠ 그래픽 메모리 부족으로 화면이 꺼졌습니다 (새로고침 필요)');
+    out.push(`원작 화면 맞춤 ${stage.fitWide ? '켜짐' : settings.fitWide ? '꺼짐 (원작 맵이 아님)' : '꺼짐 (설정)'} · 화면 ${Math.round(stage.width)}×${Math.round(stage.height)}`);
     out.push(`화질 단계 ${stage.qualityLevel} (0 = 최고, 느리면 자동으로 낮춤) · 화면 해상도 ${stage.app.renderer.resolution}배`);
     out.push(`필터 ${[...tl.filters.keys()].join(', ') || '없음'} · 빛 번짐 ${tl.bloom.intensity.toFixed(2)}`);
     return out;

@@ -16,6 +16,8 @@ export interface UserSettings {
   playbackSpeed: number;
   /** 원작(얼음과 불의 춤) 맵은 세로 화면에서도 원작의 16:9 화면이 다 보이게 (작게) */
   fitWide: boolean;
+  /** 휴대폰에서 플레이할 때 전체 화면 (주소창·버튼 숨김) */
+  fullscreen: boolean;
 }
 
 const KEY = 'orbit.settings.v1';
@@ -42,6 +44,7 @@ export function defaultUserSettings(): UserSettings {
     beatPulse: true,
     playbackSpeed: 1,
     fitWide: true,
+    fullscreen: true,
   };
 }
 
