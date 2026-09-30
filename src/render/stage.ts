@@ -134,8 +134,12 @@ export class Stage {
     return this.app.screen.height;
   }
 
-  /** 기본 배율: 화면 짧은 변에 약 7타일. */
+  /** 원작 맵: 원작의 16:9 화면(세로 7타일 × 가로 약 12.4타일)이 다 들어오게 */
+  fitWide = false;
+
+  /** 기본 배율: 화면 짧은 변에 약 7타일 (fitWide면 16:9 화면 전체가 들어오게). */
   get baseScale(): number {
+    if (this.fitWide) return Math.min(this.width / ((TILE_LEN * 7 * 16) / 9), this.height / (TILE_LEN * 7));
     return Math.min(this.width, this.height) / (TILE_LEN * 7);
   }
 

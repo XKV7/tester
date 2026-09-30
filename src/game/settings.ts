@@ -14,6 +14,8 @@ export interface UserSettings {
   beatPulse: boolean;
   /** 플레이 속도 배율 (곡과 판정 시각 모두). 1이 아니면 기록은 저장하지 않는다. */
   playbackSpeed: number;
+  /** 원작(얼음과 불의 춤) 맵은 세로 화면에서도 원작의 16:9 화면이 다 보이게 (작게) */
+  fitWide: boolean;
 }
 
 const KEY = 'orbit.settings.v1';
@@ -39,6 +41,7 @@ export function defaultUserSettings(): UserSettings {
     autoHitSound: true,
     beatPulse: true,
     playbackSpeed: 1,
+    fitWide: true,
   };
 }
 

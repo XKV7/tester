@@ -160,6 +160,7 @@ export class Game {
   }
 
   async start(): Promise<void> {
+    stage.fitWide = settings.fitWide && this.opts.pkg.imported === 'adofai';
     this.buffer = await loadPackageAudio(this.opts.pkg);
     await this.eng.resume();
     this.track = new TrackView(this.chart, this.timeline);
@@ -200,6 +201,7 @@ export class Game {
     stage.setScreenFilters([]);
     stage.setWorldFilters([]);
     stage.setMirrors(false);
+    stage.fitWide = false;
     stage.camera.shakeX = 0;
     stage.camera.shakeY = 0;
     stage.setBackgroundImage(null);

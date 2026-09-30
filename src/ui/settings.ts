@@ -52,7 +52,7 @@ export class SettingsScreen implements Screen {
       });
       return h('div', { class: 'row' }, h('div', { style: 'width:120px' }, inp), h('span', { class: 'dim' }, 'ms'));
     };
-    const toggle = (k: keyof Pick<UserSettings, 'reduceEffects' | 'showJudgeText' | 'autoHitSound' | 'beatPulse'>) =>
+    const toggle = (k: keyof Pick<UserSettings, 'reduceEffects' | 'showJudgeText' | 'autoHitSound' | 'beatPulse' | 'fitWide'>) =>
       h('input', {
         type: 'checkbox',
         checked: settings[k],
@@ -115,6 +115,8 @@ export class SettingsScreen implements Screen {
             toggle('showJudgeText'),
             h('label', null, '비트 펄스'),
             toggle('beatPulse'),
+            h('label', null, '원작 화면 맞춤'),
+            h('label', { class: 'row' }, toggle('fitWide'), h('span', { class: 'dim' }, '원작 맵은 세로 화면에서도 원작의 가로(16:9) 화면이 다 보이게 — 끄면 크게 보이지만 양옆 장식이 잘림')),
             h('label', null, '효과 줄이기'),
             h('label', { class: 'row' }, toggle('reduceEffects'), h('span', { class: 'dim' }, '플래시·흔들림·화면 회전·잡음·글리치 끄기 (폰이 느리면 켜세요)')),
           ),
