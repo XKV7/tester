@@ -106,4 +106,14 @@ describe('레벨 JSON 검증', () => {
       expect(r.level.actions).toEqual([]);
     }
   });
+
+  it('레벨별 빛 번짐 배율 (0 ~ 2)', () => {
+    const lv = emptyLevel();
+    lv.settings.glow = 0.5;
+    const r = validateLevel(JSON.parse(JSON.stringify(lv)));
+    expect(r.ok && r.level.settings.glow).toBe(0.5);
+    const bad = JSON.parse(JSON.stringify(lv));
+    bad.settings.glow = 5;
+    expect(validateLevel(bad).ok).toBe(false);
+  });
 });

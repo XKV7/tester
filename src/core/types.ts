@@ -30,6 +30,8 @@ export interface LevelSettings {
   trackColor: string;
   bgColor: string;
   startDirection: Dir;
+  /** 빛 번짐 배율 (1 = 기본, 0 = 끔). 레벨마다 조절 */
+  glow?: number;
 }
 
 interface ActionBase {

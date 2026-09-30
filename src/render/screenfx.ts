@@ -453,15 +453,17 @@ export class ScreenFx {
    * 트랙 층(타일·행성)에만 거는 빛 번짐. 배경까지 번지면 화면이 뿌옇게 떠서 트랙만.
    * 화면 높이에 비례한 넓은 흐림 (720px 기준 약 25~45px).
    */
-  worldFilters(bloom: BloomState, reduce: boolean): Filter[] {
-    if (reduce || !this.glow || bloom.intensity <= 0) return [];
+  /** scale: 레벨의 빛 번짐 배율 (1 = 기본) */
+  worldFilters(bloom: BloomState, reduce: boolean, scale = 1): Filter[] {
+    if (reduce || !this.glow || bloom.intensity <= 0 || scale <= 0) return [];
     const b = Math.min(3, bloom.intensity);
     // 빛 색은 흰색과 원작 색의 중간 (원작 빛무리는 거의 흰색)
     const c = bloom.color;
     const half = (sh: number) => Math.round(127.5 + ((c >> sh) & 255) / 2);
     const col = (half(16) << 16) | (half(8) << 8) | half(0);
-    // 세기는 예전의 약 절반, 퍼짐도 좁게 (폰 화면에서 타일이 빛에 묻혔다)
-    this.glow.set(Math.max(0.75, bloom.threshold), 0.55 + 0.25 * b, col, (18 + 6 * Math.min(2, b)) * (this.screenH / 720));
+    // 배율이 낮으면 세기와 퍼짐을 함께 줄인다 (퍼짐은 절반까지만)
+    const spread = 0.5 + 0.5 * Math.min(1, scale);
+    this.glow.set(Math.max(0.7, bloom.threshold), (1.1 + 0.5 * b) * scale, col, (26 + 10 * Math.min(2, b)) * spread * (this.screenH / 720));
     return [this.glow];
   }
 

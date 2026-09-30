@@ -153,6 +153,10 @@ export function validateLevel(raw: unknown): ValidateResult {
       if (!isColor(s[k])) errors.push(`settings.${k}는 '#rrggbb' 형식의 색이어야 합니다.`);
       else settings[k] = s[k] as string;
     }
+    if (s.glow !== undefined) {
+      if (!isNum(s.glow) || s.glow < 0 || s.glow > 2) errors.push('settings.glow는 0 ~ 2 범위의 숫자여야 합니다.');
+      else settings.glow = s.glow;
+    }
     if (s.startDirection !== undefined) {
       if (s.startDirection !== 'CW' && s.startDirection !== 'CCW')
         errors.push("settings.startDirection은 'CW' 또는 'CCW'여야 합니다.");
