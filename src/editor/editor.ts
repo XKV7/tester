@@ -1531,6 +1531,8 @@ export class EditorScreen implements Screen {
         color(s.trackColor, (v) => setSet('trackColor', v)),
         h('label', null, '배경 색'),
         color(s.bgColor, (v) => setSet('bgColor', v)),
+        h('label', null, '빛 번짐(배)'),
+        num(s.glow ?? 1, 0.1, (v) => setSet('glow', Math.round(Math.max(0, Math.min(2, v)) * 100) / 100)),
         h('label', null, '시작 방향'),
         dir,
       ),

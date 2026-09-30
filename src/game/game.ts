@@ -612,7 +612,7 @@ export class Game {
     }
     this.deco.update(stage.camera.x, stage.camera.y, stage.camera.rotation, tr, stage.camera.zoom);
     this.screenFx.screenH = stage.height;
-    const worldFs = this.screenFx.worldFilters(tl.bloom, reduce);
+    const worldFs = this.screenFx.worldFilters(tl.bloom, reduce, this.chart.level.settings.glow ?? 1);
     stage.setWorldFilters(worldFs);
     const scroll: [number, number] = [tl.screenScroll[0] * tr, tl.screenScroll[1] * tr];
     const screenFs = this.screenFx.filters(tl.filters, tl.bloom, tr, reduce, motion, { tile: tl.screenTile, scroll });
