@@ -5,6 +5,23 @@ import { TILE_LEN } from '../core/math';
 // 화면 해상도를 따르게 한다 (필터를 만들기 전에).
 Filter.defaultOptions.resolution = 'inherit';
 
+/** WebGL이 끊겼을 때 안내 (새로고침하면 그림을 더 작게 올려 다시 그린다). */
+function showContextLost(): void {
+  if (document.getElementById('orbit-ctx-lost')) return;
+  const box = document.createElement('div');
+  box.id = 'orbit-ctx-lost';
+  box.style.cssText =
+    'position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:100;max-width:86vw;padding:16px 18px;border-radius:12px;background:#1b1d2b;color:#e8e8f0;font:14px/1.5 system-ui,sans-serif;text-align:center;box-shadow:0 8px 30px #0008';
+  box.textContent = '그래픽 메모리가 부족해 화면이 꺼졌어요. 새로고침하면 그림을 더 작게 올려 다시 그립니다. (에디터 레벨은 저장돼 있어요)';
+  const btn = document.createElement('button');
+  btn.textContent = '새로고침';
+  btn.className = 'btn primary';
+  btn.style.cssText = 'display:block;margin:12px auto 0';
+  btn.onclick = () => location.reload();
+  box.appendChild(btn);
+  document.body.appendChild(box);
+}
+
 interface Mote {
   x: number;
   y: number;
@@ -77,6 +94,23 @@ export class Stage {
       preference: 'webgl',
     });
     host.appendChild(this.app.canvas);
+    // 전에 그래픽 메모리가 바닥났던 기기면 필터 해상도를 처음부터 낮춰 둔다
+    try {
+      if (localStorage.getItem('orbit.lowgpu') === '1') this.quality = 2;
+    } catch {
+      /* 무시 */
+    }
+    // 그래픽 메모리가 바닥나면 브라우저가 WebGL을 끊어 화면이 새까매진다 → 알리고 다음부터 가볍게
+    this.app.canvas.addEventListener('webglcontextlost', () => {
+      this.contextLost = true;
+      try {
+        localStorage.setItem('orbit.lowgpu', '1');
+      } catch {
+        /* 무시 */
+      }
+      showContextLost();
+    });
+    this.app.canvas.addEventListener('webglcontextrestored', () => (this.contextLost = false));
     this.bg.addChild(this.moteGfx, this.bgFlash);
     this.worldWrap.addChild(this.world);
     this.app.stage.addChild(this.bg, this.worldWrap, this.overlay);
@@ -268,6 +302,8 @@ export class Stage {
   // ── 자동 화질: 필터가 켜진 채로 프레임이 계속 느리면 한 단계씩 낮춘다 ──
   // 0: 필터 = 화면 해상도, 1: 필터 1.5배, 2: 필터 1배, 3: 화면도 1.5배, 4: 화면도 1배
   private quality = 0;
+  /** 그래픽 메모리 부족으로 WebGL이 끊겼는지 */
+  contextLost = false;
   private frameEma = 16;
   private slowMs = 0;
   private get filterRes(): number | 'inherit' {
