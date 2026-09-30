@@ -34,7 +34,9 @@ import {
   type SaveResult,
   newPackageId,
   PACKAGE_ACCEPT,
-  packageFromFileList,
+  filesFromList,
+  hasLevelFile,
+  addLooseFiles,
   packageFromFiles,
   PackageError,
   levelFileNames,
@@ -234,7 +236,7 @@ export class EditorScreen implements Screen {
   /** 레벨이 쓰는 그림·음원 파일이 없으면 알린다 (예전 자동 저장은 파일을 담지 못했다). */
   private warnMissingFiles(): void {
     const missing = levelFileNames(this.pkg).filter((n) => !findFile(this.pkg.files, n));
-    if (missing.length) toast(`그림·음원 파일 ${missing.length}개가 없어요 — 원래 zip을 다시 불러오면 배경·장식이 나옵니다.`, 5000);
+    if (missing.length) toast(`그림·음원 파일 ${missing.length}개가 없어요 — 원래 zip을 다시 불러오거나, 그림 파일만 불러와 더하면 배경·장식이 나옵니다.`, 6000);
   }
 
   /** 레벨·파일을 저장소에 (잠시 모아서). */
@@ -1005,8 +1007,14 @@ export class EditorScreen implements Screen {
   }
 
   private async loadFiles(files: FileList | File[]): Promise<void> {
+    // 레벨 파일 없이 그림·영상만 고르면 지금 레벨에 파일을 더한다 (빠진 장식 그림 채우기)
     try {
-      const pkg = await packageFromFileList(files);
+      const picked = await filesFromList(files);
+      if (!hasLevelFile(picked)) {
+        this.addFiles(picked);
+        return;
+      }
+      const pkg = packageFromFiles(picked);
       pkg.id = newPackageId('edit');
       editing = pkg;
       this.pkg = pkg;
@@ -1023,6 +1031,21 @@ export class EditorScreen implements Screen {
     } catch (e) {
       await alertBox('불러올 수 없습니다', e instanceof PackageError ? e.details : [(e as Error).message]);
     }
+  }
+
+  private addFiles(picked: Map<string, Uint8Array>): void {
+    const before = levelFileNames(this.pkg).filter((n) => !findFile(this.pkg.files, n)).length;
+    addLooseFiles(this.pkg, picked);
+    const n = [...picked.keys()].filter((k) => !k.endsWith('/') && !k.includes('__MACOSX')).length;
+    const after = levelFileNames(this.pkg).filter((n) => !findFile(this.pkg.files, n)).length;
+    savedFilesId = null; // 파일 묶음이 바뀌었으니 다시 저장
+    this.rebuild();
+    toast(
+      before > after
+        ? `파일 ${n}개를 더했어요 — 빠진 그림 ${before}개 → ${after}개`
+        : `파일 ${n}개를 더했지만 이 레벨이 쓰는 그림이 아니에요 (빠진 그림 ${after}개)`,
+      5000,
+    );
   }
 
   private async loadSong(files: FileList | File[]): Promise<void> {

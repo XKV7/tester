@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { synthBeatTrack } from '../src/audio/beatTrack';
 import { compileChart } from '../src/core/chart';
 import { emptyLevel, serializeLevel } from '../src/core/level';
-import { exportZip, findFile, findSong, packageFromFiles, PackageError, zipNameCandidates } from '../src/levels/package';
+import { addLooseFiles, exportZip, findFile, findSong, hasLevelFile, packageFromFiles, PackageError, zipNameCandidates } from '../src/levels/package';
 import { demoLevels } from '../src/levels/demos';
 
 describe('레벨 패키지', () => {
@@ -85,5 +85,19 @@ describe('합성 비트 트랙', () => {
     let peak = 0;
     for (const v of s) peak = Math.max(peak, Math.abs(v));
     expect(peak).toBeLessThanOrEqual(0.96);
+  });
+
+  it('그림만 고르면 지금 패키지에 더한다 (폴더 경로는 떼고)', () => {
+    const pkg = packageFromFiles(new Map([['level.orbit.json', strToU8(serializeLevel(emptyLevel()))]]));
+    const imgs = new Map([
+      ['Zip/', new Uint8Array()],
+      ['Zip/a.png', new Uint8Array([1])],
+      ['__MACOSX/Zip/._a.png', new Uint8Array([2])],
+    ]);
+    expect(hasLevelFile(imgs)).toBe(false);
+    expect(hasLevelFile(new Map([['x/main.adofai', new Uint8Array()]]))).toBe(true);
+    addLooseFiles(pkg, imgs);
+    expect(findFile(pkg.files, 'a.png')).toEqual(new Uint8Array([1]));
+    expect([...pkg.files.keys()].some((k) => k.includes('/'))).toBe(false);
   });
 });
