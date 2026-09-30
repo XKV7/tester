@@ -137,7 +137,10 @@ function packageFromAdofai(flat: Map<string, Uint8Array>, name: string, id: stri
   // 레벨이 쓰는 그림 중 zip에 없는 것 (음원은 위에서 따로 알림)
   const missing = levelFileNames(pkg).filter((n) => n !== song && !findFile(flat, n));
   if (missing.length)
-    warnings.push(`그림 파일 ${missing.length}개를 zip에서 찾지 못해 그 장식은 보이지 않습니다: ${missing.slice(0, 8).join(', ')}${missing.length > 8 ? ' …' : ''}`);
+    warnings.push(
+      `그림 파일 ${missing.length}개를 찾지 못해 그 배경·장식은 보이지 않습니다: ${missing.slice(0, 8).join(', ')}${missing.length > 8 ? ' …' : ''}`,
+      '레벨 폴더를 통째로 zip으로 압축해 불러오거나, 파일 고르기에서 폴더 안 파일을 모두 선택하세요. 에디터에서는 그림 파일(또는 그림 zip)만 따로 불러와 지금 레벨에 더할 수도 있습니다.',
+    );
   return pkg;
 }
 
@@ -231,6 +234,11 @@ export function findSong(files: Map<string, Uint8Array>, name: string): Uint8Arr
 
 /** 사용자가 고른 File 목록(zip, json, 폴더 내용) → 패키지. */
 export async function packageFromFileList(list: FileList | File[]): Promise<LevelPackage> {
+  return packageFromFiles(await filesFromList(list));
+}
+
+/** 고른 파일들 → 이름별 내용 (zip은 풀어서). */
+export async function filesFromList(list: FileList | File[]): Promise<Map<string, Uint8Array>> {
   const arr = [...list];
   if (arr.length === 0) throw new PackageError(['선택된 파일이 없습니다.']);
   const files = new Map<string, Uint8Array>();
@@ -249,7 +257,20 @@ export async function packageFromFileList(list: FileList | File[]): Promise<Leve
       files.set(rel, data);
     }
   }
-  return packageFromFiles(files);
+  return files;
+}
+
+/** 파일 묶음에 레벨 파일(.adofai·.json)이 있는지 */
+export function hasLevelFile(files: Map<string, Uint8Array>): boolean {
+  return [...files.keys()].some((k) => /\.(adofai|json)$/i.test(k) && !k.includes('__MACOSX'));
+}
+
+/** 레벨 없는 파일 묶음(그림 등)을 패키지에 더한다. 폴더 경로는 떼고 이름으로. */
+export function addLooseFiles(pkg: LevelPackage, files: Map<string, Uint8Array>): void {
+  for (const [k, v] of files) {
+    if (k.endsWith('/') || k.includes('__MACOSX')) continue;
+    for (const n of zipNameCandidates(baseName(k))) pkg.files.set(n, v);
+  }
 }
 
 /** 음원 디코딩 (없거나 실패하면 합성 비트). */

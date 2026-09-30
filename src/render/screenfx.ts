@@ -349,7 +349,7 @@ export class ScreenFx {
 
   /**
    * 필터 목록 계산. 쓰는 필터만 돌려준다 (없으면 빈 배열 — 성능).
-   * reduce: 효과 줄이기 설정이면 번쩍이는 효과는 약하게.
+   * reduce: 효과 줄이기 설정이면 번쩍이고 지글거리는 효과는 끄거나 약하게.
    */
   filters(
     fs: ReadonlyMap<string, FilterState>,
@@ -394,7 +394,8 @@ export class ScreenFx {
     }
 
     // 효과 줄이기: 무거운 필터(흐림·잡음·왜곡)는 건너뛰고 색만
-    if (reduce) return out;
+    // 효과 줄이기: 번쩍이고 지글거리는 효과(잡음·색 번짐·주사선·글리치)만 끄고,
+    // 레벨의 모습을 만드는 흐림·모자이크·화면 반복은 남긴다 (끄면 원작과 전혀 다른 화면이 된다)
 
     // 흐림
     const bl = any('Blur', 'GaussianBlur', 'BlurFocus');
@@ -410,7 +411,7 @@ export class ScreenFx {
 
     // 잡음
     const nz = any('Grain', 'Static', 'VHS', 'EightiesTV', 'FiftiesTV') + 0.3 * k('Compression') + 0.5 * k('Glitch');
-    if (nz > 0) {
+    if (nz > 0 && !reduce) {
       this.noise.noise = Math.min(0.6, 0.18 * nz);
       this.noise.seed = (timeSec * 7.31) % 1;
       out.push(this.noise);
@@ -421,14 +422,14 @@ export class ScreenFx {
       const u = this.distort.u;
       const px = any('Pixelate', 'Compression', 'LED', 'PixelSnow') > 0 ? Math.max(k('Pixelate'), k('Compression') * 0.25, k('LED') * 0.8) : 0;
       u.uPixel = px > 0 ? 2 + 5 * Math.min(3, px) : 0;
-      u.uAberr = Math.min(40, 6 * any('Aberration', 'VHS', 'EightiesTV', 'Handheld', 'Glitch') + (k('Aberration') > 0 ? 2 : 0));
-      u.uScan = Math.min(1, 0.6 * any('Arcade', 'VHS', 'EightiesTV', 'FiftiesTV', 'LED'));
+      u.uAberr = reduce ? 0 : Math.min(40, 6 * any('Aberration', 'VHS', 'EightiesTV', 'Handheld', 'Glitch') + (k('Aberration') > 0 ? 2 : 0));
+      u.uScan = reduce ? 0 : Math.min(1, 0.6 * any('Arcade', 'VHS', 'EightiesTV', 'FiftiesTV', 'LED'));
       u.uFish = Math.min(1.5, k('Fisheye'));
       u.uPoster = k('Posterize') > 0 ? Math.max(2, 10 - 6 * Math.min(1, k('Posterize'))) : 0;
       u.uTime = timeSec;
       u.uVig = Math.min(1, Math.max(k('Arcade'), k('Fisheye'), k('VHS'), k('EightiesTV'), k('FiftiesTV'), k('Vignette')) * 0.9);
       u.uWave = Math.min(3, k('Waves'));
-      u.uGlitch = Math.min(2, k('Glitch'));
+      u.uGlitch = reduce ? 0 : Math.min(2, k('Glitch'));
       // 0에 가까운 반복 횟수는 화면이 한 점으로 모이므로 막는다
       const tl = (v: number) => (Math.abs(v) < 0.05 ? (v < 0 ? -0.05 : 0.05) : v);
       u.uTile[0] = tl(screen.tile[0]);

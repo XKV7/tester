@@ -116,7 +116,7 @@ export class SettingsScreen implements Screen {
             h('label', null, '비트 펄스'),
             toggle('beatPulse'),
             h('label', null, '효과 줄이기'),
-            h('label', { class: 'row' }, toggle('reduceEffects'), h('span', { class: 'dim' }, '플래시·흔들림·회전·파티클·무거운 화면 필터 끄기 (폰이 느리면 켜세요)')),
+            h('label', { class: 'row' }, toggle('reduceEffects'), h('span', { class: 'dim' }, '플래시·흔들림·화면 회전·잡음·글리치 끄기 (폰이 느리면 켜세요)')),
           ),
         ),
       ),
