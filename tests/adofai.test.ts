@@ -6,6 +6,7 @@ import { validateLevel } from '../src/core/level';
 import { TILE_LEN } from '../src/core/math';
 import { adofaiColor, convertAdofai, parseLenientJson } from '../src/levels/adofai';
 import { packageFromFiles } from '../src/levels/package';
+import { VisualTimeline } from '../src/core/timeline';
 
 function level(obj: Record<string, unknown>) {
   const text = JSON.stringify({ ...obj, settings: { bpm: 100, offset: 500, song: 'Song', artist: 'Artist', author: 'Maker', songFilename: 'song.ogg', ...((obj.settings as object) ?? {}) } });
@@ -383,5 +384,63 @@ describe('극단적인 BPM (Hello (BPM) 류)', () => {
     const m = r.level.actions.find((a) => a.type === 'MoveDecorations')!;
     expect(m).toMatchObject({ offset: [30 * TILE_LEN, null], parallaxOffset: [null, 5 * TILE_LEN], scale: [2, null], opacity: 1, color: '#ffffff' });
     expect((m as { alpha: number }).alpha).toBeCloseTo(64 / 255, 2);
+  });
+
+  it('장식 가리기·섞기·픽셀, gapLength, justThisTile', () => {
+    const r = level({
+      pathData: 'RRRRRRRRRR',
+      actions: [
+        { floor: 1, eventType: 'RecolorTrack', startTile: [0, 'ThisTile'], endTile: [6, 'ThisTile'], gapLength: 1, trackColor: 'ff0000' },
+        { floor: 1, eventType: 'MoveTrack', startTile: [0, 'ThisTile'], endTile: [4, 'ThisTile'], gapLength: 2, positionOffset: [0, 1], duration: 0 },
+        { floor: 3, eventType: 'ColorTrack', trackColor: '00ff00', justThisTile: true },
+        { floor: 2, eventType: 'MoveDecorations', tag: 'm', maskingType: 'VisibleOutsideMask', depth: 3, duration: 0 },
+      ],
+      decorations: [
+        { floor: 1, eventType: 'AddDecoration', decorationImage: 'm.png', tag: 'm', maskingType: 'Mask', imageSmoothing: false, blendMode: 'Overlay' },
+        { floor: 1, eventType: 'AddDecoration', decorationImage: 'i.png', maskingType: 'VisibleInsideMask', blendMode: 'Difference' },
+      ],
+    });
+    const d = r.level.decorations!;
+    expect(d[0]).toMatchObject({ mask: 'mask', smooth: false, blend: 'overlay' });
+    expect(d[1]).toMatchObject({ mask: 'inside', blend: 'difference' });
+    const rc = r.level.actions.find((a) => a.type === 'RecolorTrack' && a.color === '#ff0000');
+    expect(rc).toMatchObject({ from: 1, to: 7, gap: 1 });
+    expect(r.level.actions.find((a) => a.type === 'MoveTrack')).toMatchObject({ gap: 2 });
+    expect(r.level.actions.find((a) => a.type === 'RecolorTrack' && a.color === '#00ff00')).toMatchObject({ from: 3, to: 3 });
+    expect(r.level.actions.find((a) => a.type === 'MoveDecorations')).toMatchObject({ mask: 'outside', depth: 3 });
+    // 타임라인: 건너뛰며 적용
+    const ch = compileChart(r.level);
+    const tl = new VisualTimeline(ch);
+    tl.update(0);
+    // 처음: 3번 타일만 초록
+    expect([2, 3, 4].map((i) => tl.tileColor[i] === 0x00ff00)).toEqual([false, true, false]);
+    tl.update(100);
+    const red = 0xff0000;
+    expect([1, 2, 3, 4, 5, 7].map((i) => tl.tileColor[i] === red)).toEqual([true, false, true, false, true, true]);
+    expect(tl.tileOffY[1]).not.toBe(0);
+    expect(tl.tileOffY[2]).toBe(0);
+    expect(tl.tileOffY[4]).not.toBe(0);
+    expect(tl.decos[0].mask).toBe('outside');
+    expect(tl.decos[0].depth).toBe(3);
+  });
+
+  it('입자 세부: 원·호, 처음 회전, 크기 변화, 칸 나누기, 월드 공간 / 없는 필터 끄기는 조용히', () => {
+    const r = level({
+      pathData: 'RRRR',
+      actions: [
+        { floor: 1, eventType: 'SetFilterAdvanced', filter: 'CameraFilterPack_AAA_SuperComputer', enabled: false },
+        { floor: 1, eventType: 'SetFilterAdvanced', filter: 'CameraFilterPack_Colors_Adjust_FullColors', enabled: true, filterProperties: '"filter_Red_R": 10000, "filter_Green_G": 5000, "filter_Blue_B": 5000' },
+        { floor: 2, eventType: 'SetFilterAdvanced', filter: 'CameraFilterPack_Distortion_BlackHole', enabled: true, filterProperties: '"filter_PositionX": 54, "filter_PositionY": 52, "filter_Size": 14, "filter_Distortion": 15922' },
+      ],
+      decorations: [
+        { floor: 1, eventType: 'AddParticle', decorationImage: 'p.png', tag: 'p', shapeType: 'Circle', shapeRadius: 1, arc: 180, startRotation: [0, 360], sizeOverLifetime: [100, 10], randomTextureTiling: [2, 2], simulationSpace: 'World' },
+      ],
+    });
+    expect(r.level.decorations![0].particle).toMatchObject({ circle: true, arc: 180, rot0: [0, 360], sizeLife: [1, 0.1], sheet: [2, 2], world: true });
+    expect(r.warnings.join(' ')).not.toContain('SuperComputer');
+    const f = (n: string) => r.level.actions.find((a) => a.type === 'Filter' && a.filter === n) as { intensity?: number } | undefined;
+    expect(f('ChanG')?.intensity).toBeCloseTo(0.5);
+    expect(f('HoleX')?.intensity).toBeCloseTo(0.54);
+    expect(f('Hole')?.intensity).toBeGreaterThan(0);
   });
 });

@@ -1,7 +1,7 @@
 import { isColor } from './color';
 import { EASE_NAMES } from './ease';
 import { sameAngle } from './math';
-import type { Action, ActionType, Decoration, LevelData, LevelMeta, LevelSettings } from './types';
+import { DECO_BLENDS, type Action, type ActionType, type Decoration, type LevelData, type LevelMeta, type LevelSettings } from './types';
 
 /** 극단적인 BPM 맵(원작의 'Hello (BPM)' 류)도 담을 수 있게 넉넉히. */
 export const MAX_BPM = 10_000_000;
@@ -16,7 +16,16 @@ export const FILTER_NAMES = [
   'Aberration', 'Contrast', 'Posterize', 'NightVision', 'Grain', 'Static', 'VHS', 'EightiesTV', 'FiftiesTV', 'Arcade',
   'LED', 'Rain', 'Blizzard', 'PixelSnow', 'Drawing', 'Neon', 'Fisheye', 'Funk', 'Sharpen', 'EdgeBlackLine',
   'Waves', 'Glitch', 'Brightness', 'Vignette', 'LetterboxH', 'LetterboxV', 'Quake',
+  // 색 채널 배율 (원작 FullColors, 1 = 그대로)
+  'ChanR', 'ChanG', 'ChanB',
+  // 블랙홀 (원작 BlackHole): 세기 + 위치(화면 비율 0~1)·크기
+  'Hole', 'HoleX', 'HoleY', 'HoleSize',
+  // 암흑 물질 소용돌이 (원작 DarkMatter)
+  'DarkMatter',
 ];
+
+/** 꺼졌을 때 값이 0이 아니라 1인 필터 (배율) */
+export const FILTER_NEUTRAL_ONE = new Set(['Brightness', 'ChanR', 'ChanG', 'ChanB']);
 
 
 export const ACTION_TYPES: ActionType[] = [
@@ -272,7 +281,9 @@ function validateDecoration(d: unknown, tileCount: number): string | null {
   if (d.floor !== undefined && (!isNum(d.floor) || !Number.isInteger(d.floor) || d.floor < 0 || d.floor >= tileCount)) return `floor는 0 ~ ${tileCount - 1} 범위의 정수여야 합니다.`;
   if (d.color !== undefined && !isColor(d.color)) return 'color 형식이 잘못되었습니다.';
   if (d.visible !== undefined && typeof d.visible !== 'boolean') return 'visible은 true/false여야 합니다.';
-  if (d.blend !== undefined && d.blend !== 'add' && d.blend !== 'screen') return "blend는 'add' 또는 'screen'이어야 합니다.";
+  if (d.blend !== undefined && !(DECO_BLENDS as string[]).includes(d.blend as string)) return `blend는 ${DECO_BLENDS.join(', ')} 중 하나여야 합니다.`;
+  if (d.mask !== undefined && !['mask', 'inside', 'outside'].includes(d.mask as string)) return "mask는 'mask', 'inside', 'outside' 중 하나여야 합니다.";
+  if (d.smooth !== undefined && typeof d.smooth !== 'boolean') return 'smooth는 true/false여야 합니다.';
   for (const k of ['lockRotation', 'lockScale']) if (d[k] !== undefined && typeof d[k] !== 'boolean') return `${k}는 true/false여야 합니다.`;
   return [str('tag'), str('image'), str('text'), vec('position'), vec('pivot'), vec('scale'), vec('parallax'), vec('parallaxOffset'), vec('tile'), n('rotation'), n('opacity'), n('alpha'), n('depth'), n('fontSize')].find((x) => x) ?? null;
 }
@@ -288,8 +299,10 @@ function validateParticle(p: unknown): string | null {
   if (!Array.isArray(vel) || vel.length !== 2 || !vel.every((x) => Array.isArray(x) && x.length === 2 && x.every(isNum))) return 'velocity는 [[x, y], [x, y]]여야 합니다.';
   if (p.colors !== undefined && (!Array.isArray(p.colors) || p.colors.length !== 2 || !p.colors.every(isColor))) return 'colors는 색 두 개여야 합니다.';
   if (p.alphaKeys !== undefined && (!Array.isArray(p.alphaKeys) || !p.alphaKeys.every((x) => Array.isArray(x) && x.length === 2 && x.every(isNum)))) return 'alphaKeys 형식이 잘못되었습니다.';
-  for (const k of ['duration', 'max', 'speed']) if (p[k] !== undefined && (!isNum(p[k]) || (p[k] as number) < 0)) return `${k}는 0 이상의 숫자여야 합니다.`;
-  return [pair('rate', true), pair('lifetime', true), pair('size', true), pair('spin', false), pair('area', false)].find((x) => x) ?? null;
+  for (const k of ['duration', 'max', 'speed', 'arc']) if (p[k] !== undefined && (!isNum(p[k]) || (p[k] as number) < 0)) return `${k}는 0 이상의 숫자여야 합니다.`;
+  for (const k of ['circle', 'world']) if (p[k] !== undefined && typeof p[k] !== 'boolean') return `${k}는 true/false여야 합니다.`;
+  if (p.sheet !== undefined && !(Array.isArray(p.sheet) && p.sheet.length === 2 && p.sheet.every((x) => isNum(x) && x >= 1 && x <= 64))) return 'sheet는 [가로 칸, 세로 칸] (1~64)이어야 합니다.';
+  return [pair('rate', true), pair('lifetime', true), pair('size', true), pair('spin', false), pair('area', false), pair('rot0', false), pair('sizeLife', false)].find((x) => x) ?? null;
 }
 
 function validateActionParams(a: Record<string, unknown>, type: ActionType, tileCount: number): string | null {
@@ -348,9 +361,11 @@ function validateActionParams(a: Record<string, unknown>, type: ActionType, tile
     case 'RecolorTrack':
       if (a.style !== undefined && !['orbit', 'standard', 'neon', 'basic'].includes(a.style as string)) return "style은 'orbit', 'standard', 'neon', 'basic' 중 하나여야 합니다.";
       if (a.color2 !== undefined && !isColor(a.color2)) return 'color2 형식이 잘못되었습니다.';
-      return first(range(), isColor(a.color) ? null : 'color가 필요합니다.', optNum('duration', 0, MAX_EFFECT_BEATS), optNum('glowDuration', 0.01, 1000), optNum('pulseLength', 0, 100000), optNum('lit', 0, 1));
+      if (a.colorMode !== undefined && !['glow', 'blink', 'rainbow'].includes(a.colorMode as string)) return "colorMode는 'glow', 'blink', 'rainbow' 중 하나여야 합니다.";
+      if (a.pulseBack !== undefined && typeof a.pulseBack !== 'boolean') return 'pulseBack은 true/false여야 합니다.';
+      return first(range(), isColor(a.color) ? null : 'color가 필요합니다.', optNum('duration', 0, MAX_EFFECT_BEATS), optNum('glowDuration', 0.01, 1000), optNum('pulseLength', 0, 100000), optNum('lit', 0, 1), optNum('gap', 0, 100000));
     case 'MoveTrack':
-      return first(range(), vecN('offset'), optNum('rotation'), optNum('opacity', 0, 1), optNum('scale', 0, 100), optNum('duration', 0, MAX_EFFECT_BEATS), easeOk());
+      return first(range(), vecN('offset'), optNum('rotation'), optNum('opacity', 0, 1), optNum('scale', 0, 100), optNum('gap', 0, 100000), optNum('duration', 0, MAX_EFFECT_BEATS), easeOk());
     case 'Background':
       if (a.color === undefined && a.image === undefined && a.video === undefined) return 'color, image, video 중 하나가 필요합니다.';
       if (a.video !== undefined && typeof a.video !== 'string') return 'video는 파일 이름 문자열이어야 합니다.';
@@ -389,6 +404,8 @@ function validateActionParams(a: Record<string, unknown>, type: ActionType, tile
       if (a.image !== undefined && typeof a.image !== 'string') return 'image는 파일 이름이어야 합니다.';
       if (a.text !== undefined && typeof a.text !== 'string') return 'text는 문자열이어야 합니다.';
       if (a.particle !== undefined && !['start', 'stop', 'clear'].includes(a.particle as string)) return "particle은 'start', 'stop', 'clear' 중 하나여야 합니다.";
+      if (a.mask !== undefined && !['none', 'mask', 'inside', 'outside'].includes(a.mask as string)) return "mask는 'none', 'mask', 'inside', 'outside' 중 하나여야 합니다.";
+      if (a.depth !== undefined && !isNum(a.depth)) return 'depth는 숫자여야 합니다.';
       return first(
         optNum('emit', 0, 100000),
         vecN('offset'),

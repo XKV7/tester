@@ -33,3 +33,12 @@ export function scaleColor(c: number, k: number): number {
   const f = (v: number) => Math.max(0, Math.min(255, Math.round(v * k)));
   return (f((c >> 16) & 255) << 16) | (f((c >> 8) & 255) << 8) | f(c & 255);
 }
+
+/** 색상환 위치(0~1) → 선명한 색 (무지개 트랙). */
+export function hueColor(h: number): number {
+  const f = (n: number) => {
+    const k = (n + h * 6) % 6;
+    return Math.round(255 * (1 - Math.max(0, Math.min(k, 4 - k, 1))));
+  };
+  return (f(5) << 16) | (f(3) << 8) | f(1);
+}

@@ -2,7 +2,8 @@ import type { Chart, TimedAction } from './chart';
 import { lerpColor, parseColor } from './color';
 import { ease } from './ease';
 import { lerp } from './math';
-import type { Decoration, EaseName, TrackAppear, TrackDisappear, TrackStyle } from './types';
+import { FILTER_NEUTRAL_ONE } from './level';
+import type { DecoMask, Decoration, EaseName, TrackAppear, TrackDisappear, TrackStyle } from './types';
 
 /** 카메라 기준점 (월드 좌표, y 위쪽). player = 현재 행성 타일을 따라감. */
 export type CameraAnchor = { kind: 'player' } | { kind: 'fixed'; x: number; y: number };
@@ -49,6 +50,10 @@ export interface DecoState {
   poy: number;
   visible: boolean;
   image: string | null;
+  /** 가리기 (없으면 null) */
+  mask: DecoMask | null;
+  /** 깊이 (작을수록 앞) */
+  depth: number;
   /** 글자 장식의 지금 글자 (null = 처음 글자) */
   text: string | null;
   /** 입자: 방출 중인지, 방출 시작 시각 (초) */
@@ -142,6 +147,8 @@ export class VisualTimeline {
   /** 지나간 타일이 하얗게 빛나는 정도 (0~1) */
   readonly tileLit: Float32Array;
   readonly tilePulseLen: Float32Array;
+  /** 색 움직임: 0 물결, 1 번갈아(blink), 2 무지개. 물결 뒤쪽이면 +4 */
+  readonly tileColorMode: Uint8Array;
   /** 타일별 등장·퇴장 설정 (없으면 null = 항상 보임). */
   readonly tileAnim: (TileAnimCfg | null)[];
   readonly tileColor: Uint32Array;
@@ -190,6 +197,7 @@ export class VisualTimeline {
     this.tileGlowDur = new Float32Array(n);
     this.tileLit = new Float32Array(n);
     this.tilePulseLen = new Float32Array(n);
+    this.tileColorMode = new Uint8Array(n);
     this.decos = (chart.level.decorations ?? []).map((def) => ({
       def,
       tags: (def.tag ?? '').split(/\s+/).filter(Boolean),
@@ -207,6 +215,8 @@ export class VisualTimeline {
       poy: 0,
       visible: true,
       image: null,
+      mask: null,
+      depth: -1,
       text: null,
       emitting: false,
       emitSince: 0,
@@ -258,6 +268,7 @@ export class VisualTimeline {
     this.tileGlowDur.fill(0);
     this.tileLit.fill(1);
     this.tilePulseLen.fill(0);
+    this.tileColorMode.fill(0);
     for (const d of this.decos) {
       d.ox = 0;
       d.oy = 0;
@@ -274,6 +285,8 @@ export class VisualTimeline {
       d.poy = d.def.parallaxOffset?.[1] ?? 0;
       d.visible = d.def.visible !== false;
       d.image = d.def.image ?? null;
+      d.mask = d.def.mask ?? null;
+      d.depth = d.def.depth ?? -1;
       d.text = null;
       d.emitting = !!d.def.particle?.autoPlay;
       d.emitSince = 0;
@@ -551,18 +564,24 @@ export class VisualTimeline {
         if (hi < lo) return null;
         const target = parseColor(a.color, this.baseTrack);
         const from = this.tileColor.slice(lo, hi + 1);
+        // 원작 gapLength: 이만큼 건너뛰며 적용
+        const step = Math.max(1, Math.round((a.gap ?? 0) + 1));
+        const c2 = a.color2 !== undefined ? parseColor(a.color2, target) : -1;
         // 모양·물결은 바로 바뀐다
-        if (a.style !== undefined) this.tileStyle.fill(TRACK_STYLES.indexOf(a.style), lo, hi + 1);
-        if (a.lit !== undefined) this.tileLit.fill(a.lit, lo, hi + 1);
-        if (a.color2 !== undefined || a.style !== undefined) {
-          this.tileColor2.fill(a.color2 !== undefined ? parseColor(a.color2, target) : -1, lo, hi + 1);
-          this.tileGlowDur.fill(a.glowDuration ?? 2, lo, hi + 1);
-          this.tilePulseLen.fill(a.pulseLength ?? 0, lo, hi + 1);
+        for (let i = lo; i <= hi; i += step) {
+          if (a.style !== undefined) this.tileStyle[i] = TRACK_STYLES.indexOf(a.style);
+          if (a.lit !== undefined) this.tileLit[i] = a.lit;
+          if (a.color2 !== undefined || a.style !== undefined) {
+            this.tileColor2[i] = c2;
+            this.tileGlowDur[i] = a.glowDuration ?? 2;
+            this.tilePulseLen[i] = a.pulseLength ?? 0;
+            this.tileColorMode[i] = (a.colorMode === 'blink' ? 1 : a.colorMode === 'rainbow' ? 2 : 0) + (a.pulseBack ? 4 : 0);
+          }
         }
         return {
           ev,
           apply: (p) => {
-            for (let i = lo; i <= hi; i++) this.tileColor[i] = p >= 1 ? target : lerpColor(from[i - lo], target, p);
+            for (let i = lo; i <= hi; i += step) this.tileColor[i] = p >= 1 ? target : lerpColor(from[i - lo], target, p);
           },
         };
       }
@@ -577,7 +596,8 @@ export class VisualTimeline {
         const fs = this.tileScale.slice(lo, hi + 1);
         // 같은 타일·속성을 움직이던 앞 이벤트는 여기서 끊긴다 (지금 값에서 이어서)
         const id = ++this.moveSerial;
-        for (let i = lo; i <= hi; i++) {
+        const step = Math.max(1, Math.round((a.gap ?? 0) + 1));
+        for (let i = lo; i <= hi; i += step) {
           if (a.offset) this.claimPos[i] = id;
           if (a.rotation !== undefined) this.claimRot[i] = id;
           if (a.scale !== undefined) this.claimScale[i] = id;
@@ -590,7 +610,7 @@ export class VisualTimeline {
           ev,
           apply: (p) => {
             const k = ease(a.ease as EaseName | undefined, p);
-            for (let i = lo; i <= hi; i++) {
+            for (let i = lo; i <= hi; i += step) {
               const j = i - lo;
               if (a.offset && this.claimPos[i] === id) {
                 // null인 축은 그대로
@@ -609,7 +629,7 @@ export class VisualTimeline {
         const chan = 'filter:' + a.filter;
         this.active = this.active.filter((x) => x.chan !== chan);
         // 밝기는 1이 '변화 없음'
-        const neutral = a.filter === 'Brightness' ? 1 : 0;
+        const neutral = FILTER_NEUTRAL_ONE.has(a.filter) ? 1 : 0;
         const cur = this.filters.get(a.filter)?.intensity ?? neutral;
         const target = a.enabled ? (a.intensity ?? 1) : neutral;
         return {
@@ -644,6 +664,8 @@ export class VisualTimeline {
         for (const d of targets) {
           if (a.visible !== undefined) d.visible = a.visible;
           if (a.image !== undefined) d.image = a.image || null;
+          if (a.mask !== undefined) d.mask = a.mask === 'none' ? null : a.mask;
+          if (a.depth !== undefined) d.depth = a.depth;
           if (a.text !== undefined) d.text = a.text;
           if (a.particle === 'start') {
             d.emitting = true;

@@ -645,6 +645,9 @@ export class Game {
     this.fx.update(now);
     // 배경 면 플래시는 밝기를 낮추는 용도가 많아 효과 줄이기에서도 유지
     stage.frame(tl.flashColor, reduce ? 0 : tl.flashAlpha, tl.bgFlashColor, tl.bgFlashAlpha);
+    // 가림막 장식 → 가림막 그림 (카메라 변환이 정해진 뒤)
+    stage.world.updateLocalTransform();
+    this.deco.renderMask(stage.app.renderer, stage.world.localTransform, stage.width, stage.height);
 
     // HUD
     hud.setProgress(ch.finish > 0 ? this.cur / ch.finish : 1);
