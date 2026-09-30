@@ -131,7 +131,8 @@ void main() {
     float rad = uHole.z * 0.5;
     float k = rad * rad * uHole.w;
     s = hp + (d * (1.0 - k / max(r * r, 1e-4) * 0.35)) / vec2(asp, 1.0);
-    holeShade = smoothstep(rad * 0.55, rad * 0.8, r);
+    // 가운데는 살짝만 어둡게 (검은 원판은 원작에선 배경 그림 쪽)
+    holeShade = mix(0.75, 1.0, smoothstep(rad * 0.3, rad * 0.7, r));
   }
   // 물결 (원작 Waves): 가로로 출렁
   if (uWave > 0.0) s.x += sin(s.y * 24.0 + uTime * 5.0) * 0.008 * uWave;
@@ -464,10 +465,11 @@ export class ScreenFx {
       u.uPixel = px > 0 ? 2 + 5 * Math.min(3, px) : 0;
       u.uAberr = reduce ? 0 : Math.min(40, 6 * any('Aberration', 'VHS', 'EightiesTV', 'Handheld', 'Glitch') + (k('Aberration') > 0 ? 2 : 0));
       u.uScan = reduce ? 0 : Math.min(1, 0.6 * any('Arcade', 'VHS', 'EightiesTV', 'FiftiesTV', 'LED'));
-      u.uFish = Math.min(1.5, k('Fisheye'));
+      // 원작 어안(Fisheye)은 세기 50에서도 가장자리가 살짝 휘는 정도
+      u.uFish = Math.min(1.5, k('Fisheye')) * 0.35;
       u.uPoster = k('Posterize') > 0 ? Math.max(2, 10 - 6 * Math.min(1, k('Posterize'))) : 0;
       u.uTime = timeSec;
-      u.uVig = Math.min(1, Math.max(k('Arcade'), k('Fisheye'), k('VHS'), k('EightiesTV'), k('FiftiesTV'), k('Vignette')) * 0.9);
+      u.uVig = Math.min(1, Math.max(k('Arcade'), 0.3 * k('Fisheye'), k('VHS'), k('EightiesTV'), k('FiftiesTV'), k('Vignette')) * 0.9);
       u.uWave = Math.min(3, k('Waves'));
       u.uGlitch = reduce ? 0 : Math.min(2, k('Glitch'));
       u.uHole[0] = k('HoleX');

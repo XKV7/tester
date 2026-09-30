@@ -387,8 +387,11 @@ export function advancedFilter(name: string, p: Map<string, unknown>): AdvancedC
     case 'Blur_BlurHole':
     case 'Blur_DitherOffset':
     case 'Blur_Focus':
-    case 'Blur_GaussianBlur':
-      return one('Blur', 0.5);
+    case 'Blur_GaussianBlur': {
+      // 세기 속성이 있으면 그만큼만 (작은 값은 거의 안 흐림)
+      const amt = p.has('intensity') ? Math.min(1, Math.abs(v('Intensity', 100)) / 100) : 1;
+      return one('Blur', 0.5 * amt);
+    }
     case 'FX_Glitch1':
     case 'FX_Glitch2':
     case 'FX_Glitch3':
@@ -417,10 +420,12 @@ export function advancedFilter(name: string, p: Map<string, unknown>): AdvancedC
     case 'Color_Noise':
     case 'Noise_TV':
     case 'TV_Noise':
-      return one('Static', 0.6);
+      return one('Static', p.has('noise') ? Math.max(0.05, Math.min(0.6, v('Noise', 60) / 100)) : 0.6);
     case 'Edge_Edge_filter':
       return one('EdgeBlackLine', 1);
     case 'TV_Old_Movie_2':
+      // 색은 그대로, 필름 잡티만 (흑백으로 바꾸지 않는다)
+      return one('Grain', 0.5);
     case 'TV_Vintage':
     case 'TV_Old_Movie':
       return one('FiftiesTV', 1);
