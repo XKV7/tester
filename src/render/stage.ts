@@ -1,5 +1,9 @@
-import { Application, Container, Graphics, RenderTexture, Sprite, Texture, TilingSprite, type Filter } from 'pixi.js';
+import { Application, Container, Filter, Graphics, RenderTexture, Sprite, Texture, TilingSprite } from 'pixi.js';
 import { TILE_LEN } from '../core/math';
+
+// 필터(흐림·색·왜곡·빛 번짐)는 기본이 1배 해상도라, 휴대폰(2배 화면)에서 필터가 켜지면 화면 전체가 절반 해상도로 뭉개졌다.
+// 화면 해상도를 따르게 한다 (필터를 만들기 전에).
+Filter.defaultOptions.resolution = 'inherit';
 
 interface Mote {
   x: number;
