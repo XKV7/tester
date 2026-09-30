@@ -37,8 +37,13 @@ export class PlayScreen implements Screen, GameHud {
   async enter(root: HTMLElement): Promise<void> {
     this.root = root;
     // 휴대폰: 주소창·아래 버튼을 숨겨 게임 화면을 폰에 꽉 채운다 (시작 버튼을 누른 직후라 허용된다)
-    if (settings.fullscreen && matchMedia('(pointer: coarse)').matches && !document.fullscreenElement && document.documentElement.requestFullscreen) {
-      document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+    if (settings.fullscreen && matchMedia('(pointer: coarse)').matches && document.documentElement.requestFullscreen) {
+      const goFull = () => {
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+      };
+      goFull();
+      // 브라우저가 막으면 (누른 지 오래됨 등) 첫 터치 때 다시
+      root.addEventListener('pointerdown', goFull, { once: true, capture: true });
     }
     root.className = 'passthrough';
     this.prog = h('div');

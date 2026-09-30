@@ -274,7 +274,10 @@ export class Game {
   /** 원작(얼음과 불의 춤)에서 온 레벨인지 — 변환 표시가 없어도 묶음에 .adofai가 있으면 */
   private get fromAdofai(): boolean {
     const p = this.opts.pkg;
-    return p.imported === 'adofai' || !!p.source?.toLowerCase().endsWith('.adofai') || [...p.files.keys()].some((n) => n.toLowerCase().endsWith('.adofai'));
+    if (p.imported === 'adofai' || p.level.meta.origin === 'adofai' || p.source?.toLowerCase().endsWith('.adofai')) return true;
+    if ([...p.files.keys()].some((n) => n.toLowerCase().endsWith('.adofai'))) return true;
+    // 표시가 없는 예전 저장본: 원작처럼 장식으로 화면을 꾸민 레벨이면 원작 화면 기준으로 본다
+    return (p.level.decorations?.length ?? 0) > 0;
   }
 
   diag(): string[] {

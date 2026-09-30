@@ -18,6 +18,8 @@ export interface LevelMeta {
   author: string;
   difficulty: number;
   previewStart: number;
+  /** 어디서 온 레벨인지 (원작에서 변환했으면 'adofai' — 화면 맞춤 등에 쓴다) */
+  origin?: 'adofai';
 }
 
 export interface LevelSettings {

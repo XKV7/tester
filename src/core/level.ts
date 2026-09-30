@@ -121,6 +121,9 @@ export function validateLevel(raw: unknown): ValidateResult {
           errors.push('meta.previewStart는 0 이상의 숫자여야 합니다.');
         else meta.previewStart = raw.meta.previewStart;
       }
+      if (raw.meta.origin === 'adofai') {
+        meta.origin = 'adofai';
+      }
     }
   }
 
