@@ -363,10 +363,12 @@ export class DecorationView {
         const tile = rel === 'tile' ? this.chart.tiles[Math.min(this.chart.tiles.length - 1, def.floor ?? 0)] : null;
         const bx = tile ? tile.x : 0;
         const by = tile ? -tile.y : 0;
-        // 카메라 따라가기 (원작 parallax): 기준 타일(+기준점 이동)과 카메라 사이를 비율만큼
-        // 100%면 카메라와 함께 움직여 화면에 고정된다
-        x = bx + px + (camX - (bx + d.pox)) * d.parx;
-        y = by - py + (camY - (by - d.poy)) * d.pary;
+        // 카메라 따라가기 (원작 parallax): 장식 자신의 자리(+ parallaxOffset)에서 카메라가 벗어난 만큼 비율로 따라간다.
+        // 100%면 화면 가운데에 고정. 기준을 장식이 붙은 타일로 잡으면 멀리 놓인 큰 배경(Hello (BPM) 2025의 하늘)이 화면 밖으로 나갔다
+        const ax = bx + px;
+        const ay = by - py;
+        x = ax + (camX - (ax + d.pox)) * d.parx;
+        y = ay + (camY - (ay - d.poy)) * d.pary;
         if (def.lockRotation) r -= rc;
       }
       node.position.set(x, y);
