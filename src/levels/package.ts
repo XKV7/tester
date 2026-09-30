@@ -115,16 +115,42 @@ export function packageFromFiles(files: Map<string, Uint8Array>, id = newPackage
   if (!jsonName) throw new PackageError(['패키지에서 레벨 파일(level.orbit.json)을 찾을 수 없습니다.', '음원이나 동영상만 있다면 "음원으로 레벨 만들기"를 쓰세요.']);
   const r = parseLevelJson(strFromU8(flat.get(jsonName)!));
   if (!r.ok) throw new PackageError([`${jsonName}:`, ...r.errors]);
+  // 예전 ORBIT이 원작 레벨을 변환해 내보낸 zip: 원작 파일이 같이 있으면 지금 변환기로 다시 (장식·효과가 더 들어간다)
+  const fresh = refreshedAdofai(flat, r.level, id);
+  if (fresh) return fresh;
   const warnings = [...r.warnings];
   const song = r.level.settings.songFile;
   if (song && !findSong(flat, song)) warnings.push(`음원 파일 '${song}'을(를) 찾지 못해 합성 비트로 대체합니다.`);
   return { id, level: r.level, files: flat, builtin: false, warnings };
 }
 
-function packageFromAdofai(flat: Map<string, Uint8Array>, name: string, id: string): LevelPackage {
+/**
+ * 파일 묶음에 원작 레벨(.adofai)이 있고, 주어진 레벨이 그 원작을 예전 변환기로 바꾼 것이면
+ * (타일 수가 같고 이벤트·장식이 지금 변환보다 적음) 지금 변환기로 다시 만든 패키지. 아니면 null.
+ * 사용자가 고쳐서 이벤트를 더한 레벨은 이벤트가 더 많으니 그대로 둔다.
+ */
+export function refreshedAdofai(files: Map<string, Uint8Array>, level: LevelData, id: string): LevelPackage | null {
+  const name = [...files.keys()]
+    .filter((n) => lower(n).endsWith('.adofai') && !n.includes('/'))
+    .sort((a, b) => Number(/backup/i.test(a)) - Number(/backup/i.test(b)) || files.get(b)!.length - files.get(a)!.length)[0];
+  if (!name) return null;
   let conv: ReturnType<typeof convertAdofai>;
   try {
-    conv = convertAdofai(strFromU8(flat.get(name)!));
+    conv = convertAdofai(strFromU8(files.get(name)!));
+  } catch {
+    return null;
+  }
+  const size = (lv: LevelData) => lv.actions.length + (lv.decorations?.length ?? 0);
+  if (conv.level.path.length !== level.path.length || size(level) >= size(conv.level)) return null;
+  const pkg = packageFromAdofai(files, name, id, conv);
+  pkg.warnings.unshift('예전 버전에서 변환한 레벨이라 원작 레벨 파일로 다시 변환했습니다 (배경·장식·효과 포함).');
+  return pkg;
+}
+
+function packageFromAdofai(flat: Map<string, Uint8Array>, name: string, id: string, pre?: ReturnType<typeof convertAdofai>): LevelPackage {
+  let conv: ReturnType<typeof convertAdofai>;
+  try {
+    conv = pre ?? convertAdofai(strFromU8(flat.get(name)!));
   } catch (e) {
     throw new PackageError([`${name}: ${(e as Error).message}`]);
   }

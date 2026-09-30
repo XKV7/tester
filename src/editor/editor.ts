@@ -37,6 +37,7 @@ import {
   filesFromList,
   hasLevelFile,
   addLooseFiles,
+  refreshedAdofai,
   packageFromFiles,
   PackageError,
   levelFileNames,
@@ -197,6 +198,7 @@ export class EditorScreen implements Screen {
     const fs = await loadEditorFiles();
     const files = new Map<string, Uint8Array>(fs && fs.id === lv.id ? fs.files : []);
     let pkg: LevelPackage | null = null;
+    let refreshed: LevelPackage | null = null;
     if (lv.imported === 'adofai' && !lv.edited && lv.source && files.has(lv.source)) {
       try {
         pkg = packageFromFiles(files, lv.id);
@@ -214,13 +216,16 @@ export class EditorScreen implements Screen {
       }
       const r = validateLevel(parsed);
       if (!r.ok) return;
-      pkg = { id: lv.id, level: r.level, files, builtin: false, warnings: [], imported: lv.imported, source: lv.source };
+      // 예전 변환기로 바꾼 원작 레벨이면 원작 파일로 다시 변환 (장식·효과가 빠져 있었다)
+      refreshed = refreshedAdofai(files, r.level, lv.id);
+      pkg = refreshed ?? { id: lv.id, level: r.level, files, builtin: false, warnings: [], imported: lv.imported, source: lv.source };
     }
     if (editing !== this.pkg || !this.isScreenActive()) return;
     editing = pkg;
     this.pkg = pkg;
     this.level = pkg.level;
-    editedSinceLoad = lv.edited;
+    editedSinceLoad = refreshed ? false : lv.edited;
+    if (refreshed) toast('예전 버전에서 변환한 레벨이라 원작 파일로 다시 변환했어요 — 배경·장식·효과가 나옵니다.', 5000);
     savedFilesId = files.size ? pkg.id : null;
     this.rebuild();
     const b = await loadPackageAudio(pkg);
