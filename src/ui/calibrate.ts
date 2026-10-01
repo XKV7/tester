@@ -30,7 +30,7 @@ const grade = (mad: number) => (mad < 8 ? 'A' : mad < 15 ? 'B' : mad < 25 ? 'C' 
  * 기기 오프셋은 판정과 화면을 함께 옮겨서, 화면을 따로 맞출 필요가 거의 없다.
  */
 export class CalibrateScreen implements Screen {
-  private mode: 'tap' | 'check' | null = null;
+  private mode: 'tap' | 'visual' | 'check' | null = null;
   private canvas!: HTMLCanvasElement;
   private status!: HTMLElement;
   private live!: HTMLElement;
@@ -85,7 +85,8 @@ export class CalibrateScreen implements Screen {
             'div',
             { class: 'row' },
             h('button', { class: 'btn primary', onclick: () => this.beginTap() }, '처음부터 보정'),
-            h('button', { class: 'btn', onclick: () => this.beginCheck() }, '맞는지 확인·미세조정'),
+            h('button', { class: 'btn', onclick: () => this.beginVisual() }, '화면만 다시'),
+            h('button', { class: 'btn', onclick: () => this.beginCheck() }, '확인·미세조정'),
           ),
           this.nudgeBox,
         ),
@@ -133,6 +134,49 @@ export class CalibrateScreen implements Screen {
     await this.startLoop(true);
   }
 
+  /**
+   * 2단계 — 화면 맞추기: 소리 없이 행성이 위·아래 점에 닿는 순간 탭한다.
+   * 드럼 탭(1단계)에는 소리 지연 + 터치 지연이, 이 탭에는 화면 지연 + 터치 지연이 들어 있어
+   * 둘의 차이만큼만 화면을 늦추면 행성이 소리가 들리는 순간에 닿는다 (터치 지연 몫은 화면에서 빠진다).
+   */
+  private async beginVisual(): Promise<void> {
+    this.mode = 'visual';
+    this.taps = [];
+    this.result.innerHTML = '';
+    this.nudgeBox.innerHTML = '';
+    this.status.innerHTML = '';
+    this.status.append(
+      h('div', { style: 'font-weight:700' }, '2단계 · 화면 맞추기'),
+      h('div', null, '소리 없이 돌아요. 행성이 위·아래 점에 닿는 순간에 맞춰 탭하세요.'),
+    );
+    this.live.textContent = '';
+    await this.startLoop(false);
+  }
+
+  private finishVisual(lag: number, mad: number): void {
+    this.mode = null;
+    cancelAnimationFrame(this.raf);
+    this.eng.stop();
+    this.eng.cancelScheduled();
+    // 화면 미세 = 화면 쪽 지연 (게임에서 화면은 기기 오프셋 − 이 값만큼 늦춰 그린다)
+    settings.visualOffset = Math.max(-150, Math.min(450, Math.round(lag)));
+    saveSettings();
+    const shift = deviceOffsetMs() - settings.visualOffset;
+    this.draw(null);
+    this.status.innerHTML = '';
+    this.status.append(h('div', { style: 'font-size:18px;font-weight:700' }, mad >= 25 ? '맞췄어요 (탭이 들쭉날쭉해요 — 다시 해 보세요)' : '화면도 맞췄어요!'));
+    this.live.textContent = `화면 쪽 지연 ${settings.visualOffset}밀리초 · 정확도 ${grade(mad)}`;
+    this.result.innerHTML = '';
+    this.result.append(
+      h(
+        'div',
+        { class: 'dim', style: 'font-size:13px;text-align:center;max-width:520px' },
+        `게임에서 화면을 소리에 맞춰 ${Math.abs(shift)}ms ${shift >= 0 ? '늦춰' : '앞당겨'} 그려요. '확인·미세조정'에서 행성이 드럼과 같이 닿는지 보세요.`,
+      ),
+      h('button', { class: 'btn primary', onclick: () => this.beginCheck() }, '확인하기'),
+    );
+  }
+
   /** 확인: 게임처럼 판정·화면에 기기 오프셋을 적용해 보여 준다 (행성이 드럼과 함께 닿으면 성공). */
   private async beginCheck(): Promise<void> {
     this.mode = 'check';
@@ -146,7 +190,7 @@ export class CalibrateScreen implements Screen {
   }
 
   private tap(ts: number): void {
-    if (this.mode !== 'tap') return;
+    if (this.mode !== 'tap' && this.mode !== 'visual') return;
     const t = this.eng.songTimeAtPerf(ts);
     if (t < 0) return;
     // 가장 가까운 박이 아니라 '조금 이르거나 많이 늦은' 쪽으로 (늦게 들리는 기기를 잴 수 있게)
@@ -158,7 +202,10 @@ export class CalibrateScreen implements Screen {
     const mad = median(recent.map((e) => Math.abs(e - m)));
     this.live.textContent = `${Math.round(m)}밀리초`;
     // 최근 탭이 고르면 끝 (너무 오래 걸리면 최대 탭 수에서)
-    if ((this.taps.length >= MIN_TAPS && mad < 25) || this.taps.length >= MAX_TAPS) this.finish(m, mad);
+    if ((this.taps.length >= MIN_TAPS && mad < 25) || this.taps.length >= MAX_TAPS) {
+      if (this.mode === 'visual') this.finishVisual(m, mad);
+      else this.finish(m, mad);
+    }
   }
 
   private finish(offset: number, mad: number): void {
@@ -190,6 +237,7 @@ export class CalibrateScreen implements Screen {
           (prev !== 0 ? ` (이전 값 ${prev}ms)` : '') +
           (hadFine ? ' 따로 맞춰 둔 입력·화면 오프셋은 0으로 되돌렸어요.' : ''),
       ),
+      h('button', { class: 'btn primary', onclick: () => this.beginVisual() }, '2단계: 화면 맞추기 (소리 없음, 추천)'),
     );
   }
 
@@ -224,6 +272,16 @@ export class CalibrateScreen implements Screen {
       const a = -Math.PI / 2 + phase * Math.PI;
       return { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a) };
     };
+    // 박 자리 점 (화면 맞추기·확인)
+    if (this.mode === 'visual' || this.mode === 'check') {
+      g.fillStyle = 'rgba(255,255,255,0.85)';
+      for (const ph of [0, 1]) {
+        const p = at(ph);
+        g.beginPath();
+        g.arc(p.x, p.y, 5, 0, Math.PI * 2);
+        g.fill();
+      }
+    }
     // 탭 자리 X (확인 모드에서는 생략)
     if (this.mode !== 'check') {
       g.strokeStyle = '#ffffff';
