@@ -102,7 +102,7 @@ export function packageFromFiles(files: Map<string, Uint8Array>, id = newPackage
   const adofais = rankAdofai(flat, names);
   if (!orbitJson && adofais.length) {
     const pkg = packageFromAdofai(flat, adofais[0], id);
-    if (adofais.length > 1) pkg.warnings.push(`레벨 파일이 ${adofais.length}개라 이벤트·장식이 가장 많은 '${adofais[0]}'을(를) 열었습니다. (다른 파일: ${adofais.slice(1).join(', ')})`);
+    if (adofais.length > 1) pkg.warnings.push(`레벨 파일이 ${adofais.length}개라 묶음의 그림을 가장 많이 쓰는 '${adofais[0]}'을(를) 열었습니다. 다른 파일(${adofais.slice(1).join(', ')})은 에디터 > 레벨 설정 > '원작 레벨 파일'에서 고를 수 있어요.`);
     return pkg;
   }
   const jsonName =
@@ -140,22 +140,42 @@ function rankAdofai(files: Map<string, Uint8Array>, names = [...files.keys()]): 
     return true;
   });
   const events = new Map<string, number>();
+  const imgs = new Map<string, number>();
   if (list.length > 1) {
     for (const n of list) {
+      const text = strFromU8(files.get(n)!);
       try {
-        const o = parseLenientJson(strFromU8(files.get(n)!)) as { actions?: unknown; decorations?: unknown };
+        const o = parseLenientJson(text) as { actions?: unknown; decorations?: unknown };
         events.set(n, (Array.isArray(o.actions) ? o.actions.length : 0) + (Array.isArray(o.decorations) ? o.decorations.length : 0));
       } catch {
         events.set(n, -1);
       }
+      // 묶음에 실제로 들어 있는 그림을 몇 개나 쓰는지 (그림과 짝인 레벨 파일이 진짜 레벨일 가능성이 크다)
+      const used = new Set<string>();
+      for (const m of text.matchAll(/"(?:decorationImage|bgImage)"\s*:\s*"([^"]+)"/g)) {
+        const f = m[1].split(/[\\/]/).pop() ?? '';
+        if (f && findFile(files, f)) used.add(f);
+      }
+      imgs.set(n, used.size);
     }
   }
   return list.sort(
     (a, b) =>
       Number(/backup/i.test(a)) - Number(/backup/i.test(b)) ||
+      (imgs.get(b) ?? 0) - (imgs.get(a) ?? 0) ||
       (events.get(b) ?? 0) - (events.get(a) ?? 0) ||
       files.get(b)!.length - files.get(a)!.length,
   );
+}
+
+/** 묶음 안 원작 레벨 파일 이름들 (고를 순서대로). */
+export function adofaiNames(files: Map<string, Uint8Array>): string[] {
+  return rankAdofai(files);
+}
+
+/** 묶음 안의 특정 원작 레벨 파일로 다시 변환 (에디터에서 레벨 파일 바꾸기). */
+export function packageFromAdofaiFile(files: Map<string, Uint8Array>, name: string, id: string): LevelPackage {
+  return packageFromAdofai(files, name, id);
 }
 
 export function refreshedAdofai(files: Map<string, Uint8Array>, level: LevelData, id: string): LevelPackage | null {
