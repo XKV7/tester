@@ -22,6 +22,11 @@ describe('.adofai 변환', () => {
     expect(parseLenientJson(t)).toEqual({ a: [1, 2], b: { c: 'x\ny' }, d: '끝, ]' });
   });
 
+  it('느슨한 JSON: 빠진 쉼표 (원작이 받아 주는 파일)', () => {
+    const t = '{ "a": [ { "x": 1 }\n { "x": 2 } ], "b": 1e-5 "c": "y"\n "d": [1 2 true] }';
+    expect(parseLenientJson(t)).toEqual({ a: [{ x: 1 }, { x: 2 }], b: 1e-5, c: 'y', d: [1, 2, true] });
+  });
+
   it('색: 알파 제거, 잘못된 값은 null', () => {
     expect(adofaiColor('DEBB7B')).toBe('#debb7b');
     expect(adofaiColor('#ff000080')).toBe('#ff0000');

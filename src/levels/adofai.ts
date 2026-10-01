@@ -33,35 +33,57 @@ const MIDSPIN = 999;
  * 문자열 밖의 끝 쉼표만 지우고, 문자열 안 제어 문자는 이스케이프해 JSON.parse에 넘긴다.
  */
 export function parseLenientJson(text: string): unknown {
-  const s = text.replace(/^﻿/, '');
-  let out = '';
+  const s = text.replace(/^\uFEFF/, '');
+  const out: string[] = [];
   let inStr = false;
+  // 마지막 의미 있는 글자, 그 뒤에 공백이 있었는지 (빠진 쉼표 넣기용)
+  let last = '';
+  let gap = false;
+  const isWord = (ch: string) => /[0-9A-Za-z.+]/.test(ch);
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
     if (inStr) {
       if (c === '\\') {
-        out += c + (s[i + 1] ?? '');
+        out.push(c + (s[i + 1] ?? ''));
         i++;
       } else if (c === '"') {
         inStr = false;
-        out += c;
-      } else if (c === '\n') out += '\\n';
-      else if (c === '\r') out += '\\r';
-      else if (c === '\t') out += '\\t';
-      else out += c;
+        out.push(c);
+        last = '"';
+        gap = false;
+      } else if (c === '\n') out.push('\\n');
+      else if (c === '\r') out.push('\\r');
+      else if (c === '\t') out.push('\\t');
+      else out.push(c);
       continue;
+    }
+    if (/\s/.test(c)) {
+      out.push(c);
+      gap = true;
+      continue;
+    }
+    // 원작 파일엔 쉼표가 빠진 곳이 있다 (원작은 받아 준다): 값이 끝난 뒤 바로 새 값이 오면 쉼표를 넣는다
+    if (c === '{' || c === '[' || c === '"' || c === '-' || isWord(c)) {
+      const valueEnd = last === '}' || last === ']' || last === '"' || isWord(last);
+      if (valueEnd && (last === '}' || last === ']' || last === '"' || gap)) out.push(',');
     }
     if (c === '"') {
       inStr = true;
-      out += c;
+      out.push(c);
     } else if (c === ',') {
       // 다음 의미 있는 글자가 } 또는 ] 이면 버린다
       let j = i + 1;
       while (j < s.length && /\s/.test(s[j])) j++;
-      if (s[j] !== '}' && s[j] !== ']') out += c;
-    } else out += c;
+      if (s[j] !== '}' && s[j] !== ']') out.push(c);
+      else {
+        gap = true;
+        continue;
+      }
+    } else out.push(c);
+    last = c;
+    gap = false;
   }
-  return JSON.parse(out);
+  return JSON.parse(out.join(''));
 }
 
 const num = (v: unknown, d: number): number => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : d);
