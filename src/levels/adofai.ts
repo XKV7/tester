@@ -71,6 +71,11 @@ const dur = (v: unknown, d: number): number => Math.max(0, Math.min(MAX_EFFECT_B
 const onOff = (v: unknown): boolean => v === true || v === 'Enabled' || v === 'enabled';
 
 /** <color=#fff>…</color> 같은 서식 태그 제거. */
+/** 글자 장식용: 서식 태그만 떼고 줄바꿈·공백은 그대로. */
+export function richToPlain(s: string): string {
+  return s.replace(/<\/?(?:color|b|i|u|s|size|material|quad|sprite|font|mark|sup|sub|alpha|align|cspace|line-height|voffset|br|nobr|noparse|pos|space|width|indent|margin|rotate|lowercase|uppercase|smallcaps|style|link|gradient)\b[^>]*>/gi, '');
+}
+
 export function stripRichText(s: string): string {
   return s.replace(/<[^>]*>/g, '').trim();
 }
@@ -289,7 +294,8 @@ function maskFrom(v: unknown): DecoMask | 'none' | undefined {
 
 function decoFrom(e: Record<string, unknown>, floor: number, isText: boolean): Decoration | null {
   const image = str(e.decorationImage).split(/[\\/]/).pop() ?? '';
-  const text = isText ? str(e.decText) : '';
+  // 원작 서식 태그(<color="red"> 등)는 ORBIT 글자에서 그대로 보이므로 뗀다 (줄바꿈은 유지)
+  const text = isText ? richToPlain(str(e.decText)) : '';
   if (!isText && !image) return null;
   const rel = str(e.relativeTo);
   const vec = (v: unknown, d: number): [number, number] => (Array.isArray(v) ? [num(v[0], d), num(v[1], d)] : [d, d]);
@@ -909,7 +915,7 @@ export function convertAdofai(text: string): AdofaiResult {
       }
       case 'SetText': {
         const tag = str(e.tag).trim();
-        if (tag) vis({ floor, type: 'MoveDecorations', tag, text: str(e.decText), duration: 0 });
+        if (tag) vis({ floor, type: 'MoveDecorations', tag, text: richToPlain(str(e.decText)), duration: 0 });
         break;
       }
       case 'ScalePlanets': {

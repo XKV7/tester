@@ -443,4 +443,9 @@ describe('극단적인 BPM (Hello (BPM) 류)', () => {
     expect(f('HoleX')?.intensity).toBeCloseTo(0.54);
     expect(f('Hole')?.intensity).toBeGreaterThan(0);
   });
+
+  it('글자 장식의 서식 태그는 뗀다', () => {
+    const r = level({ pathData: 'RRR', actions: [], decorations: [{ floor: 1, eventType: 'AddText', decText: 'Play <color="red">No miss</color> <b>now</b> 1<2', tag: 't' }] });
+    expect(r.level.decorations![0].text).toBe('Play No miss now 1<2');
+  });
 });
