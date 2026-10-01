@@ -129,4 +129,12 @@ describe('합성 비트 트랙', () => {
     expect(pkg.source).toBe('main.adofai');
     expect(pkg.level.decorations?.length).toBe(1);
   });
+
+  it('.adofai가 여럿이면 묶음의 그림을 쓰는 파일을 먼저 연다', () => {
+    const lvl = (extra: object) => strToU8(JSON.stringify({ pathData: 'RRRR', settings: { bpm: 120 }, ...extra }));
+    const many = lvl({ actions: [...Array(30)].map((_, i) => ({ floor: 1, eventType: 'Flash', duration: i })) });
+    const withImg = lvl({ actions: [], decorations: [{ floor: 1, eventType: 'AddDecoration', decorationImage: 'bg.png' }] });
+    const files = new Map([['level.adofai', many], ['main.adofai', withImg], ['bg.png', new Uint8Array([1])]]);
+    expect(packageFromFiles(files).source).toBe('main.adofai');
+  });
 });

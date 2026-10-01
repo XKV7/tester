@@ -38,6 +38,8 @@ import {
   hasLevelFile,
   addLooseFiles,
   refreshedAdofai,
+  adofaiNames,
+  packageFromAdofaiFile,
   packageFromFiles,
   PackageError,
   levelFileNames,
@@ -1060,6 +1062,42 @@ export class EditorScreen implements Screen {
     );
   }
 
+  /** 묶음에 원작 레벨 파일이 여러 개면 고르는 칸 (레벨 설정) */
+  private adofaiPicker(): HTMLElement[] {
+    const names = adofaiNames(this.pkg.files);
+    if (names.length < 2) return [];
+    const sel = h('select', {
+      onchange: () => void this.switchAdofai(sel.value),
+    }) as HTMLSelectElement;
+    for (const n of names) sel.append(h('option', { value: n, selected: n === this.pkg.source }, n));
+    return [h('label', null, '원작 레벨 파일'), sel];
+  }
+
+  private async switchAdofai(name: string): Promise<void> {
+    if (!(await confirmBox('원작 레벨 파일 바꾸기', `'${name}'로 다시 변환합니다. 지금 레벨에서 고친 내용은 사라져요 (실행 취소로 되돌릴 수 있어요).`, '바꾸기'))) {
+      this.renderSide();
+      return;
+    }
+    try {
+      const pkg = packageFromAdofaiFile(this.pkg.files, name, newPackageId('edit'));
+      editing = pkg;
+      this.pkg = pkg;
+      editedSinceLoad = false;
+      savedFilesId = null;
+      this.undoStack.push({ level: JSON.stringify(this.level), sel: this.sel });
+      this.level = pkg.level;
+      this.sel = 0;
+      this.rebuild();
+      const b = await loadPackageAudio(pkg);
+      this.wave.buffer = pkg.synthesized ? null : b;
+      this.wave.draw();
+      this.centerOn(0, 0.8);
+      toast(`'${name}'로 바꿨어요`, 3000);
+    } catch (e) {
+      await alertBox('바꿀 수 없습니다', e instanceof PackageError ? e.details : [(e as Error).message]);
+    }
+  }
+
   private async loadSong(files: FileList | File[]): Promise<void> {
     let f = files[0];
     if (!f) return;
@@ -1531,6 +1569,7 @@ export class EditorScreen implements Screen {
         color(s.trackColor, (v) => setSet('trackColor', v)),
         h('label', null, '배경 색'),
         color(s.bgColor, (v) => setSet('bgColor', v)),
+        ...this.adofaiPicker(),
         h('label', null, '빛 번짐(배)'),
         num(s.glow ?? 1, 0.1, (v) => setSet('glow', Math.round(Math.max(0, Math.min(2, v)) * 100) / 100)),
         h('label', null, '시작 방향'),
