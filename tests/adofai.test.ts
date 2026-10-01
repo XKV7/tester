@@ -453,4 +453,22 @@ describe('극단적인 BPM (Hello (BPM) 류)', () => {
     const r = level({ pathData: 'RRR', actions: [], decorations: [{ floor: 1, eventType: 'AddText', decText: 'Play <color="red">No miss</color> <b>now</b> 1<2', tag: 't' }] });
     expect(r.level.decorations![0].text).toBe('Play No miss now 1<2');
   });
+
+  it('대회 규칙: 죽는 히트박스 + SetConditionalEvents → 판정 규칙', () => {
+    const r = level({
+      pathData: 'RRRRRR',
+      actions: [
+        { floor: 1, eventType: 'SetConditionalEvents', tooEarlyTag: 'death', veryEarlyTag: 'death', veryLateTag: 'death', earlyPerfectTag: 'NONE', latePerfectTag: 'NONE' },
+        { floor: 1, eventType: 'MoveDecorations', tag: 'd', scale: [100000, 100000], duration: 0, eventTag: 'death' },
+        { floor: 4, eventType: 'SetConditionalEvents', tooEarlyTag: 'NONE' },
+      ],
+      decorations: [{ floor: 1, eventType: 'AddDecoration', decorationImage: '', tag: 'd', hitbox: 'Kill', relativeTo: 'RedPlanet' }],
+    });
+    const rules = r.level.actions.filter((a) => a.type === 'JudgeRule');
+    expect(rules).toEqual([
+      { floor: 1, type: 'JudgeRule', fail: ['tooEarly', 'early', 'late'] },
+      { floor: 4, type: 'JudgeRule', fail: [] },
+    ]);
+    expect(r.level.actions.some((a) => a.type === 'MoveDecorations')).toBe(false);
+  });
 });

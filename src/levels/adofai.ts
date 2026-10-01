@@ -2,7 +2,7 @@ import { compileChart } from '../core/chart';
 import { TILE_LEN } from '../core/math';
 import { defaultMeta, defaultSettings, FILTER_NAMES, MAX_BPM, MAX_EFFECT_BEATS, MAX_EXTRA_BEATS, MAX_MULTIPLIER, validateLevel } from '../core/level';
 import { EASE_NAMES } from '../core/ease';
-import type { Action, DecoBlend, DecoMask, Decoration, EaseName, LevelData, ParticleDef, RecolorTrackAction, TrackAppear, TrackDisappear, TrackStyle } from '../core/types';
+import type { Action, JudgeRuleAction, DecoBlend, DecoMask, Decoration, EaseName, LevelData, ParticleDef, RecolorTrackAction, TrackAppear, TrackDisappear, TrackStyle } from '../core/types';
 
 /**
  * 얼음과 불의 춤(.adofai) 레벨 → ORBIT 레벨 변환. 순수 함수.
@@ -672,6 +672,19 @@ export function convertAdofai(text: string): AdofaiResult {
     actions.push({ floor: 0, type: 'Sound', hitsound: str(s.hitsound) || 'Kick', hitVolume: Math.max(0, Math.min(10, num(s.hitsoundVolume, 100) / 100)) });
   // 장식은 새 버전은 "decorations" 배열, 옛 버전은 actions 안의 AddDecoration/AddText
   const list = expandRepeats([...(Array.isArray(r.actions) ? r.actions : []), ...(Array.isArray(r.decorations) ? r.decorations : [])], last);
+  // 원작 대회 규칙: '죽는 히트박스' 장식(hitbox Kill)을 움직이는 태그 이벤트 = 그 판정이 나오면 실패
+  const killDeco = new Set<string>();
+  for (const ev of list) {
+    const e = ev as Record<string, unknown>;
+    if (e && str(e.eventType) === 'AddDecoration' && str(e.hitbox) === 'Kill') for (const t of str(e.tag).split(/\s+/)) if (t) killDeco.add(t);
+  }
+  const deadlyTags = new Set<string>();
+  if (killDeco.size)
+    for (const ev of list) {
+      const e = ev as Record<string, unknown>;
+      if (!e || str(e.eventType) !== 'MoveDecorations' || !str(e.eventTag)) continue;
+      if (str(e.tag).split(/\s+/).some((t) => killDeco.has(t))) for (const t of str(e.eventTag).split(/\s+/)) if (t) deadlyTags.add(t);
+    }
   for (const ev of list) {
     if (typeof ev !== 'object' || ev === null) continue;
     const e = ev as Record<string, unknown>;
@@ -981,6 +994,22 @@ export function convertAdofai(text: string): AdofaiResult {
       case 'PlaySound':
         vis({ floor, type: 'Sound', play: str(e.hitsound) || 'Kick', volume: Math.max(0, Math.min(10, num(e.hitsoundVolume, 100) / 100)) });
         break;
+      case 'SetConditionalEvents': {
+        if (!deadlyTags.size) {
+          bump(skipped, type);
+          break;
+        }
+        const map: [string, JudgeRuleAction['fail'][number]][] = [
+          ['tooEarlyTag', 'tooEarly'],
+          ['veryEarlyTag', 'early'],
+          ['veryLateTag', 'late'],
+          ['earlyPerfectTag', 'earlyPerfect'],
+          ['latePerfectTag', 'latePerfect'],
+        ];
+        const fail = map.filter(([k]) => str(e[k]).split(/\s+/).some((t) => deadlyTags.has(t))).map(([, j]) => j);
+        actions.push({ floor, type: 'JudgeRule', fail });
+        break;
+      }
       // 편집기 전용·판정 문구·여백 등 화면에 영향이 없는 이벤트는 조용히 넘긴다
       case 'Bookmark':
       case 'EditorComment':
@@ -991,6 +1020,8 @@ export function convertAdofai(text: string): AdofaiResult {
       case 'MoveDecorations': {
         const tag = str(e.tag).trim();
         if (!tag) break;
+        // 실패 규칙의 방아쇠 이벤트 (조건이 맞을 때만 실행) — 판정 규칙으로 옮겼다
+        if (str(e.eventTag).split(/\s+/).some((t) => deadlyTags.has(t))) break;
         const a: Action = { floor, type: 'MoveDecorations', tag, duration: dur(e.duration, 1) };
         // 원작은 비어 있는(null) 축을 그대로 둔다
         const axes = (v: unknown, k: number): [number | null, number | null] | undefined => {

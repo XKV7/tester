@@ -63,6 +63,7 @@ const FAIL_LABEL = {
   overload: '과부하 — 너무 빠르게 연타했습니다',
   holdEarly: '홀드를 너무 일찍 뗐습니다',
   holdLate: '홀드를 너무 늦게 뗐습니다',
+  rule: '이 구간은 그 판정이 나오면 실패예요 (맵 규칙)',
 } as const;
 type FailReason = keyof typeof FAIL_LABEL;
 
@@ -103,6 +104,8 @@ export class Game {
   private beginFloor = 0;
   /** 친 타이밍 오차 (ms, 입력 오프셋을 빼기 전 — 오프셋을 바꿔도 그대로 쓸 수 있게) */
   private readonly tapErr: number[] = [];
+  /** 타일마다 실패가 되는 판정 (원작 대회 규칙, JudgeRule) */
+  private ruleAt: (ReadonlySet<string> | null)[] = [];
   private failAt = 0;
   private clearAt = 0;
   private resumeAt = 0;
@@ -166,6 +169,15 @@ export class Game {
   }
 
   async start(): Promise<void> {
+    // 판정 규칙 → 타일별
+    const rules = this.chart.level.actions.filter((a) => a.type === 'JudgeRule').sort((a, b) => a.floor - b.floor) as { floor: number; fail: string[] }[];
+    this.ruleAt = new Array(this.chart.tiles.length).fill(null);
+    let ri = 0;
+    let cur: ReadonlySet<string> | null = null;
+    for (let i = 0; i < this.chart.tiles.length; i++) {
+      while (ri < rules.length && rules[ri].floor <= i) cur = rules[ri++].fail.length ? new Set(rules[ri - 1].fail) : null;
+      this.ruleAt[i] = cur;
+    }
     stage.fitWide = settings.fitWide && this.fromAdofai;
     stage.setFrameAspect(settings.lockAspect && this.fromAdofai ? 16 / 9 : null);
     this.buffer = await loadPackageAudio(this.opts.pkg);
@@ -399,6 +411,12 @@ export class Game {
     const tooEarlyLimit = ((tile.duration / this.pitch) * 1000) / 2;
     const j = judgeError(e, w, tooEarlyLimit);
     if (j === null) return;
+    // 맵 규칙: 이 구간에서 금지된 판정이면 실패
+    if (this.ruleAt[this.cur + 1]?.has(j)) {
+      this.showJudge(this.cur + 1, j);
+      this.fail('rule');
+      return;
+    }
     if (j === 'tooEarly') {
       this.stats.recordTooEarly(this.cur + 1);
       this.showJudge(this.cur + 1, j);
