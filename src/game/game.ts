@@ -170,8 +170,8 @@ export class Game {
     stage.setFrameAspect(settings.lockAspect && this.fromAdofai ? 16 / 9 : null);
     this.buffer = await loadPackageAudio(this.opts.pkg);
     await this.eng.resume();
-    this.track = new TrackView(this.chart, this.timeline);
-    this.planets = new PlanetsView();
+    this.track = new TrackView(this.chart, this.timeline, { outline: settings.trackOutline });
+    this.planets = new PlanetsView(settings.trackOutline);
     this.fx = new FxView();
     this.deco = new DecorationView(this.chart, this.timeline, (name) => fileUrl(this.opts.pkg, name));
     this.screenFx = new ScreenFx();

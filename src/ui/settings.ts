@@ -53,7 +53,7 @@ export class SettingsScreen implements Screen {
       });
       return h('div', { class: 'row' }, h('div', { style: 'width:120px' }, inp), h('span', { class: 'dim' }, 'ms'));
     };
-    const toggle = (k: keyof Pick<UserSettings, 'reduceEffects' | 'showJudgeText' | 'autoHitSound' | 'beatPulse' | 'fitWide' | 'fullscreen' | 'lockAspect'>) =>
+    const toggle = (k: keyof Pick<UserSettings, 'reduceEffects' | 'showJudgeText' | 'autoHitSound' | 'beatPulse' | 'fitWide' | 'fullscreen' | 'lockAspect' | 'trackOutline'>) =>
       h('input', {
         type: 'checkbox',
         checked: settings[k],
@@ -119,6 +119,8 @@ export class SettingsScreen implements Screen {
             toggle('beatPulse'),
             h('label', null, '원작 화면 맞춤'),
             h('label', { class: 'row' }, toggle('fitWide'), h('span', { class: 'dim' }, '원작 맵은 세로 화면에서도 원작의 가로(16:9) 화면이 다 보이게 — 끄면 크게 보이지만 양옆 장식이 잘림')),
+            h('label', null, '트랙·행성 강조'),
+            h('label', { class: 'row' }, toggle('trackOutline'), h('span', { class: 'dim' }, '타일 밑 그림자 테두리, 진한 행성·꼬리 — 배경이 복잡해도 잘 보이게')),
             h('label', null, '원작 화면 비율 고정'),
             h('label', { class: 'row' }, toggle('lockAspect'), h('span', { class: 'dim' }, '원작 맵은 원작 모니터 화면(16:9)과 똑같은 범위만 보이게 — 남는 곳은 검은 띠, 작아질 수 있음')),
             h('label', null, '플레이 중 전체 화면'),

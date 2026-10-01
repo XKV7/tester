@@ -200,13 +200,16 @@ function snail(c: GraphicsContext, dx: number, k: number): void {
 }
 
 const planetCache = new Map<number, GraphicsContext>();
-export function planetContext(color: number): GraphicsContext {
-  let c = planetCache.get(color);
+export function planetContext(color: number, bold = false): GraphicsContext {
+  const key = color + (bold ? 0x1000000 : 0);
+  let c = planetCache.get(key);
   if (c) return c;
   c = new GraphicsContext();
-  for (let k = 6; k >= 1; k--) c.circle(0, 0, PLANET_R + k * 4).fill({ color, alpha: 0.035 * (7 - k) });
+  for (let k = 6; k >= 1; k--) c.circle(0, 0, PLANET_R + k * 4).fill({ color, alpha: (bold ? 0.06 : 0.035) * (7 - k) });
+  // 강조: 검은 테두리로 밝은 배경에서도 행성이 묻히지 않게
+  if (bold) c.circle(0, 0, PLANET_R + 3).fill({ color: 0x000000, alpha: 0.6 });
   c.circle(0, 0, PLANET_R).fill({ color });
   c.circle(-PLANET_R * 0.3, -PLANET_R * 0.3, PLANET_R * 0.45).fill({ color: 0xffffff, alpha: 0.35 });
-  planetCache.set(color, c);
+  planetCache.set(key, c);
   return c;
 }
