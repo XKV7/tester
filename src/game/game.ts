@@ -1,8 +1,10 @@
 import { beatMs, beatPhaseAt, compileChart, orbiterAngle, resumeTime, type Chart } from '../core/chart';
 import { advances, DIFFICULTY_MULT, JUDGE_COLOR, JUDGE_LABEL, judgeError, judgeWindows, MIN_FAR_MS, OverloadTracker, type Judgment } from '../core/judge';
 import { TILE_LEN } from '../core/math';
+import { analyzeOffsets, type OffsetHint } from '../core/offset';
 import { PlayStats } from '../core/stats';
 import { cameraCenter, VisualTimeline } from '../core/timeline';
+import { deviceOffsetMs } from '../audio/device';
 import { audio } from '../audio/engine';
 import { Sfx } from '../audio/sfx';
 import { fileUrl, loadPackageAudio, type LevelPackage } from '../levels/package';
@@ -27,6 +29,8 @@ export interface GameResult {
   autoplay: boolean;
   /** 플레이 속도 배율. */
   speed: number;
+  /** 친 타이밍으로 본 입력 오프셋 추천 (median = 추천 입력 오프셋 ms) */
+  offsetHint: OffsetHint | null;
 }
 
 /** 게임 화면이 구현하는 HUD. */
@@ -34,7 +38,7 @@ export interface GameHud {
   setProgress(p: number): void;
   setAccuracy(a: number): void;
   setCountdown(text: string | null): void;
-  showFail(reason: string | null): void;
+  showFail(reason: string | null, hint?: OffsetHint | null): void;
   setPaused(p: boolean): void;
   setResumeCountdown(n: number | null): void;
 }
@@ -97,6 +101,8 @@ export class Game {
   /** 일시정지한 곡 시각 (일시정지 중·재개 카운트다운 동안 화면은 이 시각에 멈춘다) */
   private pausedSong: number | null = null;
   private beginFloor = 0;
+  /** 친 타이밍 오차 (ms, 입력 오프셋을 빼기 전 — 오프셋을 바꿔도 그대로 쓸 수 있게) */
+  private readonly tapErr: number[] = [];
   private failAt = 0;
   private clearAt = 0;
   private resumeAt = 0;
@@ -364,8 +370,11 @@ export class Game {
 
   /** 입력의 판정용 곡 시각. */
   private judgeTime(perf: number): number {
-    return this.eng.songTimeAtPerf(perf) - (settings.inputOffset / 1000) * this.pitch;
+    // 기기 오프셋(소리가 늦게 들리는 만큼) + 개인 입력 오프셋
+    return this.eng.songTimeAtPerf(perf) - ((settings.inputOffset + this.devOffset) / 1000) * this.pitch;
   }
+  /** 이번 프레임의 기기 오프셋 (ms) */
+  private devOffset = 0;
 
   private handleInput(ev: InputEvent): void {
     if (ev.kind === 'up') {
@@ -400,6 +409,8 @@ export class Game {
       this.fail('miss');
       return;
     }
+    this.tapErr.push(e + settings.inputOffset + this.devOffset);
+    if (this.tapErr.length > 600) this.tapErr.splice(0, this.tapErr.length - 600);
     this.advance(j);
   }
 
@@ -474,7 +485,7 @@ export class Game {
     this.fx.explode(this.orbiterPos.x, this.orbiterPos.y, aIsPivot ? COLOR_B : COLOR_A, this.failAt);
     this.planets.setAlpha(aIsPivot ? 1 : 0, aIsPivot ? 0 : 1);
     this.planets.clearTail();
-    this.opts.hud.showFail(FAIL_LABEL[reason]);
+    this.opts.hud.showFail(FAIL_LABEL[reason], this.offsetHint);
   }
 
   private clear(): void {
@@ -496,7 +507,13 @@ export class Game {
       flawless: this.stats.isFlawless() && this.startFloor === 0 && this.speed >= 1,
       autoplay: this.autoplay,
       speed: this.speed,
+      offsetHint: this.offsetHint,
     };
+  }
+
+  /** 지금까지 친 타이밍으로 본 오프셋 추천 (median = 개인 입력 오프셋을 뺀 뒤의 추천 기기 오프셋 기준값). 자동 플레이·데이터 부족이면 null. */
+  get offsetHint(): OffsetHint | null {
+    return this.autoplay ? null : analyzeOffsets(this.tapErr);
   }
 
   // ───────────────────────── 프레임 ─────────────────────────
@@ -527,8 +544,10 @@ export class Game {
 
     // 일시정지·재개 카운트다운 중에는 멈춘 시각 그대로 (카운트다운 동안 노래 시각은 뒤에서 다가온다)
     const t = this.state === 'paused' && this.pausedSong !== null ? this.pausedSong : this.eng.songTime(now);
-    const tj = t - (settings.inputOffset / 1000) * this.pitch;
-    let tr = t + (settings.visualOffset / 1000) * this.pitch;
+    // 기기 오프셋: 소리가 D만큼 늦게 들리면 판정과 화면을 함께 D만큼 늦춘다 (원작 '기기 오프셋')
+    this.devOffset = deviceOffsetMs();
+    const tj = t - ((settings.inputOffset + this.devOffset) / 1000) * this.pitch;
+    let tr = t + ((settings.visualOffset - this.devOffset) / 1000) * this.pitch;
     // 자동 시험용 (화면 비교): 이 시각에서 화면만 멈춘다
     const freeze = (window as unknown as { __orbitFreezeAt?: number }).__orbitFreezeAt;
     let vcur = this.cur; // 화면에 그릴 현재 타일 (멈춤 시험 중에는 그 시각의 타일)

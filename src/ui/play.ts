@@ -1,10 +1,25 @@
 import { JUDGE_LABEL, type Judgment } from '../core/judge';
 import { Game, type GameHud, type GameResult } from '../game/game';
 import { settings, submitBest } from '../game/settings';
+import { offsetNudger, offsetSuggestion } from './offsetUi';
+import type { OffsetHint } from '../core/offset';
 import { currentProfile, rankKey, submitScore } from '../online/cloud';
 import type { LevelPackage } from '../levels/package';
 import { ambient } from '../render/stage';
-import { alertBox, h, show, type Screen } from './dom';
+import { alertBox, h, show, toast, type Screen } from './dom';
+import { currentProfile as deviceProfile, describeOutput, deviceProfiles } from '../audio/device';
+
+/** 이번 실행에서 마지막으로 쓴 기기 보정 (기기가 바뀌면 알려 주려고) */
+let lastDeviceKey: string | null = null;
+function noticeDevice(): void {
+  const p = deviceProfile();
+  const key = p ? `${p.lat}:${p.offset}` : 'none';
+  if (key === lastDeviceKey) return;
+  const first = lastDeviceKey === null;
+  lastDeviceKey = key;
+  if (p && !first) toast(`오디오 기기가 바뀌어서 그 기기의 보정값(${p.offset}ms)을 써요`, 3500);
+  else if (!p && deviceProfiles().length) toast(`${describeOutput()}는 아직 보정 전이에요 — 박자가 어긋나면 설정 > 보정 시작`, 4500);
+}
 
 export interface PlayOptions {
   autoplay?: boolean;
@@ -95,6 +110,7 @@ export class PlayScreen implements Screen, GameHud {
         box.textContent = this.game.diag().join('\n');
       }, 500);
     }
+    noticeDevice();
     try {
       await this.game.start();
     } catch (e) {
@@ -126,10 +142,16 @@ export class PlayScreen implements Screen, GameHud {
     this.lastCount = text;
     this.count.textContent = text ?? '';
   }
-  showFail(reason: string | null): void {
+  private failHint: HTMLElement | null = null;
+  showFail(reason: string | null, hint?: OffsetHint | null): void {
     this.failEl.classList.toggle('on', reason !== null);
+    this.failHint?.remove();
+    this.failHint = null;
     if (reason) {
       this.failMsg.textContent = reason;
+      // 박자가 계속 어긋나서 실패했다면 바로 맞출 수 있게
+      this.failHint = offsetSuggestion(hint ?? null);
+      if (this.failHint) this.failEl.append(this.failHint);
       this.failEl.style.opacity = '0';
       setTimeout(() => (this.failEl.style.opacity = ''), 800);
     }
@@ -149,6 +171,9 @@ export class PlayScreen implements Screen, GameHud {
         h('button', { class: 'btn primary', onclick: () => g.resume() }, '계속'),
         h('button', { class: 'btn', onclick: () => (g.pause(), g.restart(true), this.setPaused(false)) }, '처음부터 다시 시작'),
         h('button', { class: 'btn', onclick: () => g.quit() }, this.opts.editorTest ? '에디터로' : '나가기'),
+        // 박자가 어긋나면 여기서 바로 (친 타이밍으로 본 추천 + 미세조정)
+        offsetSuggestion(g.offsetHint),
+        offsetNudger(),
         // 장식이 안 보일 때 원인을 바로 알 수 있게 (이 화면을 캡처하면 된다)
         g.hasDecorations ? h('div', { class: 'dim', style: 'font-size:11px;line-height:1.5;white-space:pre-wrap;text-align:left;margin-top:8px;max-width:80vw' }, g.diag().join('\n')) : null,
       ),
@@ -225,6 +250,7 @@ export class ResultScreen implements Screen {
               h('tr', null, h('td', null, '체크포인트 사용'), h('td', null, String(r.checkpointUses))),
               h('tr', null, h('td', null, '판정 난이도'), h('td', null, { lenient: '느슨함', normal: '보통', strict: '엄격' }[settings.difficulty])),
             ),
+            offsetSuggestion(r.offsetHint),
             h(
               'div',
               { class: 'row end' },

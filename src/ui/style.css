@@ -213,3 +213,4 @@ table.rank { width: 100%; border-collapse: collapse; }
 table.rank td { padding: 6px 8px; border-bottom: 1px solid var(--line); }
 table.rank td:last-child { text-align: right; color: var(--cool); }
 table.rank tr.me td { color: var(--warm); font-weight: 600; }
+.offset-hint, .offset-hint button { pointer-events: auto; }
