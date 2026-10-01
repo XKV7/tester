@@ -453,7 +453,8 @@ export class ScreenFx {
     // 잡음
     const nz = any('Grain', 'Static', 'VHS', 'EightiesTV', 'FiftiesTV') + 0.3 * k('Compression') + 0.5 * k('Glitch');
     if (nz > 0 && !reduce) {
-      this.noise.noise = Math.min(0.6, 0.18 * nz);
+      // 원작 잡음은 은은하다 (트랙이 묻히지 않게)
+      this.noise.noise = Math.min(0.35, 0.1 * nz);
       this.noise.seed = (timeSec * 7.31) % 1;
       out.push(this.noise);
     }
@@ -463,13 +464,13 @@ export class ScreenFx {
       const u = this.distort.u;
       const px = any('Pixelate', 'Compression', 'LED', 'PixelSnow') > 0 ? Math.max(k('Pixelate'), k('Compression') * 0.25, k('LED') * 0.8) : 0;
       u.uPixel = px > 0 ? 2 + 5 * Math.min(3, px) : 0;
-      u.uAberr = reduce ? 0 : Math.min(40, 6 * any('Aberration', 'VHS', 'EightiesTV', 'Handheld', 'Glitch') + (k('Aberration') > 0 ? 2 : 0));
-      u.uScan = reduce ? 0 : Math.min(1, 0.6 * any('Arcade', 'VHS', 'EightiesTV', 'FiftiesTV', 'LED'));
+      u.uAberr = reduce ? 0 : Math.min(24, 3 * any('Aberration', 'VHS', 'EightiesTV', 'Handheld', 'Glitch') + (k('Aberration') > 0 ? 1 : 0));
+      u.uScan = reduce ? 0 : Math.min(1, 0.4 * any('Arcade', 'VHS', 'EightiesTV', 'FiftiesTV', 'LED'));
       // 원작 어안(Fisheye)은 세기 50에서도 가장자리가 살짝 휘는 정도
       u.uFish = Math.min(1.5, k('Fisheye')) * 0.35;
       u.uPoster = k('Posterize') > 0 ? Math.max(2, 10 - 6 * Math.min(1, k('Posterize'))) : 0;
       u.uTime = timeSec;
-      u.uVig = Math.min(1, Math.max(k('Arcade'), 0.3 * k('Fisheye'), k('VHS'), k('EightiesTV'), k('FiftiesTV'), k('Vignette')) * 0.9);
+      u.uVig = Math.min(1, Math.max(k('Arcade'), 0.3 * k('Fisheye'), k('VHS'), k('EightiesTV'), k('FiftiesTV'), k('Vignette')) * 0.7);
       u.uWave = Math.min(3, k('Waves'));
       u.uGlitch = reduce ? 0 : Math.min(2, k('Glitch'));
       u.uHole[0] = k('HoleX');

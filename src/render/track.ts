@@ -60,9 +60,10 @@ export class TrackView {
   constructor(
     readonly chart: Chart,
     private readonly timeline: VisualTimeline | null,
-    opts: { editor?: boolean } = {},
+    opts: { editor?: boolean; outline?: boolean } = {},
   ) {
     this.editorMode = !!opts.editor;
+    this.outline = !!opts.outline;
     this.objs = new Array(chart.tiles.length);
     this.tileLayer.sortableChildren = true;
     this.container.addChild(this.tileLayer, this.selGfx, this.iconLayer, this.textLayer);
@@ -114,12 +115,22 @@ export class TrackView {
     this.pulses.set(i, now);
   }
 
+  /** 트랙 강조: 타일 밑에 어두운 그림자 테두리를 깔아 복잡한 배경 위에서도 또렷하게 */
+  private readonly outline: boolean;
+
   private make(i: number): TileObj {
     const t = this.chart.tiles[i];
     const root = new Container();
     const style = this.timeline ? this.timeline.tileStyle[i] : 0;
     let band: Graphics;
     let inner: Graphics | undefined;
+    if (this.outline) {
+      const sh = new Graphics(style === 0 ? bandContext(t.angleIn, t.angleOut, t.midspin) : blockContexts(t.angleIn, t.angleOut, t.midspin).outer);
+      sh.tint = 0x000000;
+      sh.alpha = 0.55;
+      sh.scale.set(1.16);
+      root.addChild(sh);
+    }
     if (style === 0) {
       band = new Graphics(bandContext(t.angleIn, t.angleOut, t.midspin));
       root.addChild(band);

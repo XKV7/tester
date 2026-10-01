@@ -59,6 +59,9 @@ const MOBILE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)
  * GPU 메모리가 모자라 그림이 통째로 안 그려지거나 화면이 꺼지므로 작게.
  */
 const MAX_TEX = MOBILE ? (lowGpu() ? 512 : 1024) : 4096;
+/** 화면을 크게 덮는 배경 그림은 휴대폰에서도 조금 크게 (흐릿하지 않게) — 동시에 이만큼까지만 */
+const MAX_TEX_BIG = MOBILE ? (lowGpu() ? 1024 : 2048) : 4096;
+const MAX_BIG = 6;
 
 /** 한 번 그래픽 메모리가 바닥나 화면이 꺼졌던 기기면 그림을 더 작게 */
 function lowGpu(): boolean {
@@ -116,6 +119,9 @@ export class DecorationView {
   private maskUsed = false;
   /** 픽셀 그대로 그릴 그림 이름 (원작 imageSmoothing 끔) */
   private readonly nearest = new Set<string>();
+  /** 배경처럼 크게 쓰는 그림 이름 · 지금 크게 올라가 있는 그림 */
+  private readonly bigNames = new Set<string>();
+  private readonly bigLoaded = new Set<string>();
 
   constructor(
     private readonly chart: Chart,
@@ -129,6 +135,9 @@ export class DecorationView {
       this.place(o, d.def.mask ?? null, d.def.depth ?? -1);
       this.objs.push(o);
       if (d.def.smooth === false && d.def.image) this.nearest.add(d.def.image);
+      // 크게 늘려 쓰는 그림 (배경): 원작 크기 300% 이상이거나 화면에 고정된 큰 그림
+      const sc = Math.max(Math.abs(d.def.scale?.[0] ?? 1), Math.abs(d.def.scale?.[1] ?? 1));
+      if (d.def.image && (sc >= 3 || (d.def.parallax && Math.min(d.def.parallax[0], d.def.parallax[1]) >= 0.5 && sc >= 1.5))) this.bigNames.add(d.def.image);
     }
   }
 
@@ -217,7 +226,9 @@ export class DecorationView {
         if (this.destroyed || this.tex.get(name) !== 'loading') return done();
         const w = img.naturalWidth;
         const h = img.naturalHeight;
-        const k = Math.min(1, MAX_TEX / Math.max(w, h, 1));
+        const big = this.bigNames.has(name) && this.bigLoaded.size < MAX_BIG;
+        if (big) this.bigLoaded.add(name);
+        const k = Math.min(1, (big ? MAX_TEX_BIG : MAX_TEX) / Math.max(w, h, 1));
         let t: Texture;
         if (k < 1) {
           // 너무 큰 그림은 줄여서 올리고, 그리는 크기는 원래대로
@@ -274,6 +285,7 @@ export class DecorationView {
       }
       t.destroy(true);
       this.tex.delete(name);
+      this.bigLoaded.delete(name);
       this.stats.loaded--;
       this.stats.unloaded++;
     }

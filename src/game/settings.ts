@@ -20,6 +20,8 @@ export interface UserSettings {
   fullscreen: boolean;
   /** 원작 맵은 원작 모니터 화면(16:9) 그대로만 보이게 (남는 곳은 검은 띠) */
   lockAspect: boolean;
+  /** 트랙·행성 강조 (그림자 테두리, 진한 행성) — 복잡한 배경에서도 잘 보이게 */
+  trackOutline: boolean;
 }
 
 const KEY = 'orbit.settings.v1';
@@ -48,6 +50,7 @@ export function defaultUserSettings(): UserSettings {
     fitWide: true,
     fullscreen: true,
     lockAspect: true,
+    trackOutline: true,
   };
 }
 

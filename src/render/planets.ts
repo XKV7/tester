@@ -7,12 +7,15 @@ export const COLOR_B = 0x3de0d0;
 /** 두 행성 + 공전 행성 꼬리 + 홀드 진행 호. */
 export class PlanetsView {
   readonly container = new Container();
-  readonly a = new Graphics(planetContext(COLOR_A));
-  readonly b = new Graphics(planetContext(COLOR_B));
+  readonly a: Graphics;
+  readonly b: Graphics;
   private readonly tail = new Graphics();
   private readonly arc = new Graphics();
 
-  constructor() {
+  /** bold: 트랙·행성 강조 (테두리, 진한 꼬리) */
+  constructor(private readonly bold = false) {
+    this.a = new Graphics(planetContext(COLOR_A, bold));
+    this.b = new Graphics(planetContext(COLOR_B, bold));
     this.container.addChild(this.tail, this.arc, this.a, this.b);
   }
 
@@ -43,7 +46,7 @@ export class PlanetsView {
     for (let k = 0; k < tailAngles.length; k++) {
       const tv = sv(tailAngles[k], radius);
       const f = 1 - (k + 1) / (tailAngles.length + 1);
-      this.tail.circle(pivot.x + tv.x, pivot.y + tv.y, PLANET_R * (0.35 + 0.55 * f)).fill({ color: col, alpha: 0.28 * f });
+      this.tail.circle(pivot.x + tv.x, pivot.y + tv.y, PLANET_R * (0.35 + 0.55 * f)).fill({ color: col, alpha: (this.bold ? 0.55 : 0.28) * f });
     }
 
     this.arc.clear();
