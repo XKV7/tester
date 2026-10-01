@@ -49,6 +49,7 @@ export const ACTION_TYPES: ActionType[] = [
   'Planets',
   'Screen',
   'Sound',
+  'JudgeRule',
 ];
 
 /** 게임 진행에 영향을 주는 이벤트 (나머지는 연출). */
@@ -341,6 +342,10 @@ function validateActionParams(a: Record<string, unknown>, type: ActionType, tile
     case 'Checkpoint':
     case 'Midspin':
       return null;
+    case 'JudgeRule': {
+      const ok = ['tooEarly', 'early', 'late', 'earlyPerfect', 'latePerfect'];
+      return Array.isArray(a.fail) && a.fail.every((x) => ok.includes(x as string)) ? null : `fail은 ${ok.join(', ')} 중 고른 목록이어야 합니다.`;
+    }
     case 'Pause':
     case 'Hold':
       return isNum(a.beats) && a.beats > 0 && a.beats <= MAX_EXTRA_BEATS ? null : `beats는 0보다 크고 ${MAX_EXTRA_BEATS} 이하인 숫자여야 합니다.`;

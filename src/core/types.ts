@@ -272,7 +272,14 @@ export type Action =
   | MoveDecorationsAction
   | PlanetsAction
   | ScreenAction
-  | SoundAction;
+  | SoundAction
+  | JudgeRuleAction;
+
+/** 이 타일부터 이 판정이 나오면 실패 (원작 대회용 SetConditionalEvents + 죽는 히트박스). 빈 목록 = 규칙 없음. */
+export interface JudgeRuleAction extends ActionBase {
+  type: 'JudgeRule';
+  fail: ('tooEarly' | 'early' | 'late' | 'earlyPerfect' | 'latePerfect')[];
+}
 
 export type ActionType = Action['type'];
 

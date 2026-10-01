@@ -35,6 +35,7 @@ export const ACTION_LABEL: Record<ActionType, string> = {
   Planets: '행성 크기·반지름',
   Screen: '화면 반복·흐름·잔상',
   Sound: '소리',
+  JudgeRule: '판정 규칙 (실패 조건)',
 };
 
 export const SCHEMA: Record<ActionType, Field[]> = {
@@ -143,6 +144,8 @@ export const SCHEMA: Record<ActionType, Field[]> = {
     { k: 'duration', label: '길이(박)', kind: 'num', optional: true, step: 0.5 },
     { k: 'ease', label: '이징', kind: 'ease', optional: true },
   ],
+  // 실패할 판정 목록은 원작 변환에서만 채운다 (에디터에서는 지우기만)
+  JudgeRule: [],
   Sound: [
     { k: 'hitsound', label: '타격음', kind: 'choice', optional: true, options: ['Kick', 'Hat', 'Snare', 'Clap', 'Sizzle', 'Chuck', 'Hammer', 'Shaker', 'None'] },
     { k: 'hitVolume', label: '타격음 크기', kind: 'num', optional: true, step: 0.1 },
@@ -187,6 +190,8 @@ export function defaultAction(type: ActionType, floor: number, finish: number): 
       return { floor, type, tile: [2, 2], duration: 0 };
     case 'Sound':
       return { floor, type, play: 'Clap', volume: 1 };
+    case 'JudgeRule':
+      return { floor, type, fail: ['tooEarly', 'early', 'late'] };
     default:
       return { floor, type } as Action;
   }
