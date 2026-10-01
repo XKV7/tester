@@ -1,26 +1,45 @@
+import { currentProfile, describeOutput, deviceOffsetMs, outputLatencyMs, saveDeviceProfile } from '../audio/device';
 import { audio } from '../audio/engine';
 import { Sfx } from '../audio/sfx';
 import { saveSettings, settings } from '../game/settings';
 import { ambient } from '../render/stage';
 import { h, show, type Screen } from './dom';
+import { offsetNudger } from './offsetUi';
 
-const BPM = 120;
-const TAPS = 16;
+// 블루투스 이어폰은 수백 ms 늦게 들리므로, 박 간격(800ms) 안에서 −150 ~ +650ms까지 잰다
+const BPM = 75;
 const BEAT = 60 / BPM;
+const EARLY_MS = 150;
+/** 끝내기 전 최소 탭 수 · 일정한지 보는 최근 탭 수 · 최대 탭 수 */
+const MIN_TAPS = 12;
+const WINDOW = 10;
+const MAX_TAPS = 32;
 
-/** 오프셋 보정: 메트로놈(소리) 또는 깜빡이는 원(화면)에 맞춰 16회 탭. */
+const median = (xs: number[]) => {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+/** 정확도 등급 (탭이 서로 얼마나 가까운지, 중앙값 절대 편차 ms) */
+const grade = (mad: number) => (mad < 8 ? 'A' : mad < 15 ? 'B' : mad < 25 ? 'C' : 'D');
+
+/**
+ * 오프셋 보정 (원작 방식): 행성이 박마다 반 바퀴 돌고 드럼이 울린다. 아무 때나 드럼 박자에 맞춰 탭하면
+ * 탭한 자리에 X가 찍히고, 탭이 일정해지면 알아서 끝나 지금 오디오 기기의 '기기 오프셋'으로 저장된다.
+ * 기기 오프셋은 판정과 화면을 함께 옮겨서, 화면을 따로 맞출 필요가 거의 없다.
+ */
 export class CalibrateScreen implements Screen {
-  private mode: 'audio' | 'visual' | 'sync' | null = null;
-  /** 직접 맞추기: 행성 그림판·오프셋 표시·다음에 예약할 박 */
-  private canvas: HTMLCanvasElement | null = null;
-  private syncBox!: HTMLElement;
-  private nextBeat = 0;
-  private errors: number[] = [];
+  private mode: 'tap' | 'check' | null = null;
+  private canvas!: HTMLCanvasElement;
   private status!: HTMLElement;
-  private taps!: HTMLElement;
+  private live!: HTMLElement;
   private result!: HTMLElement;
-  private circle!: HTMLElement;
+  private nudgeBox!: HTMLElement;
   private raf = 0;
+  /** 탭 오차 (ms, 엔진 시계 기준 — +면 늦게) 와 탭한 순간의 박 위치 */
+  private taps: { err: number; phase: number }[] = [];
+  private nextBeat = 0;
   private readonly eng = audio();
   private readonly sfx = new Sfx(this.eng);
   private key = (e: KeyboardEvent) => {
@@ -40,10 +59,11 @@ export class CalibrateScreen implements Screen {
 
   enter(root: HTMLElement): void {
     ambient(true);
-    this.status = h('div', { class: 'dim' }, '방식을 고르세요.');
-    this.taps = h('div', { class: 'taps' }, '');
-    this.result = h('div', { class: 'col', style: 'align-items:center' });
-    this.circle = h('div', { class: 'calib-circle' });
+    this.status = h('div', { style: 'text-align:center;max-width:560px;font-size:15px' });
+    this.live = h('div', { style: 'font-size:16px;font-weight:700;min-height:22px' });
+    this.result = h('div', { class: 'col', style: 'align-items:center;gap:8px' });
+    this.nudgeBox = h('div');
+    this.canvas = h('canvas', { width: 520, height: 360, style: 'width:min(520px,92vw);height:auto' }) as HTMLCanvasElement;
     root.append(
       h(
         'div',
@@ -56,195 +76,202 @@ export class CalibrateScreen implements Screen {
         ),
         h(
           'div',
-          { class: 'center-screen', style: 'position:relative;flex:1' },
-          h(
-            'div',
-            { class: 'row' },
-            h('button', { class: 'btn cool', onclick: () => this.begin('audio') }, '입력 보정 (소리)'),
-            h('button', { class: 'btn', onclick: () => this.begin('visual') }, '화면 보정 (깜빡임)'),
-            h('button', { class: 'btn primary', onclick: () => this.beginSync() }, '화면·소리 직접 맞추기'),
-          ),
-          (this.syncBox = h('div', { class: 'col', style: 'align-items:center;gap:8px' })),
-          this.circle,
+          { class: 'center-screen', style: 'position:relative;flex:1;gap:10px' },
           this.status,
-          this.taps,
+          this.canvas,
+          this.live,
           this.result,
           h(
             'div',
-            { class: 'dim', style: 'max-width:480px;text-align:center;font-size:13px' },
-            `현재 입력 오프셋 ${settings.inputOffset}ms · 화면 오프셋 ${settings.visualOffset}ms. ` +
-              '입력 보정은 120BPM 메트로놈 틱에, 화면 보정은 소리 없이 깜빡이는 원에 맞춰 아무 키나 16번 누르세요.',
+            { class: 'row' },
+            h('button', { class: 'btn primary', onclick: () => this.beginTap() }, '처음부터 보정'),
+            h('button', { class: 'btn', onclick: () => this.beginCheck() }, '맞는지 확인·미세조정'),
           ),
+          this.nudgeBox,
         ),
       ),
     );
     window.addEventListener('keydown', this.key);
     window.addEventListener('pointerdown', this.pointer);
+    void this.beginTap();
   }
 
-  private async begin(mode: 'audio' | 'visual'): Promise<void> {
+  /** 드럼이 울리는 동안 박마다 반 바퀴 도는 행성 (보정·확인 공통). */
+  private async startLoop(sound: boolean): Promise<void> {
     await this.eng.resume();
-    this.mode = mode;
-    this.syncBox.innerHTML = '';
-    this.canvas = null;
-    this.circle.style.display = '';
-    this.errors = [];
-    this.result.innerHTML = '';
     this.eng.cancelScheduled();
-    this.eng.play(null, -1, 1, 1, 0.05);
-    const total = TAPS + 8;
-    if (mode === 'audio') for (let k = 0; k < total; k++) this.sfx.tick(this.eng.ctxTimeForSong(k * BEAT), k % 4 === 0);
-    this.status.textContent = mode === 'audio' ? '틱 소리에 맞춰 누르세요 (처음 4박은 준비)' : '원이 밝아지는 순간에 누르세요 (처음 4박은 준비)';
-    this.taps.textContent = `0 / ${TAPS}`;
-    cancelAnimationFrame(this.raf);
-    const loop = () => {
-      const t = this.eng.songTime();
-      const ph = t / BEAT;
-      const frac = ph - Math.floor(ph);
-      this.circle.classList.toggle('on', this.mode === 'visual' && t >= 0 && frac < 0.12);
-      if (this.mode) this.raf = requestAnimationFrame(loop);
-    };
-    this.raf = requestAnimationFrame(loop);
-  }
-
-  /**
-   * 직접 맞추기: 게임처럼 행성이 박마다 다음 타일에 착지하고, 착지 순간 타격음이 난다.
-   * 행성이 닿는 순간과 소리가 같게 들릴 때까지 화면 오프셋을 조절한다 (바로 저장, 게임에 그대로 적용).
-   */
-  private async beginSync(): Promise<void> {
-    await this.eng.resume();
-    this.mode = 'sync';
-    this.circle.style.display = 'none';
-    this.errors = [];
-    this.result.innerHTML = '';
-    this.taps.textContent = '';
-    this.eng.cancelScheduled();
-    this.eng.play(null, -0.5, 1, 1, 0.05);
+    this.eng.play(null, -0.6, 1, 1, 0.05);
     this.nextBeat = 0;
-    this.status.textContent = '행성이 타일에 닿는 순간과 "딱" 소리가 같게 들리도록 조절하세요.';
-    const cv = h('canvas', { width: 640, height: 200, style: 'width:min(640px,92vw);height:auto;border-radius:10px;background:#0b0c14' }) as HTMLCanvasElement;
-    this.canvas = cv;
-    const val = h('div', { style: 'font-size:18px;font-weight:700' });
-    const show = () => {
-      val.textContent = `화면 오프셋 ${settings.visualOffset > 0 ? '+' : ''}${settings.visualOffset}ms`;
-    };
-    const step = (d: number) => {
-      settings.visualOffset = Math.max(-500, Math.min(500, settings.visualOffset + d));
-      saveSettings();
-      show();
-    };
-    show();
-    const btn = (label: string, d: number) => h('button', { class: 'btn small', onclick: () => step(d) }, label);
-    this.syncBox.innerHTML = '';
-    this.syncBox.append(
-      cv,
-      val,
-      h('div', { class: 'row' }, btn('−20', -20), btn('−5', -5), btn('+5', 5), btn('+20', 20), h('button', { class: 'btn small', onclick: () => step(-settings.visualOffset) }, '0으로')),
-      h(
-        'div',
-        { class: 'dim', style: 'max-width:520px;text-align:center;font-size:13px' },
-        '행성이 소리보다 먼저 닿으면 −, 소리보다 늦게 닿으면 + 쪽으로. 이어폰(특히 블루투스)을 쓸 때 다시 맞추세요. 값은 바로 저장되어 모든 맵에 적용됩니다.',
-      ),
-    );
     cancelAnimationFrame(this.raf);
     const loop = () => {
-      if (this.mode !== 'sync') return;
+      if (!this.mode) return;
       const t = this.eng.songTime();
-      // 타격음 예약 (게임과 같은 경로라 노래와 같은 지연)
-      while (this.nextBeat * BEAT < t + 0.3) {
-        if (this.nextBeat * BEAT > t - 0.02) this.sfx.hit(this.eng.ctxTimeForSong(this.nextBeat * BEAT), true);
-        this.nextBeat++;
+      if (sound) {
+        while (this.nextBeat * BEAT < t + 0.3) {
+          if (this.nextBeat * BEAT > t - 0.02) this.sfx.hit(this.eng.ctxTimeForSong(this.nextBeat * BEAT), true, 'kick');
+          this.nextBeat++;
+        }
       }
-      this.drawSync(t + settings.visualOffset / 1000);
+      this.draw(t);
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
   }
 
-  /** 곧게 뻗은 타일 위를 행성이 박마다 반 바퀴 돌아 다음 타일에 착지 (게임과 같은 계산). */
-  private drawSync(tr: number): void {
-    const cv = this.canvas;
-    const g = cv?.getContext('2d');
-    if (!cv || !g) return;
-    const W = cv.width;
-    const H = cv.height;
-    const L = 90; // 타일 간격 (px)
-    const ph = Math.max(0, tr / BEAT);
-    const k = Math.floor(ph);
-    const f = ph - k;
-    g.clearRect(0, 0, W, H);
-    // 카메라는 지금 축 타일 근처를 따라간다
-    const camX = (k + f) * L;
-    const cy = H / 2 + 20;
-    for (let i = k - 5; i <= k + 6; i++) {
-      const x = W / 2 + i * L - camX;
-      const lit = i === k + 1 && f > 0.9 ? 1 : i === k && f < 0.12 ? 1 - f / 0.12 : 0;
-      g.fillStyle = lit > 0 ? `rgba(255,255,255,${0.35 + 0.65 * lit})` : i <= k ? '#6e7aa8' : '#3a4166';
-      g.fillRect(x - L / 2 + 3, cy - 16, L - 6, 32);
-    }
-    const px = W / 2 + k * L - camX;
-    const ang = Math.PI * (1 - f); // 뒤쪽(왼쪽)에서 위로 돌아 앞(오른쪽) 타일에 착지
-    const ox = px + L * Math.cos(ang);
-    const oy = cy - L * Math.sin(ang);
-    const pivotA = k % 2 === 0;
-    g.fillStyle = pivotA ? '#ff8a3d' : '#3de0d0';
-    g.beginPath();
-    g.arc(px, cy, 13, 0, Math.PI * 2);
-    g.fill();
-    g.fillStyle = pivotA ? '#3de0d0' : '#ff8a3d';
-    g.beginPath();
-    g.arc(ox, oy, 13, 0, Math.PI * 2);
-    g.fill();
+  private async beginTap(): Promise<void> {
+    this.mode = 'tap';
+    this.taps = [];
+    this.result.innerHTML = '';
+    this.nudgeBox.innerHTML = '';
+    const p = currentProfile();
+    this.status.innerHTML = '';
+    this.status.append(
+      h('div', null, '드럼 박자에 맞춰 화면을 탭하세요 (아무 키나 눌러도 돼요). 아무 때나 시작해도 되고, 행성 위치는 신경 쓰지 마세요.'),
+      h('div', { class: 'dim', style: 'font-size:13px;margin-top:4px' }, `${describeOutput()} · ${p ? `저장된 기기 오프셋 ${p.offset}ms` : '이 기기는 아직 보정 전'}`),
+    );
+    this.live.textContent = '';
+    await this.startLoop(true);
+  }
+
+  /** 확인: 게임처럼 판정·화면에 기기 오프셋을 적용해 보여 준다 (행성이 드럼과 함께 닿으면 성공). */
+  private async beginCheck(): Promise<void> {
+    this.mode = 'check';
+    this.taps = [];
+    this.result.innerHTML = '';
+    this.status.textContent = '행성이 위·아래 점에 닿는 순간 드럼이 들리면 맞은 거예요. 어긋나 보이면 아래에서 미세조정하세요.';
+    this.live.textContent = '';
+    this.nudgeBox.innerHTML = '';
+    this.nudgeBox.append(offsetNudger());
+    await this.startLoop(true);
   }
 
   private tap(ts: number): void {
-    if (!this.mode || this.mode === 'sync') return;
-    let t = this.eng.songTimeAtPerf(ts);
-    if (this.mode === 'visual') t -= settings.inputOffset / 1000;
-    if (t < 4 * BEAT - BEAT / 2) return; // 준비 박
-    const nearest = Math.round(t / BEAT) * BEAT;
-    this.errors.push((t - nearest) * 1000);
-    this.taps.textContent = `${this.errors.length} / ${TAPS}`;
-    if (this.errors.length >= TAPS) this.finish();
+    if (this.mode !== 'tap') return;
+    const t = this.eng.songTimeAtPerf(ts);
+    if (t < 0) return;
+    // 가장 가까운 박이 아니라 '조금 이르거나 많이 늦은' 쪽으로 (늦게 들리는 기기를 잴 수 있게)
+    const k = Math.floor((t * 1000 + EARLY_MS) / (BEAT * 1000));
+    this.taps.push({ err: (t - k * BEAT) * 1000, phase: t / BEAT });
+    if (this.taps.length > MAX_TAPS) this.taps.shift();
+    const recent = this.taps.slice(-WINDOW).map((x) => x.err);
+    const m = median(recent);
+    const mad = median(recent.map((e) => Math.abs(e - m)));
+    this.live.textContent = `${Math.round(m)}밀리초`;
+    // 최근 탭이 고르면 끝 (너무 오래 걸리면 최대 탭 수에서)
+    if ((this.taps.length >= MIN_TAPS && mad < 25) || this.taps.length >= MAX_TAPS) this.finish(m, mad);
   }
 
-  private finish(): void {
-    const mode = this.mode as 'audio' | 'visual';
+  private finish(offset: number, mad: number): void {
     this.mode = null;
+    cancelAnimationFrame(this.raf);
     this.eng.stop();
     this.eng.cancelScheduled();
-    this.circle.classList.remove('on');
-    // 이상치 제거: 중앙값에서 가장 먼 4개 제외 후 평균
-    const med = [...this.errors].sort((a, b) => a - b)[this.errors.length >> 1];
-    const kept = [...this.errors].sort((a, b) => Math.abs(a - med) - Math.abs(b - med)).slice(0, this.errors.length - 4);
-    const mean = kept.reduce((a, b) => a + b, 0) / kept.length;
-    const sd = Math.sqrt(kept.reduce((a, b) => a + (b - mean) ** 2, 0) / kept.length);
-    const value = Math.round(mean);
-    const key = mode === 'audio' ? 'inputOffset' : 'visualOffset';
-    const label = mode === 'audio' ? '입력 오프셋' : '화면 오프셋';
-    this.status.textContent = `평균 오차 ${mean.toFixed(1)}ms (편차 ±${sd.toFixed(1)}ms)`;
-    this.taps.textContent = `제안 ${label}: ${value}ms`;
+    const g = grade(mad);
+    const prev = deviceOffsetMs();
+    saveDeviceProfile(offset, g);
+    // 예전에 따로 맞춰 둔 입력·화면 오프셋은 기기 오프셋에 들어갔으니 0으로
+    const hadFine = settings.inputOffset !== 0 || settings.visualOffset !== 0;
+    settings.inputOffset = 0;
+    settings.visualOffset = 0;
+    saveSettings();
+    this.draw(null);
+    this.status.innerHTML = '';
+    this.status.append(
+      h('div', { style: 'font-size:18px;font-weight:700' }, g === 'D' ? '보정했어요 (탭이 들쭉날쭉해요 — 다시 해 보세요)' : '좋아요!'),
+      h('div', null, `${describeOutput(outputLatencyMs())} 보정을 했어요.`),
+    );
+    this.live.textContent = `기기 오프셋 ${Math.round(offset)}밀리초 · 정확도 ${g} (X가 서로 가까운 정도)`;
     this.result.innerHTML = '';
     this.result.append(
       h(
         'div',
-        { class: 'row' },
-        h(
-          'button',
-          {
-            class: 'btn primary',
-            onclick: () => {
-              settings[key] = value;
-              saveSettings();
-              this.status.textContent = `${label}을(를) ${value}ms로 적용했습니다.`;
-              this.result.innerHTML = '';
-            },
-          },
-          '적용',
-        ),
-        h('button', { class: 'btn', onclick: () => this.begin(mode) }, '다시 측정'),
+        { class: 'dim', style: 'font-size:13px;text-align:center;max-width:520px' },
+        `이 값은 지금 오디오 기기(이어폰·스피커)에만 저장돼요 — 기기를 바꾸면 그 기기로 한 번 더 보정하세요. 다음부터는 기기가 바뀌면 알아서 그 기기의 값을 써요.` +
+          (prev !== 0 ? ` (이전 값 ${prev}ms)` : '') +
+          (hadFine ? ' 따로 맞춰 둔 입력·화면 오프셋은 0으로 되돌렸어요.' : ''),
       ),
     );
+  }
+
+  /** 행성 궤도와 탭 자리(X) 그리기. t가 null이면 결과 (X만). */
+  private draw(t: number | null): void {
+    const cv = this.canvas;
+    const g = cv.getContext('2d');
+    if (!g) return;
+    const W = cv.width;
+    const H = cv.height;
+    const cx = W / 2;
+    const cy = H / 2;
+    const R = 70;
+    g.clearRect(0, 0, W, H);
+    // 배경 원
+    g.strokeStyle = 'rgba(200,210,255,0.25)';
+    g.lineWidth = 1.5;
+    for (const r of [130, 175]) {
+      g.beginPath();
+      g.arc(cx, cy, r, 0, Math.PI * 2);
+      g.stroke();
+    }
+    // 궤도 (점선) 와 박 자리 (위·아래)
+    g.setLineDash([6, 6]);
+    g.strokeStyle = 'rgba(255,255,255,0.7)';
+    g.beginPath();
+    g.arc(cx, cy, R, 0, Math.PI * 2);
+    g.stroke();
+    g.setLineDash([]);
+    // 박이 위(0)·아래(1)에 오도록: 각도 = 박 위치 × 180°
+    const at = (phase: number) => {
+      const a = -Math.PI / 2 + phase * Math.PI;
+      return { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a) };
+    };
+    // 탭 자리 X (확인 모드에서는 생략)
+    if (this.mode !== 'check') {
+      g.strokeStyle = '#ffffff';
+      g.lineWidth = 2;
+      for (const tp of this.taps) {
+        const p = at(tp.phase);
+        g.beginPath();
+        g.moveTo(p.x - 5, p.y - 5);
+        g.lineTo(p.x + 5, p.y + 5);
+        g.moveTo(p.x + 5, p.y - 5);
+        g.lineTo(p.x - 5, p.y + 5);
+        g.stroke();
+      }
+      // 탭들의 평균 방향 (원작의 기울어진 점선)
+      if (this.taps.length >= 3) {
+        const m = median(this.taps.slice(-WINDOW).map((x) => x.err)) / 1000 / BEAT;
+        const a = -Math.PI / 2 + m * Math.PI;
+        g.setLineDash([2, 6]);
+        g.strokeStyle = 'rgba(255,255,255,0.6)';
+        g.beginPath();
+        g.moveTo(cx - 170 * Math.cos(a), cy - 170 * Math.sin(a));
+        g.lineTo(cx + 170 * Math.cos(a), cy + 170 * Math.sin(a));
+        g.stroke();
+        g.setLineDash([]);
+      }
+    } else {
+      // 확인: 박 자리 표시
+      g.fillStyle = 'rgba(255,255,255,0.8)';
+      for (const ph of [0, 1]) {
+        const p = at(ph);
+        g.beginPath();
+        g.arc(p.x, p.y, 4, 0, Math.PI * 2);
+        g.fill();
+      }
+    }
+    // 가운데 행성
+    g.fillStyle = '#bfe9ff';
+    g.beginPath();
+    g.arc(cx, cy, 16, 0, Math.PI * 2);
+    g.fill();
+    if (t === null) return;
+    // 도는 행성: 확인 모드는 게임처럼 기기 오프셋·화면 미세를 적용해 그린다
+    const tr = this.mode === 'check' ? t + (settings.visualOffset - deviceOffsetMs()) / 1000 : t;
+    const p = at(Math.max(0, tr) / BEAT);
+    g.fillStyle = '#ff5a5a';
+    g.beginPath();
+    g.arc(p.x, p.y, 15, 0, Math.PI * 2);
+    g.fill();
   }
 
   exit(): void {

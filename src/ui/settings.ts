@@ -2,6 +2,7 @@ import { audio } from '../audio/engine';
 import { Sfx } from '../audio/sfx';
 import type { JudgeDifficulty } from '../core/judge';
 import { saveSettings, settings, type UserSettings } from '../game/settings';
+import { currentProfile, describeOutput, deviceProfiles } from '../audio/device';
 import { ambient } from '../render/stage';
 import { CalibrateScreen } from './calibrate';
 import { h, show, type Screen } from './dom';
@@ -99,16 +100,17 @@ export class SettingsScreen implements Screen {
             diff,
             h('label', null, '플레이 속도'),
             h('label', { class: 'row' }, h('div', { style: 'width:140px' }, speedSelect()), h('span', { class: 'dim' }, '1이 아니면 기록 저장 안 함')),
-            h('label', null, '입력 오프셋'),
-            offset('inputOffset'),
-            h('label', null, '화면 오프셋'),
-            offset('visualOffset'),
             h('label', null, '오프셋 보정'),
             h(
               'div',
-              null,
-              h('button', { class: 'btn small cool', onclick: () => show(new CalibrateScreen(() => new SettingsScreen(this.back))) }, '보정 시작'),
+              { class: 'col', style: 'gap:4px' },
+              h('div', { class: 'row' }, h('button', { class: 'btn small cool', onclick: () => show(new CalibrateScreen(() => new SettingsScreen(this.back))) }, '보정 시작'), h('span', { class: 'dim' }, deviceSummary())),
+              h('span', { class: 'dim', style: 'font-size:12px' }, '이어폰·스피커마다 따로 저장돼요. 기기를 처음 쓸 때 한 번만 하면 돼요.'),
             ),
+            h('label', null, '입력 미세조정'),
+            offset('inputOffset'),
+            h('label', null, '화면 미세조정'),
+            offset('visualOffset'),
             h('label', null, '자동 타격음'),
             h('label', { class: 'row' }, toggle('autoHitSound'), h('span', { class: 'dim' }, '켜면 노래 박자에 딱 맞춰 재생 (끄면 누른 순간 재생 — 휴대폰 소리 지연만큼 어긋날 수 있음). 원작 맵은 항상 켜짐')),
             h('label', null, '판정 텍스트 표시'),
@@ -134,4 +136,11 @@ export class SettingsScreen implements Screen {
     ambient(false);
     window.removeEventListener('keydown', this.key);
   }
+}
+
+/** 지금 오디오 기기의 보정 상태 한 줄 */
+function deviceSummary(): string {
+  const p = currentProfile();
+  const n = deviceProfiles().length;
+  return p ? `지금 기기 오프셋 ${p.offset}ms (정확도 ${p.grade}) · 보정한 기기 ${n}개` : `${describeOutput()}: 아직 보정 전`;
 }
