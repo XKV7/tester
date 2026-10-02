@@ -53,15 +53,34 @@ interface Obj {
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
+/** 그림을 미리 해독 (decode가 없거나 실패하면 load 이벤트로) */
+function decoded(img: HTMLImageElement): Promise<void> {
+  if (typeof img.decode === 'function') {
+    return img.decode().catch(
+      () =>
+        new Promise<void>((res, rej) => {
+          if (img.complete) {
+            if (img.naturalWidth > 0) res();
+            else rej(new Error('load'));
+          } else {
+            img.onload = () => res();
+            img.onerror = () => rej(new Error('load'));
+          }
+        }),
+    );
+  }
+  return new Promise<void>((res, rej) => {
+    img.onload = () => res();
+    img.onerror = () => rej(new Error('load'));
+  });
+}
+
 const MOBILE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
 /**
  * GPU에 올릴 그림 최대 크기 (넘으면 줄여서 올린다). 휴대폰은 큰 그림 수십 장이 한꺼번에 보이면
  * GPU 메모리가 모자라 그림이 통째로 안 그려지거나 화면이 꺼지므로 작게.
  */
-const MAX_TEX = MOBILE ? (lowGpu() ? 512 : 1024) : lowGpu() ? 1024 : 2048;
-/** 화면을 크게 덮는 배경 그림은 휴대폰에서도 조금 크게 (흐릿하지 않게) — 동시에 이만큼까지만 */
-const MAX_TEX_BIG = MOBILE ? (lowGpu() ? 1024 : 2048) : lowGpu() ? 2048 : 4096;
-const MAX_BIG = 6;
+const MAX_TEX = MOBILE ? (lowGpu() ? 1024 : 2048) : lowGpu() ? 2048 : 4096;
 
 /** 한 번 그래픽 메모리가 바닥나 화면이 꺼졌던 기기면 그림을 더 작게 */
 function lowGpu(): boolean {
@@ -77,7 +96,7 @@ const MAX_LOADING = MOBILE ? 3 : 4;
  * 장식 그림이 GPU에서 차지해도 되는 총량 (바이트). 넘으면 화면에 안 보이는 그림부터 내리고, 그래도 모자라면 줄여서 올린다.
  * Phantigma 원작처럼 5000px 그림이 수십 장(합계 7억 화소)이면 PC에서도 그래픽 메모리가 넘쳐 WebGL이 꺼지고 타일까지 사라졌다.
  */
-const TEX_BUDGET = (MOBILE ? (lowGpu() ? 96 : 192) : lowGpu() ? 320 : 640) * 1024 * 1024;
+const TEX_BUDGET = (MOBILE ? (lowGpu() ? 128 : 256) : lowGpu() ? 384 : 768) * 1024 * 1024;
 /** 예산 때문에 줄일 때도 이보다 작게는 줄이지 않는다 (긴 변, px) */
 const MIN_SIDE = 256;
 /** 이만큼(ms) 안 보인 그림은 GPU에서 내린다 (다시 보이면 새로 불러온다) */
@@ -113,6 +132,19 @@ export class DecorationView {
   /** 올린 그림이 GPU에서 차지하는 바이트 */
   private readonly texBytes = new Map<Texture, number>();
   private gpuBytes = 0;
+  /** 장식 그림이 GPU에서 차지하는 양 (MB, 진단용) */
+  get textureMB(): number {
+    return this.gpuBytes / 1048576;
+  }
+  /** 그림 원본의 긴 변 (px) */
+  private readonly nativeSide = new Map<string, number>();
+  /** 이번에 화면에서 필요한 긴 변 (px, 화면 픽셀 기준) — 이만큼만 올리면 원본과 똑같이 보인다 */
+  private readonly needSide = new Map<string, number>();
+  /** 더 큰 해상도로 다시 올리는 중인 그림 */
+  private readonly upgrading = new Set<string>();
+  private lastUpgrade = 0;
+  /** 월드 1단위가 화면에서 몇 픽셀인가 (카메라 확대·화면 해상도 포함) */
+  private pxPerWorld = 1;
   private readonly queue: string[] = [];
   private loading = 0;
   private lastSweep = 0;
@@ -130,8 +162,6 @@ export class DecorationView {
   /** 픽셀 그대로 그릴 그림 이름 (원작 imageSmoothing 끔) */
   private readonly nearest = new Set<string>();
   /** 배경처럼 크게 쓰는 그림 이름 · 지금 크게 올라가 있는 그림 */
-  private readonly bigNames = new Set<string>();
-  private readonly bigLoaded = new Set<string>();
 
   constructor(
     private readonly chart: Chart,
@@ -145,9 +175,6 @@ export class DecorationView {
       this.place(o, d.def.mask ?? null, d.def.depth ?? -1);
       this.objs.push(o);
       if (d.def.smooth === false && d.def.image) this.nearest.add(d.def.image);
-      // 크게 늘려 쓰는 그림 (배경): 원작 크기 300% 이상이거나 화면에 고정된 큰 그림
-      const sc = Math.max(Math.abs(d.def.scale?.[0] ?? 1), Math.abs(d.def.scale?.[1] ?? 1));
-      if (d.def.image && (sc >= 3 || (d.def.parallax && Math.min(d.def.parallax[0], d.def.parallax[1]) >= 0.5 && sc >= 1.5))) this.bigNames.add(d.def.image);
     }
   }
 
@@ -232,50 +259,124 @@ export class DecorationView {
         this.loading--;
         this.pump();
       };
-      img.onload = () => {
+      const ok = () => {
         if (this.destroyed || this.tex.get(name) !== 'loading') return done();
-        const w = img.naturalWidth;
-        const h = img.naturalHeight;
-        const big = this.bigNames.has(name) && this.bigLoaded.size < MAX_BIG;
-        if (big) this.bigLoaded.add(name);
-        let k = Math.min(1, (big ? MAX_TEX_BIG : MAX_TEX) / Math.max(w, h, 1));
-        // 그래픽 메모리 예산: 안 보이는 그림부터 내리고, 그래도 모자라면 이 그림을 줄인다
-        const want = w * h * 4 * k * k;
-        if (this.gpuBytes + want > TEX_BUDGET) this.evict(this.gpuBytes + want - TEX_BUDGET, performance.now());
-        const room = TEX_BUDGET - this.gpuBytes;
-        if (want > room) {
-          const minK = Math.min(1, MIN_SIDE / Math.max(w, h, 1));
-          k = Math.max(minK, k * Math.sqrt(Math.max(0, room) / want));
-        }
-        let t: Texture;
-        if (k < 1) {
-          // 너무 큰 그림은 줄여서 올리고, 그리는 크기는 원래대로
-          const cv = document.createElement('canvas');
-          cv.width = Math.max(1, Math.round(w * k));
-          cv.height = Math.max(1, Math.round(h * k));
-          cv.getContext('2d')?.drawImage(img, 0, 0, cv.width, cv.height);
-          t = Texture.from(cv);
-          if (this.nearest.has(name)) t.source.scaleMode = 'nearest';
-          this.texFactor.set(t, w / cv.width);
-          this.stats.shrunk++;
-          this.addBytes(t, cv.width * cv.height * 4);
-        } else {
-          t = Texture.from(img);
-          if (this.nearest.has(name)) t.source.scaleMode = 'nearest';
-          this.addBytes(t, w * h * 4);
-        }
+        const t = this.build(name, img);
         this.tex.set(name, t);
         this.stats.loaded++;
         done();
       };
-      img.onerror = () => {
+      const fail = () => {
         this.tex.set(name, null);
         this.stats.failed++;
         if (this.stats.failedNames.length < 20) this.stats.failedNames.push(name);
         done();
       };
       img.src = url;
+      // 그림 해독은 미리 (처음 그릴 때 해독하면 큰 그림에서 화면이 멈칫한다)
+      decoded(img).then(ok, fail);
     }
+  }
+
+  /**
+   * 해독한 그림을 GPU에 올린다. 화면에서 실제로 보이는 크기(needSide)만큼만 — 5000px 그림도 화면에 1500px로 보이면
+   * 그 해상도면 원본과 똑같이 보인다. 그래픽 메모리 예산을 넘으면 안 보이는 그림부터 내리고, 그래도 모자라면 줄인다.
+   */
+  private build(name: string, img: HTMLImageElement, minSide = 0): Texture {
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    const side = Math.max(w, h, 1);
+    this.nativeSide.set(name, side);
+    const need = this.needSide.get(name);
+    const target = Math.max(minSide, need !== undefined ? need * 1.15 : side, MIN_SIDE);
+    let k = Math.min(1, MAX_TEX / side, target / side);
+    const want = w * h * 4 * k * k;
+    if (this.gpuBytes + want > TEX_BUDGET) this.evict(this.gpuBytes + want - TEX_BUDGET, performance.now());
+    const room = TEX_BUDGET - this.gpuBytes;
+    if (want > room) {
+      const minK = Math.min(1, MIN_SIDE / side);
+      k = Math.max(minK, k * Math.sqrt(Math.max(0, room) / want));
+    }
+    let t: Texture;
+    if (k < 0.999) {
+      // 줄여서 올리고, 그리는 크기는 원래대로
+      const cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(w * k));
+      cv.height = Math.max(1, Math.round(h * k));
+      const g = cv.getContext('2d');
+      if (g) {
+        g.imageSmoothingQuality = 'high';
+        g.drawImage(img, 0, 0, cv.width, cv.height);
+      }
+      t = Texture.from(cv);
+      this.texFactor.set(t, w / cv.width);
+      this.stats.shrunk++;
+      this.addBytes(t, cv.width * cv.height * 4);
+    } else {
+      t = Texture.from(img);
+      this.addBytes(t, w * h * 4);
+    }
+    if (this.nearest.has(name)) t.source.scaleMode = 'nearest';
+    return t;
+  }
+
+  /** 지금 올린 해상도가 화면에 필요한 것보다 많이 낮으면 (확대됨) 원본에서 더 크게 다시 올린다. */
+  private upgrade(now: number): void {
+    if (now - this.lastUpgrade < 400) return;
+    this.lastUpgrade = now;
+    for (const [name, t] of this.tex) {
+      if (!t || t === 'loading' || this.upgrading.has(name)) continue;
+      const nat = this.nativeSide.get(name);
+      const need = this.needSide.get(name);
+      if (!nat || need === undefined) continue;
+      const cur = Math.max(t.width, t.height);
+      const goal = Math.min(nat, MAX_TEX, need * 1.15);
+      if (cur >= nat - 1 || cur >= goal * 0.7) continue;
+      if (this.gpuBytes > TEX_BUDGET * 0.95) continue;
+      const url = this.urlOf(name);
+      if (!url) continue;
+      this.upgrading.add(name);
+      const img = new Image();
+      img.src = url;
+      decoded(img).then(
+        () => {
+          this.upgrading.delete(name);
+          const old = this.tex.get(name);
+          if (this.destroyed || !old || old === 'loading') return;
+          this.swap(name, old, this.build(name, img, goal));
+        },
+        () => this.upgrading.delete(name),
+      );
+      return; // 한 번에 한 장씩
+    }
+  }
+
+  /** 같은 그림의 새 텍스처로 바꾸고 예전 것은 내린다 (장식은 다음 프레임에 새 텍스처를 받는다). */
+  private swap(name: string, old: Texture, t: Texture): void {
+    this.tex.set(name, t);
+    for (const o of this.objs) {
+      if (o.image === name && (o.node instanceof Sprite || o.node instanceof TilingSprite)) {
+        o.node.texture = Texture.EMPTY;
+        o.image = null;
+      }
+      if (o.ps) {
+        const oldCells = this.cells.get(old);
+        const sheet = o.ps.def.sheet && (o.ps.def.sheet[0] > 1 || o.ps.def.sheet[1] > 1) ? o.ps.def.sheet : null;
+        for (const q of o.ps.live) {
+          if (q.s.texture === old || (oldCells && oldCells.includes(q.s.texture))) q.s.texture = sheet ? this.cell(t, sheet[0], sheet[1]) : t;
+        }
+        for (const sp of o.ps.pool) if (sp.texture === old || (oldCells && oldCells.includes(sp.texture))) sp.texture = Texture.EMPTY;
+      }
+    }
+    this.texFactor.delete(old);
+    this.gpuBytes -= this.texBytes.get(old) ?? 0;
+    this.texBytes.delete(old);
+    const cl = this.cells.get(old);
+    if (cl) {
+      for (const c of cl) c.destroy();
+      this.cells.delete(old);
+    }
+    old.destroy(true);
   }
 
   private addBytes(t: Texture, b: number): void {
@@ -323,6 +424,15 @@ export class DecorationView {
         o.image = null;
       }
     }
+    for (const o of this.objs) {
+      if (!o.ps) continue;
+      for (const name of dropped) {
+        const t = this.tex.get(name) as Texture;
+        const cl = this.cells.get(t);
+        for (const q of o.ps.live) if (q.s.texture === t || (cl && cl.includes(q.s.texture))) q.s.texture = Texture.EMPTY;
+        for (const sp of o.ps.pool) if (sp.texture === t || (cl && cl.includes(sp.texture))) sp.texture = Texture.EMPTY;
+      }
+    }
     for (const name of dropped) {
       const t = this.tex.get(name) as Texture;
       this.texFactor.delete(t);
@@ -335,7 +445,6 @@ export class DecorationView {
       }
       t.destroy(true);
       this.tex.delete(name);
-      this.bigLoaded.delete(name);
       this.stats.loaded--;
       this.stats.unloaded++;
     }
@@ -344,10 +453,14 @@ export class DecorationView {
   /**
    * camX, camY: 카메라 중심 (화면 좌표, y 아래쪽). camRot: 카메라 회전 (도). time: 곡 시각 (초, 입자 시뮬레이션용).
    */
-  update(camX: number, camY: number, camRot: number, time?: number, camZoom = 1): void {
+  update(camX: number, camY: number, camRot: number, time?: number, camZoom = 1, pxPerWorld = 1): void {
     const decos = this.tl.decos;
     const now = performance.now();
+    this.pxPerWorld = pxPerWorld;
     this.sweep(now);
+    this.upgrade(now);
+    // 화면에 필요한 해상도는 이번 프레임에 보이는 장식으로 새로 잰다 (줄어들면 다음에 올릴 때만 반영)
+    const need = new Map<string, number>();
     this.maskUsed = false;
     const rc = degToRad(camRot);
     const cos = Math.cos(-rc);
@@ -447,6 +560,11 @@ export class DecorationView {
       if (o.ps) {
         // 입자 묶음: 색은 입자마다, 크기 배율은 장식 크기
         node.scale.set(sx, sy);
+        if (d.image) {
+          const grow = o.ps.def.sizeLife ? Math.max(1, o.ps.def.sizeLife[0], o.ps.def.sizeLife[1]) : 1;
+          const px = TILE_LEN * o.ps.def.size[1] * grow * Math.max(Math.abs(sx), Math.abs(sy)) * this.pxPerWorld;
+          need.set(d.image, Math.max(need.get(d.image) ?? 0, px));
+        }
         continue;
       }
       if (node instanceof Sprite || node instanceof TilingSprite || node instanceof Text || node instanceof Graphics) node.tint = d.color;
@@ -455,11 +573,17 @@ export class DecorationView {
         const tw = (node.texture.width || 1) * f;
         const th = (node.texture.height || 1) * f;
         node.scale.set(DECO_PX * sx * f, DECO_PX * sy * f);
+        if (d.image) {
+          const nat = this.nativeSide.get(d.image) ?? 4096;
+          const px = nat * DECO_PX * Math.max(Math.abs(sx), Math.abs(sy)) * this.pxPerWorld;
+          need.set(d.image, Math.max(need.get(d.image) ?? 0, Math.min(nat, px)));
+        }
         if (def.pivot) node.anchor.set(0.5 - def.pivot[0] / (tw * DECO_PX), 0.5 + def.pivot[1] / (th * DECO_PX));
       } else {
         node.scale.set(sx, sy);
       }
     }
+    for (const [k, v] of need) this.needSide.set(k, v);
   }
 
   /** 입자 한 묶음 진행: 방출·이동·수명. */
