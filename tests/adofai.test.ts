@@ -518,6 +518,23 @@ describe('극단적인 BPM (Hello (BPM) 류)', () => {
     expect(second.disappear).toBe('fade');
   });
 
+  it('음수 angleOffset은 그만큼 먼저 (시작 플래시 순서)', () => {
+    const r = level({
+      pathData: 'RRRR',
+      actions: [
+        { floor: 1, eventType: 'Flash', duration: 2, startColor: '000000', startOpacity: 100, endColor: '000000', endOpacity: 0, angleOffset: 0 },
+        { floor: 1, eventType: 'Flash', duration: 2, startColor: '000000', startOpacity: 0, endColor: '000000', endOpacity: 100, angleOffset: -360 },
+      ],
+    });
+    expect(validateLevel(r.level).ok).toBe(true);
+    const ch = compileChart(r.level);
+    const fl = ch.visual.filter((v) => v.action.type === 'Flash');
+    expect(fl[0].time).toBeLessThan(fl[1].time);
+    const tl = new VisualTimeline(ch);
+    tl.update(ch.tiles[1].time + 5);
+    expect(tl.flashAlpha).toBeLessThan(0.01);
+  });
+
   it('글자 장식의 서식 태그는 뗀다', () => {
     const r = level({ pathData: 'RRR', actions: [], decorations: [{ floor: 1, eventType: 'AddText', decText: 'Play <color="red">No miss</color> <b>now</b> 1<2', tag: 't' }] });
     expect(r.level.decorations![0].text).toBe('Play No miss now 1<2');

@@ -566,8 +566,18 @@ export class ScreenFx {
     const col = (half(16) << 16) | (half(8) << 8) | half(0);
     // 배율이 낮으면 세기와 퍼짐을 함께 줄인다 (퍼짐은 절반까지만)
     const spread = 0.5 + 0.5 * Math.min(1, scale);
-    this.glow.set(Math.max(0.7, bloom.threshold), (1.1 + 0.5 * b) * scale, col, (26 + 10 * Math.min(2, b)) * spread * (this.screenH / 720));
+    // 문턱을 직접 정한 레벨(0보다 큼)은 원작처럼 화면 전체에 (배경·구름까지 빛난다 — Plum - Timeline)
+    const wide = this.bloomWide(bloom);
+    const thr = wide ? Math.max(0.45, bloom.threshold) : Math.max(0.7, bloom.threshold);
+    // 화면 전체일 때는 밝은 구름이 넓게 빛나므로 세기를 줄인다 (원작 녹화와 맞춤)
+    const k = wide ? 0.6 + 0.25 * b : 1.1 + 0.5 * b;
+    this.glow.set(thr, k * scale, col, (26 + 10 * Math.min(2, b)) * spread * (this.screenH / 720));
     return [this.glow];
+  }
+
+  /** 빛 번짐을 화면 전체(배경 포함)에 거는가: 레벨이 문턱을 0보다 크게 정했을 때. 문턱 0은 모든 것이 빛나 화면이 뿌옇게 떠서 트랙 층만. */
+  bloomWide(bloom: BloomState): boolean {
+    return bloom.threshold > 0.001;
   }
 
   /** 날씨 입자 그리기 (화면 크기 w×h, dt 초). */
