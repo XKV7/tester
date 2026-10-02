@@ -354,9 +354,11 @@ export class VisualTimeline {
     const cfg = this.tileAnim[i];
     if (!cfg) return null;
     const tile = this.chart.tiles[i];
-    const beat = 60 / tile.bpm;
+    // 원작 beatsAhead·beatsBehind는 곡 시작 BPM의 박 기준 (빨라진 구간에서도 같은 시간만큼 미리 보인다).
+    // 타일의 BPM으로 재면 8배속 동타 구간(Phantigma)에서 바로 앞 몇 타일만 보였다.
+    const beat = 60 / (this.chart.level.settings.bpm || tile.bpm);
     const out: TileAnimResult = { alpha: 1, scale: 1, dx: 0, dy: 0, rot: 0 };
-    const len = Math.min(0.35, beat); // 애니메이션 길이 (초)
+    const len = Math.min(0.35, 60 / tile.bpm, beat); // 애니메이션 길이 (초)
     const seed = Math.sin(i * 12.9898) * 43758.5453;
     const rx = (seed - Math.floor(seed)) * 2 - 1;
     const ry = ((seed * 7.13) % 1 + 1) % 1 * 2 - 1;
