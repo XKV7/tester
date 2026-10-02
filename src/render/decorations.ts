@@ -58,9 +58,9 @@ const MOBILE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)
  * GPU에 올릴 그림 최대 크기 (넘으면 줄여서 올린다). 휴대폰은 큰 그림 수십 장이 한꺼번에 보이면
  * GPU 메모리가 모자라 그림이 통째로 안 그려지거나 화면이 꺼지므로 작게.
  */
-const MAX_TEX = MOBILE ? (lowGpu() ? 512 : 1024) : 4096;
+const MAX_TEX = MOBILE ? (lowGpu() ? 512 : 1024) : lowGpu() ? 1024 : 2048;
 /** 화면을 크게 덮는 배경 그림은 휴대폰에서도 조금 크게 (흐릿하지 않게) — 동시에 이만큼까지만 */
-const MAX_TEX_BIG = MOBILE ? (lowGpu() ? 1024 : 2048) : 4096;
+const MAX_TEX_BIG = MOBILE ? (lowGpu() ? 1024 : 2048) : lowGpu() ? 2048 : 4096;
 const MAX_BIG = 6;
 
 /** 한 번 그래픽 메모리가 바닥나 화면이 꺼졌던 기기면 그림을 더 작게 */
@@ -72,7 +72,14 @@ function lowGpu(): boolean {
   }
 }
 /** 한꺼번에 해독하는 그림 수 (휴대폰에서 수십 장을 동시에 풀면 메모리가 튄다) */
-const MAX_LOADING = MOBILE ? 3 : 8;
+const MAX_LOADING = MOBILE ? 3 : 4;
+/**
+ * 장식 그림이 GPU에서 차지해도 되는 총량 (바이트). 넘으면 화면에 안 보이는 그림부터 내리고, 그래도 모자라면 줄여서 올린다.
+ * Phantigma 원작처럼 5000px 그림이 수십 장(합계 7억 화소)이면 PC에서도 그래픽 메모리가 넘쳐 WebGL이 꺼지고 타일까지 사라졌다.
+ */
+const TEX_BUDGET = (MOBILE ? (lowGpu() ? 96 : 192) : lowGpu() ? 320 : 640) * 1024 * 1024;
+/** 예산 때문에 줄일 때도 이보다 작게는 줄이지 않는다 (긴 변, px) */
+const MIN_SIDE = 256;
 /** 이만큼(ms) 안 보인 그림은 GPU에서 내린다 (다시 보이면 새로 불러온다) */
 const UNLOAD_AFTER_MS = MOBILE ? 4000 : 20000;
 
@@ -103,6 +110,9 @@ export class DecorationView {
   private readonly texFactor = new Map<Texture, number>();
   /** 그림 이름 → 마지막으로 화면에 쓴 시각 (performance.now) */
   private readonly lastUsed = new Map<string, number>();
+  /** 올린 그림이 GPU에서 차지하는 바이트 */
+  private readonly texBytes = new Map<Texture, number>();
+  private gpuBytes = 0;
   private readonly queue: string[] = [];
   private loading = 0;
   private lastSweep = 0;
@@ -228,7 +238,15 @@ export class DecorationView {
         const h = img.naturalHeight;
         const big = this.bigNames.has(name) && this.bigLoaded.size < MAX_BIG;
         if (big) this.bigLoaded.add(name);
-        const k = Math.min(1, (big ? MAX_TEX_BIG : MAX_TEX) / Math.max(w, h, 1));
+        let k = Math.min(1, (big ? MAX_TEX_BIG : MAX_TEX) / Math.max(w, h, 1));
+        // 그래픽 메모리 예산: 안 보이는 그림부터 내리고, 그래도 모자라면 이 그림을 줄인다
+        const want = w * h * 4 * k * k;
+        if (this.gpuBytes + want > TEX_BUDGET) this.evict(this.gpuBytes + want - TEX_BUDGET, performance.now());
+        const room = TEX_BUDGET - this.gpuBytes;
+        if (want > room) {
+          const minK = Math.min(1, MIN_SIDE / Math.max(w, h, 1));
+          k = Math.max(minK, k * Math.sqrt(Math.max(0, room) / want));
+        }
         let t: Texture;
         if (k < 1) {
           // 너무 큰 그림은 줄여서 올리고, 그리는 크기는 원래대로
@@ -240,9 +258,11 @@ export class DecorationView {
           if (this.nearest.has(name)) t.source.scaleMode = 'nearest';
           this.texFactor.set(t, w / cv.width);
           this.stats.shrunk++;
+          this.addBytes(t, cv.width * cv.height * 4);
         } else {
           t = Texture.from(img);
           if (this.nearest.has(name)) t.source.scaleMode = 'nearest';
+          this.addBytes(t, w * h * 4);
         }
         this.tex.set(name, t);
         this.stats.loaded++;
@@ -258,6 +278,11 @@ export class DecorationView {
     }
   }
 
+  private addBytes(t: Texture, b: number): void {
+    this.texBytes.set(t, b);
+    this.gpuBytes += b;
+  }
+
   /** 한동안 안 쓴 그림을 GPU에서 내린다 (그 그림을 쓰던 장식은 다시 보일 때 새로 불러온다). */
   private sweep(now: number): void {
     if (now - this.lastSweep < 1000) return;
@@ -268,7 +293,30 @@ export class DecorationView {
       if (now - (this.lastUsed.get(name) ?? 0) < UNLOAD_AFTER_MS) continue;
       (dropped ??= new Set()).add(name);
     }
-    if (!dropped) return;
+    if (dropped) this.drop(dropped);
+  }
+
+  /** 예산을 넘을 때: 지금 화면에 안 쓰이는 그림을 오래된 것부터 need 바이트만큼 내린다. */
+  private evict(need: number, now: number): void {
+    const cand: [string, number, number][] = [];
+    for (const [name, t] of this.tex) {
+      if (!t || t === 'loading') continue;
+      const last = this.lastUsed.get(name) ?? 0;
+      if (now - last < 500) continue; // 지금 보이는 그림은 두고
+      cand.push([name, last, this.texBytes.get(t) ?? 0]);
+    }
+    cand.sort((a, b) => a[1] - b[1]);
+    const out = new Set<string>();
+    let freed = 0;
+    for (const [name, , b] of cand) {
+      if (freed >= need) break;
+      out.add(name);
+      freed += b;
+    }
+    if (out.size) this.drop(out);
+  }
+
+  private drop(dropped: Set<string>): void {
     for (const o of this.objs) {
       if (o.image && dropped.has(o.image) && (o.node instanceof Sprite || o.node instanceof TilingSprite)) {
         o.node.texture = Texture.EMPTY;
@@ -278,6 +326,8 @@ export class DecorationView {
     for (const name of dropped) {
       const t = this.tex.get(name) as Texture;
       this.texFactor.delete(t);
+      this.gpuBytes -= this.texBytes.get(t) ?? 0;
+      this.texBytes.delete(t);
       const cl = this.cells.get(t);
       if (cl) {
         for (const c of cl) c.destroy();
@@ -356,21 +406,25 @@ export class DecorationView {
       const px = (def.position?.[0] ?? 0) + d.ox;
       const py = (def.position?.[1] ?? 0) + d.oy;
       // 크기는 절대값 (타임라인이 장식 정의 크기에서 시작)
+      const rel = def.relativeTo ?? 'tile';
+      // 원작 줌: 카메라에 붙은 장식은 카메라와 함께 커지고 작아져 화면에서 그대로 보이고(위치도),
+      // lockScale이면 반대로 월드 크기를 지킨다. 월드 장식은 lockScale일 때만 화면 크기를 지킨다.
+      // (Phantigma 장면 전환 사각형: 줌아웃 상태에서 원래 계산이면 화면 밖으로 못 빠져 화면을 계속 덮었다)
+      const zk = camZoom > 0 ? 1 / camZoom : 1;
       let sx = d.sx;
       let sy = d.sy;
-      if (def.lockScale && camZoom > 0) {
-        sx /= camZoom;
-        sy /= camZoom;
+      if (rel === 'camera' ? !def.lockScale : def.lockScale) {
+        sx *= zk;
+        sy *= zk;
       }
       const rot = (def.rotation ?? 0) + d.rot;
-      const rel = def.relativeTo ?? 'tile';
       let x: number;
       let y: number;
       let r = -degToRad(rot);
       if (rel === 'camera') {
         // 화면에 붙음: 카메라 회전만큼 되돌려 월드에 놓는다
-        const vx = px;
-        const vy = -py;
+        const vx = px * zk;
+        const vy = -py * zk;
         x = camX + vx * cos - vy * sin;
         y = camY + vx * sin + vy * cos;
         r -= rc;
@@ -392,7 +446,7 @@ export class DecorationView {
       node.alpha = isMask ? 1 : d.opacity * d.calpha;
       if (o.ps) {
         // 입자 묶음: 색은 입자마다, 크기 배율은 장식 크기
-        node.scale.set(d.sx, d.sy);
+        node.scale.set(sx, sy);
         continue;
       }
       if (node instanceof Sprite || node instanceof TilingSprite || node instanceof Text || node instanceof Graphics) node.tint = d.color;
@@ -499,11 +553,13 @@ export class DecorationView {
     const sheet = tex && p.sheet && (p.sheet[0] > 1 || p.sheet[1] > 1) ? p.sheet : null;
     s.texture = tex ? (sheet ? this.cell(tex, sheet[0], sheet[1]) : tex) : Texture.WHITE;
     const size = rand(p.size[0], p.size[1]);
-    // 그림이 없으면 작은 흰 사각형. 칸으로 나눈 그림은 한 칸이 원래 그림 크기로 보이게
-    const base = tex ? DECO_PX : TILE_LEN * 0.08;
-    const k = base * size * (tex ? (this.texFactor.get(tex) ?? 1) : 1 / Math.max(1, s.texture.width));
-    const bx = k * (sheet ? sheet[0] : 1);
-    const by = k * (sheet ? sheet[1] : 1);
+    // 원작 입자 크기는 그림 픽셀 크기와 상관없이 길이 단위 (1 = 타일 하나, 그림의 긴 변 기준).
+    // 그림 크기를 곱하면 1024px 빛 그림 입자가 화면 수십 배로 커져 화면이 하얗게 덮였다 (Phantigma).
+    // 그림이 없으면 작은 흰 사각형.
+    const side = Math.max(1, s.texture.width, s.texture.height);
+    const k = tex ? (TILE_LEN * size) / side : (TILE_LEN * 0.08 * size) / side;
+    const bx = k;
+    const by = k;
     s.scale.set(bx, by);
     const area = p.area ?? [0, 0];
     let x = (Math.random() - 0.5) * area[0];
