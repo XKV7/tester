@@ -1,6 +1,6 @@
 import { beatMs, beatPhaseAt, compileChart, orbiterAngle, resumeTime, type Chart } from '../core/chart';
 import { advances, DIFFICULTY_MULT, JUDGE_COLOR, JUDGE_LABEL, judgeError, judgeWindows, MIN_FAR_MS, OverloadTracker, type Judgment } from '../core/judge';
-import { TILE_LEN } from '../core/math';
+import { dirSign, TILE_LEN } from '../core/math';
 import { analyzeOffsets, type OffsetHint } from '../core/offset';
 import { PlayStats } from '../core/stats';
 import { cameraCenter, VisualTimeline, type FilterState } from '../core/timeline';
@@ -114,7 +114,13 @@ export class Game {
   private orbiterPos = { x: 0, y: 0 };
   /** 카메라가 따라가는 행성 위치 (화면 좌표) — 이것만 부드럽게 따라가고, 오프셋·줌·회전·타일 기준은 원작 이징 그대로. */
   private camPivot = { x: 0, y: 0 };
-  private tickerFn = () => this.frame();
+  private tickerFn = () => {
+    const t = performance.now();
+    this.frame();
+    this.frameCpu = performance.now() - t;
+  };
+  /** 지난 프레임 계산 시간 (ms, 진단용) */
+  private frameCpu = 0;
   private visHandler = () => {
     if (document.hidden && this.state === 'playing') this.pause();
   };
@@ -648,7 +654,9 @@ export class Game {
     const holdProgress = this.hold ? (tr - this.hold.start) / (this.hold.release - this.hold.start) : null;
     const aIsPivot = vcur % 2 === 0;
     if (this.state !== 'failed') {
-      this.orbiterPos = this.planets.update(pivot, angle, TILE_LEN * tl.planetRadius, this.state === 'cleared' ? [] : tail, aIsPivot, holdProgress);
+      // 행성 3개: 셋째 행성은 공전 행성의 60° 뒤를 따라 돈다
+      const third = tile.planets === 3 && this.state !== 'cleared' ? angle - dirSign(tile.dir) * 60 : null;
+      this.orbiterPos = this.planets.update(pivot, angle, TILE_LEN * tl.planetRadius, this.state === 'cleared' ? [] : tail, aIsPivot, holdProgress, third);
     }
 
     const cam = tl.camera;
@@ -686,6 +694,19 @@ export class Game {
       stage.setBackFilters(backFs);
       backN = backFs.length;
     }
+    // 자동 시험용: 이번 프레임에 걸린 필터·보이는 장식 수 (성능 비교)
+    const vis = (c: { children: { visible: boolean }[] }) => c.children.reduce((n, ch) => n + (ch.visible ? 1 : 0), 0);
+    (window as unknown as { __orbitStats?: unknown }).__orbitStats = {
+      screen: screenFs.map((f) => f.constructor.name),
+      world: worldFs.length,
+      back: backN,
+      mirror: tl.mirrors,
+      quality: stage.qualityLevel,
+      decos: vis(this.deco.behind) + vis(this.deco.front),
+      tiles: this.track.visibleCount,
+      frameMs: +this.frameCpu.toFixed(2),
+      renderMs: +stage.renderMs.toFixed(2),
+    };
     // 느린 기기면 필터 해상도부터 자동으로 낮춘다 (진행 중일 때만 잰다)
     if (this.state === 'playing') stage.adaptQuality(stage.app.ticker.deltaMS, worldFs.length + screenFs.length + backN > 0);
     this.screenFx.drawWeather(tl.filters, stage.width, stage.height, dt, reduce);

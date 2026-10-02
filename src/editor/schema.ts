@@ -36,6 +36,7 @@ export const ACTION_LABEL: Record<ActionType, string> = {
   Screen: '화면 반복·흐름·잔상',
   Sound: '소리',
   JudgeRule: '판정 규칙 (실패 조건)',
+  MultiPlanet: '행성 수 (2·3)',
 };
 
 export const SCHEMA: Record<ActionType, Field[]> = {
@@ -146,6 +147,7 @@ export const SCHEMA: Record<ActionType, Field[]> = {
   ],
   // 실패할 판정 목록은 원작 변환에서만 채운다 (에디터에서는 지우기만)
   JudgeRule: [],
+  MultiPlanet: [{ k: 'planets', label: '행성 수 (2 또는 3)', kind: 'int' }],
   Sound: [
     { k: 'hitsound', label: '타격음', kind: 'choice', optional: true, options: ['Kick', 'Hat', 'Snare', 'Clap', 'Sizzle', 'Chuck', 'Hammer', 'Shaker', 'None'] },
     { k: 'hitVolume', label: '타격음 크기', kind: 'num', optional: true, step: 0.1 },
@@ -192,6 +194,8 @@ export function defaultAction(type: ActionType, floor: number, finish: number): 
       return { floor, type, play: 'Clap', volume: 1 };
     case 'JudgeRule':
       return { floor, type, fail: ['tooEarly', 'early', 'late'] };
+    case 'MultiPlanet':
+      return { floor, type, planets: 3 };
     default:
       return { floor, type } as Action;
   }

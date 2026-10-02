@@ -50,6 +50,8 @@ export class TrackView {
   private readonly selGfx = new Graphics();
   private objs: (TileObj | undefined)[];
   private visible = new Set<number>();
+  /** 이번 프레임에 보인 타일 수 (진단용) */
+  visibleCount = 0;
   private pulses = new Map<number, number>();
   private readonly editorMode: boolean;
   /** floor → 아이콘 종류 (객체는 화면에 들어올 때 생성). */
@@ -290,6 +292,7 @@ export class TrackView {
       }
     }
     this.visible = nowVisible;
+    this.visibleCount = nowVisible.size;
 
     this.selGfx.clear();
     if (u.selected !== undefined && u.selected >= 0 && u.selected < tiles.length) {

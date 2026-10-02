@@ -43,6 +43,8 @@ export interface ChartTile {
   midspin: boolean;
   checkpoint: boolean;
   twirl: boolean;
+  /** 행성 수 (3이면 셋째 행성이 공전 행성 60° 뒤를 따른다) */
+  planets: 2 | 3;
   speed: 'up' | 'down' | null;
   text: string | null;
   /** 누적 박 (첫 타일 기준). */
@@ -82,6 +84,7 @@ export function compileChart(level: LevelData): Chart {
   let bpm = settings.bpm;
   let time = settings.offset;
   let beatPos = 0;
+  let planets: 2 | 3 = 2;
 
   for (let i = 0; i < n; i++) {
     let twirl = false;
@@ -115,10 +118,14 @@ export function compileChart(level: LevelData): Chart {
         case 'Text':
           text = a.text;
           break;
+        case 'MultiPlanet':
+          planets = a.planets;
+          break;
       }
     }
     const isFinish = i === n - 1;
-    const start = normDeg(entryAngle(path, i));
+    // 행성 3개: 다음에 내릴 행성이 진행 방향으로 60° 앞에서 출발한다 (원작: 곧은 길 = 120°)
+    const start = normDeg(entryAngle(path, i) + (planets === 3 && i > 0 ? dirSign(dir) * 60 : 0));
     const target = isFinish ? start : normDeg(path[i]);
     const theta = isFinish ? 0 : rotationTheta(start, target, dir, midspin);
     if (isFinish) {
@@ -152,6 +159,7 @@ export function compileChart(level: LevelData): Chart {
       midspin,
       checkpoint,
       twirl,
+      planets,
       speed: bpm > prevBpm + 1e-9 ? 'up' : bpm < prevBpm - 1e-9 ? 'down' : null,
       text,
       beatPos,

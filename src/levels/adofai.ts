@@ -1104,7 +1104,12 @@ export function convertAdofai(text: string): AdofaiResult {
         vis(a);
         break;
       }
-      case 'MultiPlanet':
+      case 'MultiPlanet': {
+        const pl = str(e.planets);
+        if (pl === 'ThreePlanets' || pl === 'TwoPlanets') actions.push({ floor, type: 'MultiPlanet', planets: pl === 'ThreePlanets' ? 3 : 2 });
+        else bump(approx, type);
+        break;
+      }
       case 'FreeRoam':
       case 'FreeRoamTwirl':
       case 'FreeRoamRemove':
@@ -1149,7 +1154,7 @@ export function convertAdofai(text: string): AdofaiResult {
   if (approx.size)
     warnings.push(
       `원작과 다르게 동작할 수 있는 이벤트: ${[...approx].map(([k, n]) => `${k} ${n}개`).join(', ')}. ` +
-        (approx.has('MultiPlanet') || approx.has('FreeRoam') ? '행성 3개·자유 이동 구간은 박이 원작과 다릅니다.' : ''),
+        (approx.has('MultiPlanet') || approx.has('FreeRoam') ? '행성 4개 이상·자유 이동 구간은 박이 원작과 다릅니다.' : ''),
     );
   if (skipped.size || ignoredDecor)
     warnings.push(

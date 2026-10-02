@@ -3,12 +3,16 @@ import { planetContext, PLANET_R, sv } from './shapes';
 
 export const COLOR_A = 0xff8a3d;
 export const COLOR_B = 0x3de0d0;
+/** 셋째 행성 (원작 MultiPlanet 3개) */
+export const COLOR_C = 0x8be36b;
 
 /** 두 행성 + 공전 행성 꼬리 + 홀드 진행 호. */
 export class PlanetsView {
   readonly container = new Container();
   readonly a: Graphics;
   readonly b: Graphics;
+  /** 셋째 행성 — 행성 3개 구간에서만 보인다 */
+  readonly c: Graphics;
   private readonly tail = new Graphics();
   private readonly arc = new Graphics();
 
@@ -16,7 +20,9 @@ export class PlanetsView {
   constructor(private readonly bold = false) {
     this.a = new Graphics(planetContext(COLOR_A, bold));
     this.b = new Graphics(planetContext(COLOR_B, bold));
-    this.container.addChild(this.tail, this.arc, this.a, this.b);
+    this.c = new Graphics(planetContext(COLOR_C, bold));
+    this.c.visible = false;
+    this.container.addChild(this.tail, this.arc, this.c, this.a, this.b);
   }
 
   /**
@@ -32,7 +38,14 @@ export class PlanetsView {
     tailAngles: number[],
     aIsPivot: boolean,
     holdProgress: number | null,
+    /** 셋째 행성 각도 (행성 3개 구간, 아니면 null) */
+    third: number | null = null,
   ): { x: number; y: number } {
+    this.c.visible = third !== null;
+    if (third !== null) {
+      const tv = sv(third, radius);
+      this.c.position.set(pivot.x + tv.x, pivot.y + tv.y);
+    }
     const v = sv(angle, radius);
     const orb = { x: pivot.x + v.x, y: pivot.y + v.y };
     const pv = aIsPivot ? this.a : this.b;
@@ -75,6 +88,7 @@ export class PlanetsView {
   setSize(k: number): void {
     this.a.scale.set(k);
     this.b.scale.set(k);
+    this.c.scale.set(k);
   }
 
   setAlpha(a: number, b: number): void {

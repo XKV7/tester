@@ -54,6 +54,7 @@ export const ACTION_TYPES: ActionType[] = [
   'Screen',
   'Sound',
   'JudgeRule',
+  'MultiPlanet',
 ];
 
 /** 게임 진행에 영향을 주는 이벤트 (나머지는 연출). */
@@ -64,6 +65,7 @@ export const GAMEPLAY_ACTIONS: ReadonlySet<ActionType> = new Set([
   'Midspin',
   'Pause',
   'Hold',
+  'MultiPlanet',
 ]);
 
 export function defaultMeta(): LevelMeta {
@@ -346,6 +348,8 @@ function validateActionParams(a: Record<string, unknown>, type: ActionType, tile
     case 'Checkpoint':
     case 'Midspin':
       return null;
+    case 'MultiPlanet':
+      return a.planets === 2 || a.planets === 3 ? null : 'planets는 2 또는 3이어야 합니다.';
     case 'JudgeRule': {
       const ok = ['tooEarly', 'early', 'late', 'earlyPerfect', 'latePerfect'];
       return Array.isArray(a.fail) && a.fail.every((x) => ok.includes(x as string)) ? null : `fail은 ${ok.join(', ')} 중 고른 목록이어야 합니다.`;
