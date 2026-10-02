@@ -105,6 +105,10 @@ uniform vec2 uTile;
 uniform vec2 uScroll;
 uniform vec4 uHole;
 uniform float uDark;
+uniform float uSharp;
+uniform float uManga;
+uniform vec3 uAura;
+uniform float uPlasma;
 
 vec2 toTex(vec2 s) { return s * uOutputFrame.zw * uInputSize.zw; }
 vec4 samp(vec2 s) { return texture(uTexture, clamp(toTex(s), uInputClamp.xy, uInputClamp.zw)); }
@@ -134,6 +138,14 @@ void main() {
     // 가운데는 살짝만 어둡게 (검은 원판은 원작에선 배경 그림 쪽)
     holeShade = mix(0.75, 1.0, smoothstep(rad * 0.3, rad * 0.7, r));
   }
+  // 출렁이는 기운 (원작 Vision_Aura): 가운데에서 퍼지는 물결 굴절
+  if (uAura.x > 0.0) {
+    vec2 d = s - 0.5;
+    float r = length(d);
+    s += d / max(r, 1e-3) * sin(r * 40.0 - uTime * (1.0 + uAura.y * 4.0)) * 0.004 * uAura.x;
+  }
+  // 플라스마는 화면도 살짝 일렁인다
+  if (uPlasma > 0.0) s += vec2(sin(s.y * 11.0 + uTime * 1.3), cos(s.x * 9.0 - uTime)) * 0.005 * uPlasma;
   // 물결 (원작 Waves): 가로로 출렁
   if (uWave > 0.0) s.x += sin(s.y * 24.0 + uTime * 5.0) * 0.008 * uWave;
   // 글리치: 가로 띠 몇 줄이 순간적으로 옆으로 밀린다
@@ -153,6 +165,12 @@ void main() {
     c = vec4(samp(s + o).r, m.g, samp(s - o).b, m.a);
   } else {
     c = samp(s);
+  }
+  // 선명하게 (원작 Sharpen): 둘레와의 차이를 키워 윤곽을 세운다
+  if (uSharp > 0.0) {
+    vec2 px = 1.0 / uOutputFrame.zw;
+    vec3 n = samp(s + vec2(px.x, 0.0)).rgb + samp(s - vec2(px.x, 0.0)).rgb + samp(s + vec2(0.0, px.y)).rgb + samp(s - vec2(0.0, px.y)).rgb;
+    c.rgb = clamp(c.rgb + (c.rgb * 4.0 - n) * uSharp * 0.5, 0.0, 1.0);
   }
   // 빛 번짐: 주변의 밝은 부분을 모아 더한다 (원작 Bloom 근사)
   if (uBloom > 0.0) {
@@ -193,6 +211,31 @@ void main() {
     float fall = smoothstep(0.9, 0.05, r);
     float dm = clamp(band * fall * uDark, 0.0, 1.0);
     c.rgb = c.rgb * (1.0 - 0.75 * dm) + vec3(0.35, 0.1, 0.55) * pow(band, 6.0) * fall * 0.6 * uDark;
+  }
+  // 출렁이는 기운의 가장자리 색 (원작 Aura 색)
+  if (uAura.x > 0.0) {
+    float e = smoothstep(0.25, 0.75, length(s0 - 0.5));
+    c.rgb = mix(c.rgb, vec3(uAura.z), e * min(1.0, uAura.x) * 0.35);
+  }
+  // 플라스마 (원작 Vision_Plasma): 대리석처럼 일렁이는 명암 무늬 (색은 바꾸지 않는다)
+  if (uPlasma > 0.0) {
+    vec2 q = s0 * vec2(uOutputFrame.z / uOutputFrame.w, 1.0) * 5.0;
+    float t = uTime * 0.6;
+    float v = sin(q.x + t) + sin(q.y * 0.8 - t) + sin((q.x + q.y) * 0.6 + t * 1.3) + sin(length(q - 2.5) * 1.5 - t);
+    float band = 0.5 + 0.5 * sin(v * 2.4);
+    c.rgb = mix(c.rgb, c.rgb * (0.75 + 0.5 * band) + vec3(0.06 * band), uPlasma * 0.6);
+  }
+  // 만화 집중선 번쩍임 (원작 Manga_FlashWhite): 가운데로 모이는 흰 선
+  if (uManga > 0.0) {
+    vec2 d = (s0 - 0.5) * vec2(uOutputFrame.z / uOutputFrame.w, 1.0);
+    float a = atan(d.y, d.x) / 6.2831853 + 0.5;
+    float fa = a * 260.0;
+    float id = floor(fa);
+    float rnd = fract(sin(id * 91.7 + floor(uTime * 12.0) * 13.1) * 43758.5);
+    // 가는 선 (칸 가운데만), 가운데 쪽은 비운다
+    float thin = 1.0 - smoothstep(0.08, 0.3, abs(fract(fa) - 0.5));
+    float line = step(0.5, rnd) * thin * smoothstep(0.22 + 0.25 * rnd, 0.75, length(d));
+    c.rgb = mix(c.rgb, vec3(1.0), clamp(line * uManga * 0.8, 0.0, 1.0));
   }
   finalColor = c;
 }`;
@@ -237,12 +280,16 @@ class DistortFilter extends Filter {
           uGlitch: { value: 0, type: 'f32' },
           uHole: { value: new Float32Array([0.5, 0.5, 0.3, 0]), type: 'vec4<f32>' },
           uDark: { value: 0, type: 'f32' },
+          uSharp: { value: 0, type: 'f32' },
+          uManga: { value: 0, type: 'f32' },
+          uAura: { value: new Float32Array([0, 0, 0]), type: 'vec3<f32>' },
+          uPlasma: { value: 0, type: 'f32' },
         }),
       },
     });
   }
-  get u(): Record<string, number> & { uBloomCol: Float32Array; uTile: Float32Array; uScroll: Float32Array; uHole: Float32Array } {
-    return (this.resources.fx as { uniforms: Record<string, number> & { uBloomCol: Float32Array; uTile: Float32Array; uScroll: Float32Array; uHole: Float32Array } }).uniforms;
+  get u(): Record<string, number> & { uBloomCol: Float32Array; uTile: Float32Array; uScroll: Float32Array; uHole: Float32Array; uAura: Float32Array } {
+    return (this.resources.fx as { uniforms: Record<string, number> & { uBloomCol: Float32Array; uTile: Float32Array; uScroll: Float32Array; uHole: Float32Array; uAura: Float32Array } }).uniforms;
   }
 }
 
@@ -409,6 +456,9 @@ export class ScreenFx {
     apply(NIGHT, k('NightVision'));
     const con = any('Contrast', 'Sharpen', 'EdgeBlackLine', 'Drawing');
     if (con > 0) m = mul(m, contrast(1 + 0.8 * Math.min(2, con)));
+    // 대비 배율 (원작 Color_Contrast): 1 = 그대로, 0 = 회색
+    const ca = fs.get('ContrastAdj');
+    if (ca && Math.abs(ca.intensity - 1) > 0.005) m = mul(m, contrast(Math.max(0, Math.min(3, ca.intensity))));
     const neon = Math.max(k('Neon'), 0.4 * any('Arcade', 'LED'));
     if (neon > 0) m = mul(m, saturation(1 + 0.8 * Math.min(2, neon)));
     const funk = k('Funk');
@@ -478,6 +528,12 @@ export class ScreenFx {
       u.uHole[2] = Math.max(0.01, k('HoleSize'));
       u.uHole[3] = Math.min(3, k('Hole'));
       u.uDark = Math.min(2, k('DarkMatter'));
+      u.uSharp = Math.min(4, k('SharpenX'));
+      u.uManga = reduce ? 0 : Math.min(1, k('MangaFlash'));
+      u.uAura[0] = Math.min(3, k('Aura'));
+      u.uAura[1] = k('AuraSpeed');
+      u.uAura[2] = k('AuraTint');
+      u.uPlasma = Math.min(1, k('Plasma'));
       // 0에 가까운 반복 횟수는 화면이 한 점으로 모이므로 막는다
       const tl = (v: number) => (Math.abs(v) < 0.05 ? (v < 0 ? -0.05 : 0.05) : v);
       u.uTile[0] = tl(screen.tile[0]);
@@ -490,7 +546,7 @@ export class ScreenFx {
       u.uBloomCol[0] = ((bloom.color >> 16) & 255) / 255;
       u.uBloomCol[1] = ((bloom.color >> 8) & 255) / 255;
       u.uBloomCol[2] = (bloom.color & 255) / 255;
-      if (u.uPixel > 0 || u.uAberr > 0 || u.uScan > 0 || u.uFish > 0 || u.uPoster > 0 || u.uVig > 0 || u.uBloom > 0 || u.uWave > 0 || u.uGlitch > 0 || u.uHole[3] > 0 || u.uDark > 0 || tiled) out.push(this.distort);
+      if (u.uPixel > 0 || u.uAberr > 0 || u.uScan > 0 || u.uFish > 0 || u.uPoster > 0 || u.uVig > 0 || u.uBloom > 0 || u.uWave > 0 || u.uGlitch > 0 || u.uHole[3] > 0 || u.uDark > 0 || u.uSharp > 0 || u.uManga > 0 || u.uAura[0] > 0 || u.uPlasma > 0 || tiled) out.push(this.distort);
     }
     return out;
   }

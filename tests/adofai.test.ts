@@ -449,6 +449,45 @@ describe('극단적인 BPM (Hello (BPM) 류)', () => {
     expect(f('Hole')?.intensity).toBeGreaterThan(0);
   });
 
+  it('확장 필터 속성값으로 세기 · 배경 층 · 가속 · 새 필터', () => {
+    const r = level({
+      pathData: 'RRRR',
+      actions: [
+        { floor: 1, eventType: 'SetFilterAdvanced', filter: 'CameraFilterPack_Blur_Movie', enabled: true, filterProperties: '"filter_Radius": 0, "filter_Factor": 0' },
+        { floor: 1, eventType: 'SetFilterAdvanced', filter: 'CameraFilterPack_TV_PlanetMars', enabled: true, filterProperties: '"filter_Fade": 5' },
+        { floor: 1, eventType: 'SetFilterAdvanced', filter: 'CameraFilterPack_Atmosphere_Rain', enabled: true, filterProperties: '"filter_Fade": 0, "filter_Intensity": 50' },
+        { floor: 2, eventType: 'SetFilterAdvanced', filter: 'CameraFilterPack_Vision_Plasma', enabled: true, plane: 'Background', duration: 4, ease: 'OutCirc', filterProperties: '"filter_Intensity": 50' },
+        { floor: 2, eventType: 'SetFilterAdvanced', filter: 'CameraFilterPack_Color_Contrast', enabled: true, filterProperties: '"filter_Contrast": -100' },
+        { floor: 3, eventType: 'SetFilterAdvanced', filter: 'CameraFilterPack_Sharpen_Sharpen', enabled: true, filterProperties: '"filter_Value": 50000' },
+      ],
+    });
+    const f = (n: string) => r.level.actions.find((a) => a.type === 'Filter' && a.filter === n) as Record<string, unknown> | undefined;
+    expect(f('Blur')?.intensity).toBe(0);
+    expect(f('Sepia')?.intensity).toBeCloseTo(0.05);
+    expect(f('Rain')?.intensity).toBe(0);
+    expect(f('Plasma')).toMatchObject({ intensity: 0.5, plane: 'back', ease: 'outQuad' });
+    expect(f('ContrastAdj')?.intensity).toBe(0);
+    expect(f('SharpenX')?.intensity).toBe(4);
+    expect(validateLevel(r.level).ok).toBe(true);
+    const tl = new VisualTimeline(compileChart(r.level));
+    tl.update(1e6);
+    expect(tl.filters.get('bg:Plasma')?.intensity).toBeCloseTo(0.5);
+    expect(tl.filters.has('Plasma')).toBe(false);
+  });
+
+  it('MoveCamera 기준을 비워 두면 타일 기준을 이어 쓴다 (이 이벤트의 타일)', () => {
+    const r = level({
+      pathData: 'RRRRRR',
+      actions: [
+        { floor: 1, eventType: 'MoveCamera', duration: 0, relativeTo: 'Tile', position: [0, 0] },
+        { floor: 4, eventType: 'MoveCamera', duration: 1, position: [null, 3] },
+        { floor: 5, eventType: 'MoveCamera', duration: 1, zoom: 150 },
+      ],
+    });
+    const cams = r.level.actions.filter((a) => a.type === 'Camera') as { floor: number; relativeTo?: string; tile?: number }[];
+    expect(cams.map((c) => [c.relativeTo, c.tile])).toEqual([['tile', 1], ['tile', 4], [undefined, undefined]]);
+  });
+
   it('글자 장식의 서식 태그는 뗀다', () => {
     const r = level({ pathData: 'RRR', actions: [], decorations: [{ floor: 1, eventType: 'AddText', decText: 'Play <color="red">No miss</color> <b>now</b> 1<2', tag: 't' }] });
     expect(r.level.decorations![0].text).toBe('Play No miss now 1<2');

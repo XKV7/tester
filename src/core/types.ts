@@ -90,7 +90,7 @@ export interface FlashAction extends ActionBase {
   duration?: number;
 }
 /** 타일 모양: orbit(기본, 둥근 띠) · standard(채움 + 어두운 테두리) · neon(어두운 속 + 밝은 테두리, 밟으면 환하게) · basic(단색). */
-export type TrackStyle = 'orbit' | 'standard' | 'neon' | 'basic';
+export type TrackStyle = 'orbit' | 'standard' | 'neon' | 'basic' | 'neonlight';
 export interface RecolorTrackAction extends ActionBase {
   type: 'RecolorTrack';
   from: number;
@@ -154,6 +154,9 @@ export interface FilterAction extends ActionBase {
   /** 켜면서 다른 필터를 모두 끔. */
   exclusive?: boolean;
   duration?: number;
+  ease?: EaseName;
+  /** 'back' = 배경 층(배경·트랙 뒤 장식)에만 (원작 plane: Background) */
+  plane?: 'back';
 }
 /** 빛 번짐 (원작 Bloom). intensity 0~(대략)2. */
 export interface BloomAction extends ActionBase {

@@ -252,6 +252,13 @@ export class TrackView {
           o.inner!.tint = lerpColor(scaleColor(base, 0.12), W, Math.max(flash * 0.7, lit * 0.3));
           break;
         }
+        case 4: {
+          // neonlight: 밝은 속 + 흰 빛 테두리 (원작 NeonLight)
+          const lit = passed ? (tl ? tl.tileLit[i] : 1) : 0;
+          o.band.tint = lerpColor(base, W, 0.7 + 0.3 * Math.max(lit, flash));
+          o.inner!.tint = lerpColor(scaleColor(base, bright), W, Math.max(flash * 0.7, lit * 0.5));
+          break;
+        }
         case 3: {
           // basic: 단색, 지나간 타일은 하얗게
           const lit = passed ? (tl ? tl.tileLit[i] : 1) : 0;

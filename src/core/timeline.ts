@@ -85,7 +85,7 @@ export interface TileAnimResult {
 const PLAYER: CameraAnchor = { kind: 'player' };
 
 /** 타일 모양 번호 ↔ 이름. */
-export const TRACK_STYLES: TrackStyle[] = ['orbit', 'standard', 'neon', 'basic'];
+export const TRACK_STYLES: TrackStyle[] = ['orbit', 'standard', 'neon', 'basic', 'neonlight'];
 
 interface ActiveAnim {
   ev: TimedAction;
@@ -625,20 +625,22 @@ export class VisualTimeline {
         };
       }
       case 'Filter': {
-        if (a.exclusive) for (const k of [...this.filters.keys()]) if (k !== a.filter) this.filters.delete(k);
-        const chan = 'filter:' + a.filter;
+        // 배경 층 필터는 'bg:' 이름으로 따로 (화면 전체 필터와 겹치지 않게)
+        const key = a.plane === 'back' ? 'bg:' + a.filter : a.filter;
+        if (a.exclusive) for (const k of [...this.filters.keys()]) if (k !== key) this.filters.delete(k);
+        const chan = 'filter:' + key;
         this.active = this.active.filter((x) => x.chan !== chan);
         // 밝기는 1이 '변화 없음'
         const neutral = FILTER_NEUTRAL_ONE.has(a.filter) ? 1 : 0;
-        const cur = this.filters.get(a.filter)?.intensity ?? neutral;
+        const cur = this.filters.get(key)?.intensity ?? neutral;
         const target = a.enabled ? (a.intensity ?? 1) : neutral;
         return {
           ev,
           chan,
           apply: (p) => {
-            const v = lerp(cur, target, p);
-            if (p >= 1 && target === neutral) this.filters.delete(a.filter);
-            else this.filters.set(a.filter, { intensity: v });
+            const v = lerp(cur, target, ease(a.ease as EaseName | undefined, p));
+            if (p >= 1 && target === neutral) this.filters.delete(key);
+            else this.filters.set(key, { intensity: v });
           },
         };
       }

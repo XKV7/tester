@@ -61,6 +61,10 @@ export class Stage {
   app!: Application;
   readonly bg = new Container();
   readonly world = new Container();
+  /** 트랙 뒤 장식을 따로 둘 월드 (카메라는 world와 같게) — 배경 층 필터(원작 plane: Background)용 */
+  readonly backWorld = new Container();
+  /** 배경 + backWorld (배경 층 필터를 여기에 건다) */
+  private readonly backPlane = new Container();
   /** world를 감싸는 변환 없는 층 — 화면 좌표 필터(빛 번짐)를 여기에 건다 */
   private readonly worldWrap = new Container();
   readonly overlay = new Container();
@@ -128,7 +132,8 @@ export class Stage {
     this.app.canvas.addEventListener('webglcontextrestored', () => (this.contextLost = false));
     this.bg.addChild(this.moteGfx, this.bgFlash);
     this.worldWrap.addChild(this.world);
-    this.app.stage.addChild(this.bg, this.worldWrap, this.overlay);
+    this.backPlane.addChild(this.bg, this.backWorld);
+    this.app.stage.addChild(this.backPlane, this.worldWrap, this.overlay);
     this.overlay.addChild(this.screenLayer, this.flash);
     for (let i = 0; i < 70; i++) {
       this.motes.push({
@@ -391,6 +396,18 @@ export class Stage {
     w.filters = fs;
   }
 
+  /** 배경 층 필터 (배경·트랙 뒤 장식만). */
+  setBackFilters(fs: Filter[]): void {
+    this.applyRes(fs);
+    const b = this.backPlane;
+    if (fs.length === 0) {
+      if (b.filters && (b.filters as Filter[]).length) b.filters = [];
+      return;
+    }
+    b.filterArea = this.app.screen;
+    b.filters = fs;
+  }
+
   /** 화면 전체 필터 (없으면 빈 배열). */
   setScreenFilters(fs: Filter[]): void {
     this.applyRes(fs);
@@ -421,6 +438,12 @@ export class Stage {
     this.world.pivot.set(c.x + c.shakeX, c.y + c.shakeY);
     this.world.scale.set(this.baseScale * c.zoom);
     this.world.rotation = (c.rotation * Math.PI) / 180;
+    if (this.backWorld.children.length) {
+      this.backWorld.position.copyFrom(this.world.position);
+      this.backWorld.pivot.copyFrom(this.world.pivot);
+      this.backWorld.scale.copyFrom(this.world.scale);
+      this.backWorld.rotation = this.world.rotation;
+    }
 
     const g = this.moteGfx;
     g.clear();
@@ -455,6 +478,7 @@ export class Stage {
     for (const ch of [...this.world.children]) {
       this.world.removeChild(ch);
     }
+    for (const ch of [...this.backWorld.children]) this.backWorld.removeChild(ch);
   }
 }
 

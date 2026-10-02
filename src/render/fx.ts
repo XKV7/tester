@@ -26,6 +26,7 @@ export class FxView {
   private parts: Particle[] = [];
   private pool: Graphics[] = [];
   private texts: FloatText[] = [];
+  private lastRing = -1e9;
   private textPool: Text[] = [];
   rotation = 0;
 
@@ -37,6 +38,9 @@ export class FxView {
   }
 
   ring(x: number, y: number, color: number, now: number): void {
+    // 아주 빠른 연타에서는 고리가 겹겹이 쌓여 트랙을 가리므로 간격을 둔다
+    if (now - this.lastRing < 70) return;
+    this.lastRing = now;
     const g = this.gfx();
     this.parts.push({ g, x, y, vx: 0, vy: 0, born: now, life: 380, kind: 'ring', size: 18, color });
     for (let k = 0; k < 8; k++) {
@@ -77,6 +81,14 @@ export class FxView {
   }
 
   text(label: string, color: number, x: number, y: number, now: number): void {
+    // 빠른 연타: 같은 판정 글자는 새로 만들지 않고 마지막 글자를 옮긴다 (글자가 수십 개 겹치지 않게)
+    const last = this.texts[this.texts.length - 1];
+    if (last && now - last.born < 150 && last.t.text === label) {
+      last.x = x;
+      last.y = y;
+      last.born = now;
+      return;
+    }
     const t =
       this.textPool.pop() ??
       new Text({
