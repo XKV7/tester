@@ -461,6 +461,7 @@ export class DecorationView {
     this.upgrade(now);
     // 화면에 필요한 해상도는 이번 프레임에 보이는 장식으로 새로 잰다 (줄어들면 다음에 올릴 때만 반영)
     const need = new Map<string, number>();
+    const hidden = (window as unknown as { __orbitHide?: Set<string> }).__orbitHide;
     this.maskUsed = false;
     const rc = degToRad(camRot);
     const cos = Math.cos(-rc);
@@ -487,6 +488,8 @@ export class DecorationView {
       const isMask = d.mask === 'mask';
       // 가림막은 투명도와 상관없이 모양만 쓴다 (원작 SpriteMask)
       node.visible = d.visible && (isMask || d.opacity * d.calpha > 0.001) && (!o.ps || o.ps.live.length > 0);
+      // 자동 시험용: 이름으로 장식 숨기기 (원작과 비교할 때 어느 장식이 덮는지 찾기)
+      if (hidden && d.image && hidden.has(d.image)) node.visible = false;
       const want = d.mask === 'inside' || d.mask === 'outside' ? d.mask : null;
       if (want !== o.masked) {
         o.masked = want;

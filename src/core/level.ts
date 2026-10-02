@@ -215,8 +215,8 @@ export function validateLevel(raw: unknown): ValidateResult {
         return;
       }
       const err =
-        a.delay !== undefined && (!isNum(a.delay) || a.delay < 0 || a.delay > MAX_EFFECT_BEATS)
-          ? 'delay는 0 이상의 숫자(박)여야 합니다.'
+        a.delay !== undefined && (!isNum(a.delay) || Math.abs(a.delay) > MAX_EFFECT_BEATS)
+          ? 'delay는 숫자(박)여야 합니다.'
           : validateActionParams(a, type, tileCount);
       if (err) {
         errors.push(`${where} (${type}, floor ${a.floor}): ${err}`);

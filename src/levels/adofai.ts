@@ -728,10 +728,10 @@ export function convertAdofai(text: string): AdofaiResult {
     const floor = Math.round(num(e.floor, type === 'AddDecoration' || type === 'AddText' ? 0 : -1));
     if (floor < 0 || floor > last) continue;
     if (e.active === false) continue;
-    // 원작 angleOffset: 타일을 친 뒤 그 각도만큼 돈 다음 (180° = 1박)
-    const delay = Math.max(0, num(e.angleOffset, 0)) / 180;
+    // 원작 angleOffset: 타일을 친 뒤 그 각도만큼 돈 다음 (180° = 1박). 음수면 그만큼 먼저 (Timeline 시작 플래시: -360° = 2박 전)
+    const delay = num(e.angleOffset, 0) / 180;
     const vis = (a: Action) => {
-      if (delay > 0) a.delay = Math.min(MAX_EFFECT_BEATS, delay);
+      if (delay !== 0) a.delay = Math.max(-MAX_EFFECT_BEATS, Math.min(MAX_EFFECT_BEATS, delay));
       actions.push(a);
     };
     switch (type) {

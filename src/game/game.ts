@@ -631,7 +631,9 @@ export class Game {
     this.timeline.update(tr);
     const tl = this.timeline;
     const reduce = settings.reduceEffects;
-    stage.setMirrors(tl.mirrors && !reduce);
+    // 잔상(원작 HallOfMirrors)은 화면을 지우지 않는 것 — 배경 그림·영상이 있으면 원작도 매 프레임 그것이 화면을 다시 덮어
+    // 잔상이 남지 않는다. 우리처럼 트랙 층만 계속 겹치면 반투명 구름·노이즈가 쌓여 불투명한 회색이 됐다 (Plum - Timeline)
+    stage.setMirrors(tl.mirrors && !reduce && !tl.bgImage && !tl.bgVideo);
     this.planets.setSize(tl.planetSize);
     stage.setBackground(tl.bgColor);
     stage.setBackgroundImage(tl.bgImage ? fileUrl(this.opts.pkg, tl.bgImage) : null, { fit: tl.bgFit, tint: tl.bgTint, opacity: tl.bgOpacity });
@@ -681,10 +683,13 @@ export class Game {
     }
     this.deco.update(stage.camera.x, stage.camera.y, stage.camera.rotation, tr, stage.camera.zoom, stage.baseScale * stage.camera.zoom * stage.app.renderer.resolution);
     this.screenFx.screenH = stage.height;
-    const worldFs = this.screenFx.worldFilters(tl.bloom, reduce, this.chart.level.settings.glow ?? 1);
+    const glowFs = this.screenFx.worldFilters(tl.bloom, reduce, this.chart.level.settings.glow ?? 1);
+    const wideGlow = this.screenFx.bloomWide(tl.bloom);
+    const worldFs = wideGlow ? [] : glowFs;
     stage.setWorldFilters(worldFs);
     const scroll: [number, number] = [tl.screenScroll[0] * tr, tl.screenScroll[1] * tr];
     const screenFs = this.screenFx.filters(tl.filters, tl.bloom, tr, reduce, motion, { tile: tl.screenTile, scroll });
+    if (wideGlow) screenFs.push(...glowFs);
     stage.setScreenFilters(screenFs);
     let backN = 0;
     if (this.backFx) {
@@ -696,6 +701,7 @@ export class Game {
     }
     // 자동 시험용: 이번 프레임에 걸린 필터·보이는 장식 수 (성능 비교)
     const vis = (c: { children: { visible: boolean }[] }) => c.children.reduce((n, ch) => n + (ch.visible ? 1 : 0), 0);
+    (window as unknown as { __orbitStage?: unknown }).__orbitStage = stage;
     (window as unknown as { __orbitStats?: unknown }).__orbitStats = {
       screen: screenFs.map((f) => f.constructor.name),
       world: worldFs.length,
