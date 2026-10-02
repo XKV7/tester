@@ -327,7 +327,8 @@ export class DecorationView {
       const want = d.mask === 'inside' || d.mask === 'outside' ? d.mask : null;
       if (want !== o.masked) {
         o.masked = want;
-        if (want) node.setMask({ mask: this.maskSprite, inverse: want === 'outside' });
+        // 원작 가림막은 모양(알파)만 본다 — 빨강 채널을 쓰면 검게 칠한 가림막이 없는 것처럼 돼 화면이 까매진다
+        if (want) node.setMask({ mask: this.maskSprite, inverse: want === 'outside', channel: 'alpha' });
         else node.mask = null;
       }
       if (!node.visible) continue;
@@ -340,8 +341,10 @@ export class DecorationView {
           node.texture = t ?? Texture.EMPTY;
           o.image = d.image;
           if (node instanceof TilingSprite && t) {
-            node.width = t.width * (def.tile?.[0] ?? 1);
-            node.height = t.height * (def.tile?.[1] ?? 1);
+            // 원작 tile은 크기는 그대로 두고 그 안에 그림을 여러 번 (BIKE 산: 6번 반복, 한 칸 = 흐름 거리)
+            node.width = t.width;
+            node.height = t.height;
+            node.tileScale.set(1 / (def.tile?.[0] ?? 1), 1 / (def.tile?.[1] ?? 1));
           }
         }
       }
@@ -375,12 +378,13 @@ export class DecorationView {
         const tile = rel === 'tile' ? this.chart.tiles[Math.min(this.chart.tiles.length - 1, def.floor ?? 0)] : null;
         const bx = tile ? tile.x : 0;
         const by = tile ? -tile.y : 0;
-        // 카메라 따라가기 (원작 parallax): 장식 자신의 자리(+ parallaxOffset)에서 카메라가 벗어난 만큼 비율로 따라간다.
+        // 카메라 따라가기 (원작 parallax): 장식 자신의 자리에서 카메라가 벗어난 만큼 비율로 따라가고,
+        // parallaxOffset은 그 위에 그대로 더한다 (BIKE 산 장식: 위·아래로 벌려 두는 값 — 비율을 곱하면 화면 가운데를 덮었다).
         // 100%면 화면 가운데에 고정. 기준을 장식이 붙은 타일로 잡으면 멀리 놓인 큰 배경(Hello (BPM) 2025의 하늘)이 화면 밖으로 나갔다
         const ax = bx + px;
         const ay = by - py;
-        x = ax + (camX - (ax + d.pox)) * d.parx;
-        y = ay + (camY - (ay - d.poy)) * d.pary;
+        x = ax + (camX - ax) * d.parx + d.pox;
+        y = ay + (camY - ay) * d.pary - d.poy;
         if (def.lockRotation) r -= rc;
       }
       node.position.set(x, y);

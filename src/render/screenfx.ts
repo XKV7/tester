@@ -454,7 +454,8 @@ export class ScreenFx {
     apply(SEPIA, k('Sepia'));
     apply(INVERT, k('Invert'));
     apply(NIGHT, k('NightVision'));
-    const con = any('Contrast', 'Sharpen', 'EdgeBlackLine', 'Drawing');
+    // 선명하게(Sharpen)는 아래 셰이더에서 윤곽만 세운다 (대비로 바꾸면 큰 값에서 화면이 새까매진다)
+    const con = any('Contrast', 'EdgeBlackLine', 'Drawing');
     if (con > 0) m = mul(m, contrast(1 + 0.8 * Math.min(2, con)));
     // 대비 배율 (원작 Color_Contrast): 1 = 그대로, 0 = 회색
     const ca = fs.get('ContrastAdj');
@@ -528,7 +529,7 @@ export class ScreenFx {
       u.uHole[2] = Math.max(0.01, k('HoleSize'));
       u.uHole[3] = Math.min(3, k('Hole'));
       u.uDark = Math.min(2, k('DarkMatter'));
-      u.uSharp = Math.min(4, k('SharpenX'));
+      u.uSharp = Math.max(Math.min(4, k('SharpenX')), Math.min(1, k('Sharpen') * 0.5));
       u.uManga = reduce ? 0 : Math.min(1, k('MangaFlash'));
       u.uAura[0] = Math.min(3, k('Aura'));
       u.uAura[1] = k('AuraSpeed');
