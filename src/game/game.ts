@@ -679,7 +679,7 @@ export class Game {
       stage.camera.shakeX += (Math.random() - 0.5) * 24 * quake;
       stage.camera.shakeY += (Math.random() - 0.5) * 24 * quake;
     }
-    this.deco.update(stage.camera.x, stage.camera.y, stage.camera.rotation, tr, stage.camera.zoom);
+    this.deco.update(stage.camera.x, stage.camera.y, stage.camera.rotation, tr, stage.camera.zoom, stage.baseScale * stage.camera.zoom * stage.app.renderer.resolution);
     this.screenFx.screenH = stage.height;
     const worldFs = this.screenFx.worldFilters(tl.bloom, reduce, this.chart.level.settings.glow ?? 1);
     stage.setWorldFilters(worldFs);
@@ -704,6 +704,7 @@ export class Game {
       quality: stage.qualityLevel,
       decos: vis(this.deco.behind) + vis(this.deco.front),
       tiles: this.track.visibleCount,
+      texMB: Math.round(this.deco.textureMB),
       frameMs: +this.frameCpu.toFixed(2),
       renderMs: +stage.renderMs.toFixed(2),
     };
