@@ -117,9 +117,9 @@ describe('.adofai 변환', () => {
     expect(r.level.actions).toContainEqual({ floor: 1, type: 'Background', color: '#000000', image: 'BG1.jpg', fit: 'cover', opacity: 1 });
   });
 
-  it('행성 3개처럼 박이 달라지는 이벤트는 경고', () => {
-    const r = level({ angleData: [0, 0, 0], actions: [{ floor: 1, eventType: 'MultiPlanet', planets: 'ThreePlanets' }] });
-    expect(r.warnings.join(' ')).toContain('행성 3개');
+  it('행성 4개 이상처럼 박이 달라지는 이벤트는 경고', () => {
+    const r = level({ angleData: [0, 0, 0], actions: [{ floor: 1, eventType: 'MultiPlanet', planets: 'FourPlanets' }] });
+    expect(r.warnings.join(' ')).toContain('행성 4개');
   });
 
   it('zip 패키지: .adofai + 음원 → 변환·음원 연결·가져옴 표시', () => {
@@ -486,6 +486,21 @@ describe('극단적인 BPM (Hello (BPM) 류)', () => {
     });
     const cams = r.level.actions.filter((a) => a.type === 'Camera') as { floor: number; relativeTo?: string; tile?: number }[];
     expect(cams.map((c) => [c.relativeTo, c.tile])).toEqual([['tile', 1], ['tile', 4], [undefined, undefined]]);
+  });
+
+  it('행성 3개 (MultiPlanet): 매 타일 공전각이 60° 줄고, 2개로 돌아오면 원래대로', () => {
+    const r = level({
+      pathData: 'RRRRR',
+      actions: [
+        { floor: 2, eventType: 'MultiPlanet', planets: 'ThreePlanets' },
+        { floor: 4, eventType: 'MultiPlanet', planets: 'TwoPlanets' },
+      ],
+    });
+    expect(r.warnings.join(' ')).not.toContain('MultiPlanet');
+    const ch = compileChart(r.level);
+    expect(ch.tiles.map((t) => t.theta)).toEqual([180, 180, 120, 120, 180, 0]);
+    expect(ch.tiles[2].planets).toBe(3);
+    expect(validateLevel(r.level).ok).toBe(true);
   });
 
   it('글자 장식의 서식 태그는 뗀다', () => {

@@ -56,6 +56,11 @@ export interface TwirlAction extends ActionBase {
 export interface CheckpointAction extends ActionBase {
   type: 'Checkpoint';
 }
+/** 행성 수 (원작 MultiPlanet). 3개면 다음 행성이 60° 앞에 있어 매 타일 공전각이 60° 줄어든다. */
+export interface MultiPlanetAction extends ActionBase {
+  type: 'MultiPlanet';
+  planets: 2 | 3;
+}
 export interface MidspinAction extends ActionBase {
   type: 'Midspin';
 }
@@ -276,7 +281,8 @@ export type Action =
   | PlanetsAction
   | ScreenAction
   | SoundAction
-  | JudgeRuleAction;
+  | JudgeRuleAction
+  | MultiPlanetAction;
 
 /** 이 타일부터 이 판정이 나오면 실패 (원작 대회용 SetConditionalEvents + 죽는 히트박스). 빈 목록 = 규칙 없음. */
 export interface JudgeRuleAction extends ActionBase {

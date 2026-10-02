@@ -68,6 +68,8 @@ export class Stage {
   /** world를 감싸는 변환 없는 층 — 화면 좌표 필터(빛 번짐)를 여기에 건다 */
   private readonly worldWrap = new Container();
   readonly overlay = new Container();
+  /** 지난 프레임 그리기 CPU 시간 (ms) */
+  renderMs = 0;
   private readonly flash = new Graphics();
   /** 배경 면 플래시 (배경 이미지 위, 트랙 아래) */
   private readonly bgFlash = new Graphics();
@@ -100,6 +102,14 @@ export class Stage {
       useBackBuffer: true,
     });
     host.appendChild(this.app.canvas);
+    // 그리기에 든 CPU 시간 (자동 시험·진단용)
+    const renderer = this.app.renderer as unknown as { render: (o: unknown) => void };
+    const render = renderer.render.bind(renderer);
+    renderer.render = (o: unknown) => {
+      const t = performance.now();
+      render(o);
+      if ((o as { container?: unknown }).container === this.app.stage) this.renderMs = performance.now() - t;
+    };
     this.host = host;
     window.addEventListener('resize', this.layoutHost);
     // 화면 크기가 바뀌면(가로·세로 전환) Pixi가 예전 크기의 풀 텍스처를 지우는데, 필터 스택이 지난 프레임의
