@@ -240,7 +240,7 @@ function tileRef(ref: unknown, floor: number, last: number): number {
   return Math.max(0, Math.min(last, base + n));
 }
 
-const STYLE_MAP: Record<string, TrackStyle> = { Standard: 'standard', Neon: 'neon', NeonLight: 'neon', Basic: 'basic', Minimal: 'basic', Gems: 'standard' };
+const STYLE_MAP: Record<string, TrackStyle> = { Standard: 'standard', Neon: 'neon', NeonLight: 'neonlight', Basic: 'basic', Minimal: 'basic', Gems: 'standard' };
 const APPEAR_MAP: Record<string, TrackAppear> = {
   None: 'none', Fade: 'fade', Grow: 'grow', Grow_Spin: 'spin', Extend: 'extend', Drop: 'drop', Rise: 'rise',
   Assemble: 'scatter', Assemble_Far: 'scatter', Assemble_Scatter: 'scatter', Scatter: 'scatter', Scatter_Far: 'scatter',
@@ -381,6 +381,8 @@ export function parseFilterProps(v: unknown): Map<string, unknown> {
   return out;
 }
 
+const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+
 interface AdvancedConv {
   filters: [string, number][];
   bloom?: { intensity: number; threshold: number; color?: string };
@@ -405,11 +407,42 @@ export function advancedFilter(name: string, p: Map<string, unknown>): AdvancedC
     case 'Vision_Tunnel':
       return one('Vignette', 1);
     case 'Color_GrayScale':
-      return one('Grayscale', v('_Fade', 100) / 100);
+      return one('Grayscale', clamp01(v('_Fade', 100) / 100));
     case 'TV_PlanetMars':
-      return one('Sepia', 1);
+      // Fade = 붉은 화성 색이 섞이는 정도 (0 = 거의 그대로)
+      return one('Sepia', clamp01(v('Fade', 100) / 100));
+    case 'Color_Sepia':
+      return one('Sepia', clamp01(v('_Fade', 100) / 100));
+    case 'Color_Contrast':
+      // 원작 Contrast −100 ~ 100 → 배율 0(회색) ~ 2
+      return one('ContrastAdj', Math.max(0, Math.min(3, 1 + v('Contrast', 0) / 100)));
+    case 'Sharpen_Sharpen':
+      // 원작 값은 매우 크게 쓰인다 (50000 = 강한 윤곽)
+      return one('SharpenX', Math.max(0, Math.min(4, v('Value', 400) / 12500)));
+    case 'Drawing_Manga_FlashWhite':
+      return one('MangaFlash', clamp01(v('Intensity', 100) / 100));
+    case 'Vision_Aura': {
+      const col = adofaiColor(p.get('color'));
+      return {
+        filters: [
+          ['Aura', Math.min(3, Math.abs(v('Twist', 500)) / 1000)],
+          ['AuraSpeed', Math.min(5, Math.abs(v('Speed', 100)) / 100)],
+          // 기운 색의 밝기 (원작은 거의 검은색을 많이 쓴다)
+          ['AuraTint', col ? [1, 3, 5].reduce((t, i) => t + parseInt(col.slice(i, i + 2), 16), 0) / 765 : 0],
+        ],
+      };
+    }
+    case 'Vision_Plasma':
+      return one('Plasma', clamp01(v('Intensity', 50) / 100));
+    case 'Pixelisation_OilPaint':
+      // 유화: 색 단계를 줄이고 살짝 흐리게
+      return { filters: [['Posterize', clamp01(v('Value', 50) / 100)], ['Blur', 0.15 * clamp01(v('Value', 50) / 100)]] };
+    case 'Blur_Movie': {
+      // Radius 0 = 흐림 없음 (원작에서 끄는 대신 자주 쓴다)
+      const r = p.has('radius') ? Math.min(1, Math.abs(v('Radius', 100000)) / 100000) : 1;
+      return one('Blur', 0.5 * r);
+    }
     case 'Blur_Noise':
-    case 'Blur_Movie':
     case 'Blur_Radial':
     case 'Blur_Radial_Fast':
     case 'Blur_BlurHole':
@@ -437,7 +470,7 @@ export function advancedFilter(name: string, p: Map<string, unknown>): AdvancedC
       return one('Compression', 1);
     case 'TV_Chromatical':
     case 'TV_Chromatical2':
-      return one('Aberration', Math.max(0.3, v('Aberration', 50) / 100));
+      return one('Aberration', Math.max(0.3, v('Aberration', 50) / 100) * (p.has('fade') ? clamp01(v('Fade', 100) / 100) : 1));
     case 'Color_Chromatic_Aberration':
       return one('Aberration', 0.5);
     case 'Glitch_Mozaic':
@@ -448,7 +481,7 @@ export function advancedFilter(name: string, p: Map<string, unknown>): AdvancedC
     case 'Color_Noise':
     case 'Noise_TV':
     case 'TV_Noise':
-      return one('Static', p.has('noise') ? Math.max(0.05, Math.min(0.6, v('Noise', 60) / 100)) : 0.6);
+      return one('Static', p.has('noise') ? Math.max(0.05, Math.min(0.6, Math.abs(v('Noise', 60)) / 100)) : 0.6);
     case 'Edge_Edge_filter':
       return one('EdgeBlackLine', 1);
     case 'TV_Old_Movie_2':
@@ -459,7 +492,8 @@ export function advancedFilter(name: string, p: Map<string, unknown>): AdvancedC
       return one('FiftiesTV', 1);
     case 'Atmosphere_Rain_Pro':
     case 'Atmosphere_Rain':
-      return one('Rain', Math.max(0, v('Intensity', 100) / 100));
+      // Fade 0 = 안 보임
+      return one('Rain', Math.max(0, (v('Intensity', 100) / 100) * clamp01(v('Fade', 100) / 100)));
     case 'Colors_HUE_Rotate':
     case 'Light_Rainbow2':
     case 'Light_Rainbow':
@@ -622,6 +656,8 @@ export function convertAdofai(text: string): AdofaiResult {
   const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
   /** PositionTrack: 해당 타일부터 뒤로 계속 밀리는 정적 위치 (타일 단위). */
   const shift: { floor: number; x: number; y: number }[] = [];
+  /** 마지막 MoveCamera 기준 (원작은 비워 두면 이어 쓴다) */
+  let camRel = 'Player';
 
   const decorations: Decoration[] = [];
   const filterSet = new Set(FILTER_NAMES);
@@ -754,7 +790,9 @@ export function convertAdofai(text: string): AdofaiResult {
         if (Array.isArray(e.position) && e.position.some((v) => v !== null)) cam.offset = [num(e.position[0], 0) * TILE_LEN, num(e.position[1], 0) * TILE_LEN];
         const ease = mapEase(e.ease);
         if (ease) cam.ease = ease;
-        const rel = str(e.relativeTo);
+        // 기준을 비워 두면 앞의 기준을 이어 쓴다 — 타일 기준이면 이 이벤트의 타일 (원작)
+        const rel = e.relativeTo === undefined || e.relativeTo === null ? (cam.offset && camRel === 'Tile' ? 'Tile' : '') : str(e.relativeTo);
+        if (e.relativeTo !== undefined && e.relativeTo !== null) camRel = rel;
         if (rel === 'Player') cam.relativeTo = 'player';
         else if (rel === 'Tile') {
           cam.relativeTo = 'tile';
@@ -830,14 +868,19 @@ export function convertAdofai(text: string): AdofaiResult {
         if (!name) break;
         if (!filterSet.has(name)) bump(skipped, `필터 ${name}`);
         const on = onOff(e.enabled);
+        const fe = mapEase(e.ease);
+        const raw = num(e.intensity, 100);
+        // 음수 대비 = 흐리게 (원작은 음수도 받는다)
+        const neg = name === 'Contrast' && raw < 0;
         vis({
           floor,
           type: 'Filter',
-          filter: name,
+          filter: neg ? 'ContrastAdj' : name,
           enabled: on,
-          intensity: Math.max(0, Math.min(100, num(e.intensity, 100) / 100)),
+          intensity: neg ? Math.max(0, 1 + raw / 400) : Math.max(0, Math.min(100, raw / 100)),
           ...(onOff(e.disableOthers) ? { exclusive: true } : {}),
           ...(num(e.duration, 0) > 0 ? { duration: dur(e.duration, 0) } : {}),
+          ...(fe ? { ease: fe } : {}),
         });
         break;
       }
@@ -852,7 +895,12 @@ export function convertAdofai(text: string): AdofaiResult {
           bump(skipped, `확장 필터 ${str(e.filter).replace(/^CameraFilterPack_/, '')}`);
           break;
         }
-        const d = num(e.duration, 0) > 0 ? { duration: dur(e.duration, 0) } : {};
+        const fe = mapEase(e.ease);
+        const d = {
+          ...(num(e.duration, 0) > 0 ? { duration: dur(e.duration, 0) } : {}),
+          ...(fe ? { ease: fe } : {}),
+          ...(str(e.plane) === 'Background' ? { plane: 'back' as const } : {}),
+        };
         if (conv.bloom) {
           vis({ floor, type: 'Bloom', enabled: on, ...conv.bloom });
           break;

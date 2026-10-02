@@ -22,10 +22,14 @@ export const FILTER_NAMES = [
   'Hole', 'HoleX', 'HoleY', 'HoleSize',
   // 암흑 물질 소용돌이 (원작 DarkMatter)
   'DarkMatter',
+  // 대비 배율 (원작 Color_Contrast, 1 = 그대로 · 0 = 회색)
+  'ContrastAdj',
+  // 선명하게 (원작 Sharpen) · 만화 집중선 번쩍임 (원작 Manga_FlashWhite) · 출렁이는 기운 (원작 Aura) · 플라스마 (원작 Plasma)
+  'SharpenX', 'MangaFlash', 'Aura', 'AuraSpeed', 'AuraTint', 'Plasma',
 ];
 
 /** 꺼졌을 때 값이 0이 아니라 1인 필터 (배율) */
-export const FILTER_NEUTRAL_ONE = new Set(['Brightness', 'ChanR', 'ChanG', 'ChanB']);
+export const FILTER_NEUTRAL_ONE = new Set(['Brightness', 'ChanR', 'ChanG', 'ChanB', 'ContrastAdj']);
 
 
 export const ACTION_TYPES: ActionType[] = [
@@ -364,7 +368,7 @@ function validateActionParams(a: Record<string, unknown>, type: ActionType, tile
         optNum('duration', 0, MAX_EFFECT_BEATS),
       );
     case 'RecolorTrack':
-      if (a.style !== undefined && !['orbit', 'standard', 'neon', 'basic'].includes(a.style as string)) return "style은 'orbit', 'standard', 'neon', 'basic' 중 하나여야 합니다.";
+      if (a.style !== undefined && !['orbit', 'standard', 'neon', 'basic', 'neonlight'].includes(a.style as string)) return "style은 'orbit', 'standard', 'neon', 'basic', 'neonlight' 중 하나여야 합니다.";
       if (a.color2 !== undefined && !isColor(a.color2)) return 'color2 형식이 잘못되었습니다.';
       if (a.colorMode !== undefined && !['glow', 'blink', 'rainbow'].includes(a.colorMode as string)) return "colorMode는 'glow', 'blink', 'rainbow' 중 하나여야 합니다.";
       if (a.pulseBack !== undefined && typeof a.pulseBack !== 'boolean') return 'pulseBack은 true/false여야 합니다.';
@@ -387,7 +391,8 @@ function validateActionParams(a: Record<string, unknown>, type: ActionType, tile
       if (typeof a.filter !== 'string' || !a.filter) return 'filter 이름이 필요합니다.';
       if (typeof a.enabled !== 'boolean') return 'enabled는 true/false여야 합니다.';
       if (a.exclusive !== undefined && typeof a.exclusive !== 'boolean') return 'exclusive는 true/false여야 합니다.';
-      return first(optNum('intensity', 0, 100), optNum('duration', 0, MAX_EFFECT_BEATS));
+      if (a.plane !== undefined && a.plane !== 'back') return "plane은 'back'만 쓸 수 있습니다.";
+      return first(optNum('intensity', 0, 100), optNum('duration', 0, MAX_EFFECT_BEATS), easeOk());
     case 'Bloom':
       if (typeof a.enabled !== 'boolean') return 'enabled는 true/false여야 합니다.';
       return first(optNum('intensity', 0, 100), optNum('threshold', 0, 1), a.color !== undefined && !isColor(a.color) ? 'color 형식이 잘못되었습니다.' : null);

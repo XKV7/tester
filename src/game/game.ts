@@ -3,7 +3,7 @@ import { advances, DIFFICULTY_MULT, JUDGE_COLOR, JUDGE_LABEL, judgeError, judgeW
 import { TILE_LEN } from '../core/math';
 import { analyzeOffsets, type OffsetHint } from '../core/offset';
 import { PlayStats } from '../core/stats';
-import { cameraCenter, VisualTimeline } from '../core/timeline';
+import { cameraCenter, VisualTimeline, type FilterState } from '../core/timeline';
 import { deviceOffsetMs } from '../audio/device';
 import { audio } from '../audio/engine';
 import { Sfx } from '../audio/sfx';
@@ -84,6 +84,8 @@ export class Game {
   private fx!: FxView;
   private deco!: DecorationView;
   private screenFx!: ScreenFx;
+  /** 배경 층 필터 (원작 plane: Background가 있는 레벨만) */
+  private backFx: ScreenFx | null = null;
   private buffer: AudioBuffer | null = null;
 
   /** 현재 축 타일. */
@@ -188,7 +190,12 @@ export class Game {
     this.deco = new DecorationView(this.chart, this.timeline, (name) => fileUrl(this.opts.pkg, name));
     this.screenFx = new ScreenFx();
     stage.clearWorld();
-    stage.world.addChild(this.deco.behind, this.track.container, this.planets.container, this.deco.front, this.fx.container);
+    // 배경 층에만 거는 필터가 있으면 트랙 뒤 장식을 배경 층으로 옮겨 따로 필터를 건다
+    this.backFx = this.chart.level.actions.some((a) => a.type === 'Filter' && a.plane === 'back') ? new ScreenFx() : null;
+    if (this.backFx) {
+      stage.backWorld.addChild(this.deco.behind);
+      stage.world.addChild(this.track.container, this.planets.container, this.deco.front, this.fx.container);
+    } else stage.world.addChild(this.deco.behind, this.track.container, this.planets.container, this.deco.front, this.fx.container);
     stage.screenLayer.addChild(this.screenFx.weather);
     // 카메라가 따라가는 행성 위치 (월드, y 위쪽) — '직전 위치 기준' 카메라가 지금 중심을 계산할 때 쓴다
     this.timeline.playerPos = () => ({ x: this.camPivot.x, y: -this.camPivot.y });
@@ -219,6 +226,7 @@ export class Game {
     }
     stage.setScreenFilters([]);
     stage.setWorldFilters([]);
+    stage.setBackFilters([]);
     stage.setMirrors(false);
     stage.fitWide = false;
     stage.setFrameAspect(null);
@@ -670,8 +678,16 @@ export class Game {
     const scroll: [number, number] = [tl.screenScroll[0] * tr, tl.screenScroll[1] * tr];
     const screenFs = this.screenFx.filters(tl.filters, tl.bloom, tr, reduce, motion, { tile: tl.screenTile, scroll });
     stage.setScreenFilters(screenFs);
+    let backN = 0;
+    if (this.backFx) {
+      const bm = new Map<string, FilterState>();
+      for (const [k, v] of tl.filters) if (k.startsWith('bg:')) bm.set(k.slice(3), v);
+      const backFs = bm.size ? this.backFx.filters(bm, { intensity: 0, threshold: 1, color: 0xffffff }, tr, reduce) : [];
+      stage.setBackFilters(backFs);
+      backN = backFs.length;
+    }
     // 느린 기기면 필터 해상도부터 자동으로 낮춘다 (진행 중일 때만 잰다)
-    if (this.state === 'playing') stage.adaptQuality(stage.app.ticker.deltaMS, worldFs.length + screenFs.length > 0);
+    if (this.state === 'playing') stage.adaptQuality(stage.app.ticker.deltaMS, worldFs.length + screenFs.length + backN > 0);
     this.screenFx.drawWeather(tl.filters, stage.width, stage.height, dt, reduce);
     const phase = beatPhaseAt(ch, tr);
     const frac = phase - Math.floor(phase);

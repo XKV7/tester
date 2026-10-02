@@ -70,7 +70,7 @@ export const SCHEMA: Record<ActionType, Field[]> = {
     { k: 'to', label: '끝 타일', kind: 'int' },
     { k: 'color', label: '색', kind: 'color' },
     { k: 'duration', label: '길이(박)', kind: 'num', optional: true, step: 0.5 },
-    { k: 'style', label: '타일 모양', kind: 'choice', optional: true, options: ['orbit', 'standard', 'neon', 'basic'] },
+    { k: 'style', label: '타일 모양', kind: 'choice', optional: true, options: ['orbit', 'standard', 'neon', 'basic', 'neonlight'] },
     { k: 'color2', label: '물결 색', kind: 'color', optional: true },
     { k: 'glowDuration', label: '물결 시간(초)', kind: 'num', optional: true, step: 0.5 },
     { k: 'pulseLength', label: '물결 길이(타일)', kind: 'num', optional: true, step: 1 },
