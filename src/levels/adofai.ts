@@ -943,9 +943,11 @@ export function convertAdofai(text: string): AdofaiResult {
         const dp = DISAPPEAR_MAP;
         const a: Action = { floor, type: 'TrackAnim' };
         if (e.trackAnimation !== undefined) a.appear = ap[str(e.trackAnimation)] ?? 'fade';
-        if (e.beatsAhead !== undefined) a.beatsAhead = Math.max(0, Math.min(MAX_EFFECT_BEATS, num(e.beatsAhead, 3)));
+        // 박 수는 그 애니메이션을 함께 바꿀 때만 (원작 에디터는 꺼 둔 칸에도 기본값 3·4를 적어 둔다 —
+        // 사라지기만 바꾸는 이벤트의 'beatsAhead: 3'까지 쓰면 앞 타일이 바로 앞 것만 보였다, Phantigma)
+        if (e.beatsAhead !== undefined && e.trackAnimation !== undefined) a.beatsAhead = Math.max(0, Math.min(MAX_EFFECT_BEATS, num(e.beatsAhead, 3)));
         if (e.trackDisappearAnimation !== undefined) a.disappear = dp[str(e.trackDisappearAnimation)] ?? 'fade';
-        if (e.beatsBehind !== undefined) a.beatsBehind = Math.max(0, Math.min(MAX_EFFECT_BEATS, num(e.beatsBehind, 4)));
+        if (e.beatsBehind !== undefined && e.trackDisappearAnimation !== undefined) a.beatsBehind = Math.max(0, Math.min(MAX_EFFECT_BEATS, num(e.beatsBehind, 4)));
         actions.push(a);
         break;
       }

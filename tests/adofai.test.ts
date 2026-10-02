@@ -503,6 +503,21 @@ describe('극단적인 BPM (Hello (BPM) 류)', () => {
     expect(validateLevel(r.level).ok).toBe(true);
   });
 
+  it('AnimateTrack: 나타나기를 안 바꾸는 이벤트의 beatsAhead(에디터 기본값)는 무시', () => {
+    const r = level({
+      pathData: 'RRRR',
+      actions: [
+        { floor: 1, eventType: 'AnimateTrack', trackAnimation: 'Fade', beatsAhead: 16, trackDisappearAnimation: 'None', beatsBehind: 0 },
+        { floor: 2, eventType: 'AnimateTrack', beatsAhead: 3, trackDisappearAnimation: 'Fade', beatsBehind: 0 },
+      ],
+    });
+    const anims = r.level.actions.filter((a) => a.type === 'TrackAnim') as { floor: number; beatsAhead?: number; disappear?: string }[];
+    expect(anims.find((a) => a.floor === 1)?.beatsAhead).toBe(16);
+    const second = anims.find((a) => a.floor === 2)!;
+    expect(second.beatsAhead).toBeUndefined();
+    expect(second.disappear).toBe('fade');
+  });
+
   it('글자 장식의 서식 태그는 뗀다', () => {
     const r = level({ pathData: 'RRR', actions: [], decorations: [{ floor: 1, eventType: 'AddText', decText: 'Play <color="red">No miss</color> <b>now</b> 1<2', tag: 't' }] });
     expect(r.level.decorations![0].text).toBe('Play No miss now 1<2');
