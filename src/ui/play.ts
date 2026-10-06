@@ -195,7 +195,8 @@ export class PlayScreen implements Screen, GameHud {
   // ── 결과 ──
   private onClear(r: GameResult): void {
     if (this.opts.editorTest) {
-      void show(this.opts.back());
+      // 무적 모드 플레이테스트는 판정 결과를 보여 준다 (나가면 에디터로)
+      void show(this.opts.noFail ? new ResultScreen(this.pkg, r, false, this.opts) : this.opts.back());
       return;
     }
     const ranked = !r.autoplay && !r.noFail && r.speed === 1;
@@ -272,7 +273,7 @@ export class ResultScreen implements Screen {
             h(
               'div',
               { class: 'row end' },
-              h('button', { class: 'btn', onclick: () => show(this.opts.back()) }, '목록'),
+              h('button', { class: 'btn', onclick: () => show(this.opts.back()) }, this.opts.editorTest ? '에디터로' : '목록'),
               h('button', { class: 'btn primary', onclick: () => this.retry() }, '재시도'),
             ),
           ),

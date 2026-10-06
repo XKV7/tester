@@ -126,6 +126,8 @@ export class EditorScreen implements Screen {
   private info!: HTMLElement;
   private recBadge!: HTMLElement;
   private autoplay = false;
+  /** 플레이테스트를 무적 모드로 (끝나면 판정 결과를 보여 준다) */
+  private noFail = false;
   private recording: Recording | null = null;
   private previewing = false;
   private taps: number[] = [];
@@ -1158,7 +1160,7 @@ export class EditorScreen implements Screen {
     }
     this.stopRecording(false);
     const back = () => this;
-    void show(new PlayScreen(this.pkg, { startFloor: Math.min(this.sel, this.chart.finish - 1), autoplay: this.autoplay, editorTest: true, back }));
+    void show(new PlayScreen(this.pkg, { startFloor: Math.min(this.sel, this.chart.finish - 1), autoplay: this.autoplay, noFail: this.noFail, editorTest: true, back }));
   }
 
   private addToLibrary(): void {
@@ -1444,6 +1446,7 @@ export class EditorScreen implements Screen {
       onchange: () => (this.fillBpm = Math.max(0, Number(bpm.value) || 0)),
     });
     const auto = h('input', { type: 'checkbox', checked: this.autoplay, onchange: () => (this.autoplay = auto.checked) });
+    const noFail = h('input', { type: 'checkbox', checked: this.noFail, onchange: () => (this.noFail = noFail.checked) });
     return h(
       'div',
       { class: 'col' },
@@ -1492,6 +1495,8 @@ export class EditorScreen implements Screen {
         ),
         h('label', null, '자동 플레이'),
         h('label', { class: 'row' }, auto, h('span', { class: 'dim' }, '플레이테스트에 적용')),
+        h('label', null, '무적 모드'),
+        h('label', { class: 'row', title: '실패하지 않고 끝까지 — 끝나면 판정별 횟수와 절대정확도가 나와요' }, noFail, h('span', { class: 'dim' }, '플레이테스트에 적용')),
       ),
     );
   }
