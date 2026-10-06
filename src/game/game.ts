@@ -21,6 +21,8 @@ export type GameState = 'loading' | 'playing' | 'paused' | 'failed' | 'cleared';
 
 export interface GameResult {
   accuracy: number;
+  /** 절대정확도 (원작 X-Accuracy) */
+  xAccuracy: number;
   counts: ReturnType<PlayStats['counts']>;
   maxStreak: number;
   checkpointUses: number;
@@ -42,7 +44,7 @@ export interface GameResult {
 /** 게임 화면이 구현하는 HUD. */
 export interface GameHud {
   setProgress(p: number): void;
-  setAccuracy(a: number): void;
+  setAccuracy(a: number, x?: number): void;
   setCountdown(text: string | null): void;
   showFail(reason: string | null, hint?: OffsetHint | null): void;
   setPaused(p: boolean): void;
@@ -589,6 +591,7 @@ export class Game {
   private result(): GameResult {
     return {
       accuracy: this.stats.accuracy(),
+      xAccuracy: this.stats.xAccuracy(),
       counts: this.stats.counts(),
       maxStreak: this.stats.maxStreak,
       checkpointUses: this.stats.checkpointUses,
@@ -796,7 +799,7 @@ export class Game {
 
     // HUD
     hud.setProgress(ch.finish > 0 ? this.cur / ch.finish : 1);
-    hud.setAccuracy(this.stats.accuracy());
+    hud.setAccuracy(this.stats.accuracy(), this.stats.xAccuracy());
     const target = ch.tiles[this.beginFloor];
     const beat = 60 / ch.tiles[Math.max(0, this.beginFloor - 1)].bpm;
     const left = (target.time - tr) / beat;

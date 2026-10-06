@@ -138,8 +138,8 @@ export class PlayScreen implements Screen, GameHud {
     this.lastProg = v;
     this.prog.style.width = `${(p * 100).toFixed(1)}%`;
   }
-  setAccuracy(a: number): void {
-    const s = `${a.toFixed(2)}%`;
+  setAccuracy(a: number, x?: number): void {
+    const s = x === undefined ? `${a.toFixed(2)}%` : `${a.toFixed(2)}% · 절대 ${x.toFixed(2)}%`;
     if (s === this.lastAcc) return;
     this.lastAcc = s;
     this.acc.textContent = s;
@@ -240,6 +240,7 @@ export class ResultScreen implements Screen {
             'div',
             { class: 'results' },
             h('div', { class: 'big' }, `${r.accuracy.toFixed(2)}%`),
+            h('div', { class: 'dim', style: 'font-size:18px;margin-top:-4px' }, `절대정확도 ${r.xAccuracy.toFixed(2)}%`),
             h(
               'div',
               { class: 'badges' },
