@@ -13,6 +13,7 @@ import { onlineAvailable, openOnlineLevels, openRanking, uploadSelected } from '
 
 let lastSelected: string | null = null;
 let lastAuto = false;
+let lastNoFail = false;
 
 /** 레벨 선택: 카드 목록 + 미리듣기. */
 export class SelectScreen implements Screen {
@@ -32,6 +33,7 @@ export class SelectScreen implements Screen {
     }
   };
   private autoBox!: HTMLInputElement;
+  private noFailBox!: HTMLInputElement;
 
   enter(root: HTMLElement): void {
     ambient(true);
@@ -40,6 +42,7 @@ export class SelectScreen implements Screen {
     const pickSong = fileButton('음원으로 레벨 만들기', { accept: SONG_OR_ZIP_ACCEPT, cls: 'small primary' }, (f) => void this.fromSong(f[0]));
     this.cards = h('div', { class: 'cards' });
     this.autoBox = h('input', { type: 'checkbox', checked: lastAuto, onchange: () => (lastAuto = this.autoBox.checked) });
+    this.noFailBox = h('input', { type: 'checkbox', checked: lastNoFail, onchange: () => (lastNoFail = this.noFailBox.checked) });
     root.append(
       h(
         'div',
@@ -71,6 +74,7 @@ export class SelectScreen implements Screen {
           'div',
           { class: 'select-bar' },
           h('label', { class: 'row' }, this.autoBox, '자동 플레이'),
+          h('label', { class: 'row', title: '놓치거나 과부하가 와도 실패하지 않고 끝까지 — 결과에 판정별 횟수가 나와요 (기록은 안 남아요)' }, this.noFailBox, '무적 모드'),
           h('label', { class: 'row' }, '속도', h('div', { style: 'width:120px' }, speedSelect())),
           h('span', { class: 'grow dim' }, 'Enter로 시작 · 방향키로 선택'),
           onlineAvailable() ? h('button', { class: 'btn small', onclick: () => this.sel && void openRanking(this.sel) }, '순위') : null,
@@ -202,7 +206,7 @@ export class SelectScreen implements Screen {
   private play(): void {
     if (!this.sel) return;
     const p = this.sel;
-    void show(new PlayScreen(p, { autoplay: this.autoBox.checked, back: () => new SelectScreen() }));
+    void show(new PlayScreen(p, { autoplay: this.autoBox.checked, noFail: this.noFailBox.checked, back: () => new SelectScreen() }));
   }
 
   exit(): void {

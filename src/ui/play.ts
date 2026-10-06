@@ -23,6 +23,8 @@ function noticeDevice(): void {
 
 export interface PlayOptions {
   autoplay?: boolean;
+  /** 무적 모드 (실패 없이 끝까지) */
+  noFail?: boolean;
   startFloor?: number;
   /** 나가기/목록 버튼이 돌아갈 화면. */
   back: () => Screen;
@@ -84,8 +86,12 @@ export class PlayScreen implements Screen, GameHud {
         ),
         this.count,
         this.failEl,
-        this.opts.autoplay || settings.playbackSpeed !== 1
-          ? h('div', { class: 'auto-badge' }, [this.opts.autoplay ? '자동 플레이' : '', settings.playbackSpeed !== 1 ? `속도 ×${settings.playbackSpeed}` : ''].filter(Boolean).join(' · '))
+        this.opts.autoplay || this.opts.noFail || settings.playbackSpeed !== 1
+          ? h(
+              'div',
+              { class: 'auto-badge' },
+              [this.opts.autoplay ? '자동 플레이' : '', this.opts.noFail ? '무적 모드' : '', settings.playbackSpeed !== 1 ? `속도 ×${settings.playbackSpeed}` : ''].filter(Boolean).join(' · '),
+            )
           : null,
         this.opts.editorTest ? h('div', { class: 'auto-badge', style: 'left:auto;right:16px' }, '플레이테스트 · Esc로 에디터 복귀') : null,
       ),
@@ -94,6 +100,7 @@ export class PlayScreen implements Screen, GameHud {
       pkg: this.pkg,
       hud: this,
       autoplay: this.opts.autoplay,
+      noFail: this.opts.noFail,
       startFloor: this.opts.startFloor,
       onClear: (r) => this.onClear(r),
       onQuit: () => void show(this.opts.back()),
@@ -191,7 +198,7 @@ export class PlayScreen implements Screen, GameHud {
       void show(this.opts.back());
       return;
     }
-    const ranked = !r.autoplay && r.speed === 1;
+    const ranked = !r.autoplay && !r.noFail && r.speed === 1;
     const newBest = ranked && submitBest(this.pkg.id, r.accuracy);
     // 로그인했고 순위가 있는 레벨이면 온라인 기록도 (더 높을 때만)
     const key = ranked ? rankKey(this.pkg) : null;
@@ -200,7 +207,7 @@ export class PlayScreen implements Screen, GameHud {
   }
 }
 
-const ORDER: Judgment[] = ['perfect', 'earlyPerfect', 'latePerfect', 'early', 'late', 'tooEarly'];
+const ORDER: Judgment[] = ['perfect', 'earlyPerfect', 'latePerfect', 'early', 'late', 'tooEarly', 'miss'];
 
 export class ResultScreen implements Screen {
   private key = (e: KeyboardEvent) => {
@@ -236,16 +243,26 @@ export class ResultScreen implements Screen {
             h(
               'div',
               { class: 'badges' },
-              r.allPerfect && !r.autoplay ? h('span', { class: 'badge perfect' }, '완벽 클리어') : null,
-              r.flawless && !r.autoplay ? h('span', { class: 'badge flawless' }, '무결점 클리어') : null,
+              r.allPerfect && !r.autoplay && !r.noFail ? h('span', { class: 'badge perfect' }, '완벽 클리어') : null,
+              r.flawless && !r.autoplay && !r.noFail ? h('span', { class: 'badge flawless' }, '무결점 클리어') : null,
               this.newBest ? h('span', { class: 'badge newbest' }, '최고 기록!') : null,
               r.speed !== 1 ? h('span', { class: 'badge newbest', style: 'color:var(--dim);border-color:var(--line)' }, `속도 ×${r.speed} (기록 안 됨)`) : null,
               r.autoplay ? h('span', { class: 'badge newbest', style: 'color:var(--dim);border-color:var(--line)' }, '자동 플레이 (기록 안 됨)') : null,
+              r.noFail ? h('span', { class: 'badge newbest', style: 'color:var(--dim);border-color:var(--line)' }, '무적 모드 (기록 안 됨)') : null,
             ),
             h(
               'table',
               null,
               ...ORDER.map((j) => h('tr', null, h('td', null, JUDGE_LABEL[j]), h('td', null, String(r.counts[j])))),
+              // 무적 모드에서 넘긴 실패 (원래라면 그 자리에서 끝났을 것)
+              ...(r.noFail || r.overloads + r.ruleBreaks + r.holdFails > 0
+                ? [
+                    h('tr', null, h('td', null, '과부하'), h('td', null, String(r.overloads))),
+                    h('tr', null, h('td', null, '홀드 실패'), h('td', null, String(r.holdFails))),
+                    ...(r.ruleBreaks > 0 ? [h('tr', null, h('td', null, '맵 규칙 위반'), h('td', null, String(r.ruleBreaks)))] : []),
+                    h('tr', null, h('td', null, '원래라면 실패한 횟수'), h('td', null, String(r.counts.miss + r.overloads + r.holdFails + r.ruleBreaks))),
+                  ]
+                : []),
               h('tr', null, h('td', null, '최대 연속 완벽'), h('td', null, String(r.maxStreak))),
               h('tr', null, h('td', null, '체크포인트 사용'), h('td', null, String(r.checkpointUses))),
               h('tr', null, h('td', null, '판정 난이도'), h('td', null, { lenient: '느슨함', normal: '보통', strict: '엄격' }[settings.difficulty])),
