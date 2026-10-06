@@ -84,6 +84,18 @@ export class PlayStats {
     return total === 0 ? 100 : (sum / total) * 100;
   }
 
+  /**
+   * 절대정확도 (원작 X-Accuracy, 0~100): 완벽 100 · 약간 빠름/느림 75 · 빠름/느림 40 · 너무 빠름 20 · 놓침 0 의 평균에
+   * 체크포인트를 쓴 횟수만큼 0.9875를 곱한다. 기록이 없으면 100.
+   */
+  xAccuracy(): number {
+    const c = this.counts();
+    const total = Object.values(c).reduce((a, b) => a + b, 0);
+    if (total === 0) return 100;
+    const sum = c.perfect * 100 + (c.earlyPerfect + c.latePerfect) * 75 + (c.early + c.late) * 40 + c.tooEarly * 20;
+    return (sum / total) * Math.pow(0.9875, this.checkpointUses);
+  }
+
   /** 완벽 클리어: 모든 판정이 완벽. */
   isAllPerfect(): boolean {
     const c = this.counts();
