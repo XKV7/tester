@@ -27,6 +27,12 @@ export interface GameResult {
   allPerfect: boolean;
   flawless: boolean;
   autoplay: boolean;
+  /** 무적 모드 (실패하지 않음 — 기록 안 됨) */
+  noFail: boolean;
+  /** 무적 모드에서 넘긴 실패 횟수 */
+  overloads: number;
+  ruleBreaks: number;
+  holdFails: number;
   /** 플레이 속도 배율. */
   speed: number;
   /** 친 타이밍으로 본 입력 오프셋 추천 (median = 추천 입력 오프셋 ms) */
@@ -48,6 +54,8 @@ export interface GameOptions {
   hud: GameHud;
   startFloor?: number;
   autoplay?: boolean;
+  /** 무적 모드: 놓침·과부하·홀드·맵 규칙으로 실패하지 않고 끝까지 (횟수만 센다) */
+  noFail?: boolean;
   onClear: (r: GameResult) => void;
   onQuit: () => void;
 }
@@ -68,6 +76,8 @@ const FAIL_LABEL = {
 type FailReason = keyof typeof FAIL_LABEL;
 
 export class Game {
+  /** 무적 모드 */
+  readonly noFail: boolean;
   readonly chart: Chart;
   readonly timeline: VisualTimeline;
   readonly stats = new PlayStats();
@@ -129,6 +139,7 @@ export class Game {
     this.chart = compileChart(opts.pkg.level);
     this.timeline = new VisualTimeline(this.chart);
     this.autoplay = !!opts.autoplay;
+    this.noFail = !!opts.noFail;
     this.speed = settings.playbackSpeed > 0 ? settings.playbackSpeed : 1;
     this.pitch = this.chart.level.settings.pitch * this.speed;
     this.startFloor = Math.max(0, Math.min(opts.startFloor ?? 0, this.chart.finish - 1));
@@ -427,9 +438,13 @@ export class Game {
     if (j === null) return;
     // 맵 규칙: 이 구간에서 금지된 판정이면 실패
     if (this.ruleAt[this.cur + 1]?.has(j)) {
-      this.showJudge(this.cur + 1, j);
-      this.fail('rule');
-      return;
+      if (!this.noFail) {
+        this.showJudge(this.cur + 1, j);
+        this.fail('rule');
+        return;
+      }
+      // 무적 모드: 위반만 세고 판정은 그대로 이어 간다
+      this.stats.ruleBreaks++;
     }
     if (j === 'tooEarly') {
       this.stats.recordTooEarly(this.cur + 1);
@@ -506,6 +521,10 @@ export class Game {
 
   private fail(reason: FailReason): void {
     if (this.state !== 'playing') return;
+    if (this.noFail) {
+      this.survive(reason);
+      return;
+    }
     this.state = 'failed';
     this.failAt = performance.now();
     this.stats.fails++;
@@ -518,6 +537,44 @@ export class Game {
     this.planets.setAlpha(aIsPivot ? 1 : 0, aIsPivot ? 0 : 1);
     this.planets.clearTail();
     this.opts.hud.showFail(FAIL_LABEL[reason], this.offsetHint);
+  }
+
+  /** 무적 모드: 실패 대신 기록하고 계속 (놓친 타일은 '놓침'으로 넘어간다). */
+  private survive(reason: FailReason): void {
+    switch (reason) {
+      case 'miss': {
+        this.cur++;
+        this.stats.recordHit(this.cur, 'miss');
+        this.showJudge(this.cur, 'miss');
+        this.onArrive();
+        break;
+      }
+      case 'overload':
+        this.stats.overloads++;
+        this.overload.reset();
+        this.showJudgeText(this.cur + 1, '과부하', JUDGE_COLOR.tooEarly);
+        break;
+      case 'holdEarly':
+      case 'holdLate': {
+        const h = this.hold;
+        this.stats.holdFails++;
+        this.hold = null;
+        if (h) {
+          this.stats.recordRelease(h.floor, 'miss');
+          this.showJudge(h.floor, 'miss');
+        }
+        break;
+      }
+      case 'rule':
+        this.stats.ruleBreaks++;
+        break;
+    }
+  }
+
+  private showJudgeText(floor: number, label: string, color: number): void {
+    if (!settings.showJudgeText) return;
+    const p = this.track.pos(floor);
+    this.fx.text(label, color, p.x, p.y, performance.now());
   }
 
   private clear(): void {
@@ -538,6 +595,10 @@ export class Game {
       allPerfect: this.stats.isAllPerfect() && this.speed >= 1,
       flawless: this.stats.isFlawless() && this.startFloor === 0 && this.speed >= 1,
       autoplay: this.autoplay,
+      noFail: this.noFail,
+      overloads: this.stats.overloads,
+      ruleBreaks: this.stats.ruleBreaks,
+      holdFails: this.stats.holdFails,
       speed: this.speed,
       offsetHint: this.offsetHint,
     };
@@ -604,9 +665,12 @@ export class Game {
         if (tj > this.hold.release + ((w.grace ?? w.far) / 1000) * this.pitch) this.fail('holdLate');
       }
       // 놓침
-      if (this.state === 'playing' && !this.hold && this.cur < ch.finish) {
+      // (무적 모드는 한 프레임에 여러 타일을 놓칠 수 있어 따라잡을 때까지)
+      for (let guard = 0; this.state === 'playing' && !this.hold && this.cur < ch.finish && guard < 10000; guard++) {
         const w = this.windowsFor(this.cur);
         if (tj > ch.times[this.cur + 1] + ((w.grace ?? w.far) / 1000) * this.pitch) this.fail('miss');
+        else break;
+        if (!this.noFail) break;
       }
       // 자동 타격음 예약
       if (this.scheduledHits && this.state === 'playing') {

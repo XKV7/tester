@@ -18,6 +18,10 @@ export class PlayStats {
   private releases = new Map<number, Judgment>();
   checkpointUses = 0;
   fails = 0;
+  /** 무적 모드에서 넘긴 실패: 과부하 · 맵 규칙 위반 · 홀드 실패 */
+  overloads = 0;
+  ruleBreaks = 0;
+  holdFails = 0;
   private streak = 0;
   maxStreak = 0;
 
@@ -53,6 +57,9 @@ export class PlayStats {
     this.releases.clear();
     this.checkpointUses = 0;
     this.fails = 0;
+    this.overloads = 0;
+    this.ruleBreaks = 0;
+    this.holdFails = 0;
     this.streak = 0;
     this.maxStreak = 0;
   }
