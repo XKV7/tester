@@ -1,4 +1,4 @@
-import { currentProfile, describeOutput, deviceOffsetMs, outputLatencyMs, saveDeviceProfile } from '../audio/device';
+import { currentProfile, describeOutput, deviceOffsetMs, outputLatencyMs, saveDeviceProfile, setDeviceOffset } from '../audio/device';
 import { audio } from '../audio/engine';
 import { Sfx } from '../audio/sfx';
 import { saveSettings, settings } from '../game/settings';
@@ -42,14 +42,51 @@ export class CalibrateScreen implements Screen {
   private nextBeat = 0;
   private readonly eng = audio();
   private readonly sfx = new Sfx(this.eng);
+  /** 끝난 단계에서 Enter로 넘어갈 다음 단계 */
+  private next: (() => void) | null = null;
   private key = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
       void show(this.back());
       return;
     }
-    if (e.repeat || (e.target as HTMLElement).closest?.('button')) return;
+    if (e.ctrlKey || e.metaKey || e.altKey || e.key === 'Tab' || /^F\d+$/.test(e.key)) return;
+    // 버튼에 포커스가 남아 있어도 키는 탭으로 (스페이스·엔터가 그 버튼을 다시 눌러 보정이 처음부터 시작되던 문제)
+    const t = e.target as HTMLElement;
+    if (t.closest?.('button')) t.blur();
+    if (t.closest?.('input, select, textarea')) return;
+    e.preventDefault();
+    if (e.repeat) return;
+    // 방향키: 미세조정 (←/→ 기기 오프셋, ↑/↓ 화면 미세 · Shift는 10ms씩)
+    if (e.key.startsWith('Arrow')) {
+      this.nudge(e.key, e.shiftKey ? 10 : 1);
+      return;
+    }
+    if (e.key === 'Enter' && this.next && this.mode === null) {
+      const n = this.next;
+      this.next = null;
+      n();
+      return;
+    }
+    if (e.key === 'r' || e.key === 'R') {
+      if (this.mode !== 'tap') void this.beginTap();
+      return;
+    }
     this.tap(e.timeStamp);
   };
+  private nudge(key: string, step: number): void {
+    if (key === 'ArrowLeft' || key === 'ArrowRight') {
+      setDeviceOffset(Math.max(-200, Math.min(1000, deviceOffsetMs() + (key === 'ArrowRight' ? step : -step))));
+    } else {
+      settings.visualOffset = Math.max(-300, Math.min(450, settings.visualOffset + (key === 'ArrowUp' ? step : -step)));
+      saveSettings();
+    }
+    this.live.textContent = `기기 오프셋 ${deviceOffsetMs()}ms · 화면 미세 ${settings.visualOffset > 0 ? '+' : ''}${settings.visualOffset}ms`;
+    // 미세조정 칸이 열려 있으면 숫자도 새로
+    if (this.nudgeBox.childElementCount) {
+      this.nudgeBox.innerHTML = '';
+      this.nudgeBox.append(offsetNudger());
+    }
+  }
   private pointer = (e: PointerEvent) => {
     if ((e.target as HTMLElement).closest('button')) return;
     this.tap(e.timeStamp);
@@ -121,13 +158,14 @@ export class CalibrateScreen implements Screen {
 
   private async beginTap(): Promise<void> {
     this.mode = 'tap';
+    this.next = null;
     this.taps = [];
     this.result.innerHTML = '';
     this.nudgeBox.innerHTML = '';
     const p = currentProfile();
     this.status.innerHTML = '';
     this.status.append(
-      h('div', null, '드럼 박자에 맞춰 화면을 탭하세요 (아무 키나 눌러도 돼요). 아무 때나 시작해도 되고, 행성 위치는 신경 쓰지 마세요.'),
+      h('div', null, '드럼 박자에 맞춰 화면을 탭하거나 아무 키(스페이스·J·F 등)를 누르세요. 아무 때나 시작해도 되고, 행성 위치는 신경 쓰지 마세요.'),
       h('div', { class: 'dim', style: 'font-size:13px;margin-top:4px' }, `${describeOutput()} · ${p ? `저장된 기기 오프셋 ${p.offset}ms` : '이 기기는 아직 보정 전'}`),
     );
     this.live.textContent = '';
@@ -141,13 +179,14 @@ export class CalibrateScreen implements Screen {
    */
   private async beginVisual(): Promise<void> {
     this.mode = 'visual';
+    this.next = null;
     this.taps = [];
     this.result.innerHTML = '';
     this.nudgeBox.innerHTML = '';
     this.status.innerHTML = '';
     this.status.append(
       h('div', { style: 'font-weight:700' }, '2단계 · 화면 맞추기'),
-      h('div', null, '소리 없이 돌아요. 행성이 위·아래 점에 닿는 순간에 맞춰 탭하세요.'),
+      h('div', null, '소리 없이 돌아요. 행성이 위·아래 점에 닿는 순간에 맞춰 탭하거나 키를 누르세요.'),
     );
     this.live.textContent = '';
     await this.startLoop(false);
@@ -159,7 +198,7 @@ export class CalibrateScreen implements Screen {
     this.eng.stop();
     this.eng.cancelScheduled();
     // 화면 미세 = 화면 쪽 지연 (게임에서 화면은 기기 오프셋 − 이 값만큼 늦춰 그린다)
-    settings.visualOffset = Math.max(-150, Math.min(450, Math.round(lag)));
+    settings.visualOffset = Math.max(-300, Math.min(450, Math.round(lag)));
     saveSettings();
     const shift = deviceOffsetMs() - settings.visualOffset;
     this.draw(null);
@@ -173,16 +212,18 @@ export class CalibrateScreen implements Screen {
         { class: 'dim', style: 'font-size:13px;text-align:center;max-width:520px' },
         `게임에서 화면을 소리에 맞춰 ${Math.abs(shift)}ms ${shift >= 0 ? '늦춰' : '앞당겨'} 그려요. '확인·미세조정'에서 행성이 드럼과 같이 닿는지 보세요.`,
       ),
-      h('button', { class: 'btn primary', onclick: () => this.beginCheck() }, '확인하기'),
+      h('button', { class: 'btn primary', onclick: () => this.beginCheck() }, '확인하기 (Enter)'),
     );
+    this.next = () => void this.beginCheck();
   }
 
   /** 확인: 게임처럼 판정·화면에 기기 오프셋을 적용해 보여 준다 (행성이 드럼과 함께 닿으면 성공). */
   private async beginCheck(): Promise<void> {
     this.mode = 'check';
+    this.next = null;
     this.taps = [];
     this.result.innerHTML = '';
-    this.status.textContent = '행성이 위·아래 점에 닿는 순간 드럼이 들리면 맞은 거예요. 어긋나 보이면 아래에서 미세조정하세요.';
+    this.status.textContent = '행성이 위·아래 점에 닿는 순간 드럼이 들리면 맞은 거예요. 어긋나 보이면 아래 버튼이나 키보드로 미세조정하세요 (←/→ 기기 오프셋, ↑/↓ 화면 미세, Shift = 10ms씩, R = 처음부터).';
     this.live.textContent = '';
     this.nudgeBox.innerHTML = '';
     this.nudgeBox.append(offsetNudger());
@@ -237,8 +278,9 @@ export class CalibrateScreen implements Screen {
           (prev !== 0 ? ` (이전 값 ${prev}ms)` : '') +
           (hadFine ? ' 따로 맞춰 둔 입력·화면 오프셋은 0으로 되돌렸어요.' : ''),
       ),
-      h('button', { class: 'btn primary', onclick: () => this.beginVisual() }, '2단계: 화면 맞추기 (소리 없음, 추천)'),
+      h('button', { class: 'btn primary', onclick: () => this.beginVisual() }, '2단계: 화면 맞추기 (소리 없음, 추천) · Enter'),
     );
+    this.next = () => void this.beginVisual();
   }
 
   /** 행성 궤도와 탭 자리(X) 그리기. t가 null이면 결과 (X만). */

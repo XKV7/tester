@@ -62,7 +62,7 @@ export function offsetNudger(): HTMLElement {
       '화면 미세',
       () => settings.visualOffset,
       (v) => {
-        settings.visualOffset = Math.max(-300, Math.min(300, v));
+        settings.visualOffset = Math.max(-300, Math.min(450, v));
         saveSettings();
       },
       '행성이 소리보다 늦게 닿아 보이면 +',
